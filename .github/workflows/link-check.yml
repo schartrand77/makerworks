@@ -1,0 +1,16 @@
+name: Check Repo Links
+
+on:
+  push:
+  schedule:
+    - cron: "0 0 * * 1" # weekly
+
+jobs:
+  linkChecker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Link Checker
+        uses: lycheeverse/lychee-action@v1
+        with:
+          args: --verbose --no-progress README.md

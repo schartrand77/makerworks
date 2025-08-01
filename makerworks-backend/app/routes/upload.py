@@ -128,7 +128,7 @@ async def upload_model(
         turntable_path = model_dir / turntable_filename
         try:
             generate_model_previews.apply_async(
-                args=[str(file_path), str(thumb_path), str(turntable_path)],
+                args=[str(file_path), model_uuid, str(turntable_path)],
                 task_id=task_id
             )
             logger.info("🎨 Queued preview generation task %s", task_id)

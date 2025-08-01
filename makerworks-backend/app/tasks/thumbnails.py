@@ -8,14 +8,14 @@ from app.utils.render_turntable import render_turntable
 logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, name="generate_model_previews")
-def generate_model_previews(self, model_path: str, thumbnail_path: str, turntable_path: str):
+def generate_model_previews(self, model_path: str, model_id: str, turntable_path: str):
     """
     Celery task to render both a PNG thumbnail and a WEBM turntable preview
     for STL/3MF/OBJ models.
 
     Args:
         model_path (str): Path to the uploaded model file.
-        thumbnail_path (str): Path to save the generated PNG thumbnail.
+        model_id (str): UUID of the model. Used for thumbnail filename.
         turntable_path (str): Path to save the generated WEBM turntable.
 
     Returns:
@@ -23,30 +23,28 @@ def generate_model_previews(self, model_path: str, thumbnail_path: str, turntabl
     """
     try:
         model_file = Path(model_path)
-        thumb_file = Path(thumbnail_path)
         turn_file = Path(turntable_path)
 
         if not model_file.exists():
             logger.error("❌ Model file not found: %s", model_path)
             return {"status": "error", "error": "model_not_found"}
 
-        # Ensure output directories exist
-        thumb_file.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure output directory for turntable exists
         turn_file.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info("🎨 Rendering thumbnail for %s", model_file)
-        thumb_status = render_thumbnail(model_file, thumb_file)
+        thumb_path = render_thumbnail(model_file, model_id)
 
         logger.info("🎥 Rendering turntable for %s", model_file)
         turn_status = render_turntable(model_file, turn_file)
 
         result = {
             "status": "done",
-            "thumbnail": str(thumb_file) if thumb_status else None,
+            "thumbnail": thumb_path,
             "turntable": turn_status.get("turntable") if isinstance(turn_status, dict) else None
         }
 
-        if not thumb_status:
+        if not thumb_path:
             logger.warning("⚠️ Thumbnail generation failed for %s", model_file)
             result["status"] = "partial"
 

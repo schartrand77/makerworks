@@ -167,11 +167,6 @@ logger.info(f"📂 Resolved absolute path: {uploads_path}")
 app.mount("/uploads", StaticFiles(directory=str(uploads_path), html=False, check_dir=True), name="uploads")
 logger.info(f"📁 Uploads served from {uploads_path} at /uploads")
 
-# ✅ Serve thumbnails via /media
-thumbnails_path = uploads_path / "thumbnails"
-thumbnails_path.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=str(thumbnails_path), html=False, check_dir=True), name="media")
-logger.info(f"📁 Thumbnails served from {thumbnails_path} at /media")
 
 # ─── Normalize Upload URL Handling ──────────
 @app.middleware("http")

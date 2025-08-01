@@ -113,17 +113,20 @@ def render_thumbnail_task(model_id_or_path: str):
     from app.db.session import get_sync_session
     from app.models.models import Model
     from app.utils.render_thumbnail import render_thumbnail
+    from app.config.settings import settings
 
     candidate = pathlib.Path(model_id_or_path)
     if candidate.exists():
-        return render_thumbnail(str(candidate))
+        output = candidate.with_suffix("_thumb.png")
+        return render_thumbnail(candidate, output)
 
     with get_sync_session() as db:
         model = db.query(Model).filter(Model.id == model_id_or_path).first()
         if not model or not model.file_path:
             logger.error(f"[Celery] Thumbnail task: model {model_id_or_path} not found or missing file_path")
             return None
-        return render_thumbnail(model.file_path)
+        thumb_path = Path(settings.uploads_path) / "users" / str(model.user_id) / "thumbnails" / f"{model.id}_thumb.png"
+        return render_thumbnail(Path(model.file_path), thumb_path)
 
 
 if __name__ == "__main__":

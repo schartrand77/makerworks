@@ -4,18 +4,20 @@ from pathlib import Path
 
 from app.utils.render_thumbnail import render_thumbnail
 from app.utils.render_turntable import render_turntable
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, name="generate_model_previews")
-def generate_model_previews(self, model_path: str, model_id: str, turntable_path: str):
+def generate_model_previews(self, model_path: str, model_id: str, user_id: str, turntable_path: str):
     """
     Celery task to render both a PNG thumbnail and a WEBM turntable preview
     for STL/3MF/OBJ models.
 
     Args:
         model_path (str): Path to the uploaded model file.
-        model_id (str): UUID of the model. Used for thumbnail filename.
+        model_id (str): UUID of the model.
+        user_id (str): UUID of the user owning the model.
         turntable_path (str): Path to save the generated WEBM turntable.
 
     Returns:
@@ -33,14 +35,16 @@ def generate_model_previews(self, model_path: str, model_id: str, turntable_path
         turn_file.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info("🎨 Rendering thumbnail for %s", model_file)
-        thumb_path = render_thumbnail(model_file, model_id)
+        thumb_rel = Path(f"users/{user_id}/thumbnails/{model_id}_thumb.png")
+        thumb_abs = Path(settings.uploads_path) / thumb_rel
+        thumb_path = render_thumbnail(model_file, thumb_abs)
 
         logger.info("🎥 Rendering turntable for %s", model_file)
         turn_status = render_turntable(model_file, turn_file)
 
         result = {
             "status": "done",
-            "thumbnail": thumb_path,
+            "thumbnail": thumb_rel.as_posix(),
             "turntable": turn_status.get("turntable") if isinstance(turn_status, dict) else None
         }
 

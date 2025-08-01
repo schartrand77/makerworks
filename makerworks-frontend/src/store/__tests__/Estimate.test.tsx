@@ -7,6 +7,7 @@ expect.extend(matchers);
 import Estimate from '../../pages/Estimate';
 import axios from '@/api/axios';
 import * as estimateApi from '@/api/estimate';
+vi.mock('@/api/axios', () => ({ default: { get: vi.fn() } }))
 vi.mock('@/components/ui/ModelViewer', () => ({
   default: () => <div data-testid="model-viewer" />,
 }));
@@ -21,6 +22,7 @@ describe('<Estimate />', () => {
   beforeEach(() => {
     // jsdom doesn't implement scrollTo
     window.scrollTo = vi.fn();
+    ;(axios.get as any).mockResolvedValue({ data: [] })
   });
   it('renders page header', () => {
     render(<Estimate />);

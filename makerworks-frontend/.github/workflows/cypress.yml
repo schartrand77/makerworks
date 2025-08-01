@@ -1,0 +1,49 @@
+name: Cypress E2E Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  cypress-run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🧰 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🚀 Start frontend
+        run: |
+          npm run dev &
+        env:
+          NODE_ENV: development
+
+      - name: 🕒 Wait for frontend
+        run: npx wait-on http://localhost:5173
+
+      - name: 🧪 Run Cypress tests
+        run: npm run cy:ci
+
+      - name: 📄 Upload Cypress videos (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos
+          path: cypress/videos
+
+      - name: 📄 Upload Cypress screenshots (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots

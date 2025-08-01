@@ -1,0 +1,138 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: makerworks_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: makerworks
+      POSTGRES_PASSWORD: makerworks
+      POSTGRES_DB: makerworks
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U makerworks"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: makerworks_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: makerworks_redis_exporter
+    restart: unless-stopped
+    ports:
+      - "9121:9121"
+    command:
+      - '--redis.addr=redis://makerworks_redis:6379'
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: makerworks_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./alembic:/app/alembic   # persist alembic migrations
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@makerworks_postgres:5432/makerworks
+      REDIS_URL: redis://makerworks_redis:6379/0
+      BASE_URL: http://localhost:8000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 40s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: makerworks_worker
+    restart: unless-stopped
+    command: celery -A app.celery_worker.celery_app worker --loglevel=INFO --concurrency=2
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+      - ./alembic:/app/alembic   # share migrations with backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@makerworks_postgres:5432/makerworks
+      REDIS_URL: redis://makerworks_redis:6379/0
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_worker.celery_app status | grep -q OK"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  prometheus:
+    image: prom/prometheus
+    container_name: makerworks_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis_exporter:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana
+    container_name: makerworks_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    depends_on:
+      prometheus:
+        condition: service_started
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+  uploads_data:   # ✅ corrected volume definition

@@ -1,0 +1,34 @@
+# Prevent secrets and envs from entering the Docker image
+#.env
+#.env.*
+keys/
+*.pem
+
+# Ignore Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.log
+
+# Ignore local builds and venvs
+.venv/
+dist/
+build/
+.cache/
+*.sqlite3
+*.db
+
+# Ignore test and coverage data
+.coverage
+*.test.*
+.pytest_cache/
+
+# Ignore editor and OS noise
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Ignore frontend artifacts (this is backend-only)
+frontend/
+start.sh
+nginx.conf

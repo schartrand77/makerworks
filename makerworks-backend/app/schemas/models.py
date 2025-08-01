@@ -5,23 +5,25 @@ from typing import Optional
 from pydantic import BaseModel, Field, constr, field_validator, ConfigDict
 import os
 import re
+from pathlib import Path
+from app.config.settings import settings
 
 # =========================
 # Helpers
 # =========================
 
 def _normalize_media_url(path: Optional[str]) -> Optional[str]:
-    """
-    Normalize any file or thumbnail path to /media/<filename> so it
-    always hits the FastAPI static mount. Handles absolute FS paths
-    and /api/v1/uploads/... URLs by stripping everything except the filename.
-    """
+    """Normalize paths to be served from /uploads."""
     if not path:
         return path
-    filename = os.path.basename(path)
-    # Ensure no query strings leak in
-    filename = re.sub(r"\?.*$", "", filename)
-    return f"/media/{filename}"
+    path = re.sub(r"\?.*$", "", str(path))
+    uploads_root = str(settings.uploads_path)
+    if path.startswith(uploads_root):
+        rel = Path(path).relative_to(uploads_root).as_posix()
+        return f"/uploads/{rel}"
+    if path.startswith("/uploads/"):
+        return path
+    return f"/uploads/{path.lstrip('/')}"
 
 # =========================
 # Base Model Schemas
@@ -94,11 +96,7 @@ class ModelUploadResponse(BaseModel):
     @field_validator('thumbnail_url', 'file_url', mode='before')
     @classmethod
     def normalize_urls(cls, v):
-        if not v:
-            return v
-        filename = os.path.basename(v)
-        filename = re.sub(r"\?.*$", "", filename)
-        return f"/media/{filename}"
+        return _normalize_media_url(v)
 
     model_config = ConfigDict(from_attributes=True)
 

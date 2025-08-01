@@ -112,6 +112,7 @@ def test_thumbnail_created(client, tmp_path):
     upload.render_thumbnail = original_render
 
     assert resp.status_code == 200
-    model_dir = Path(tmp_path) / "users" / str(user_id) / "models"
-    thumb = model_dir / "cube.png"
-    assert thumb.exists()
+    thumb_dir = Path(tmp_path) / "users" / str(user_id) / "thumbnails"
+    # Thumbnail uses generated UUID name; ensure directory is not empty
+    files = list(thumb_dir.glob("*.png"))
+    assert files

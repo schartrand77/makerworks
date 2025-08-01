@@ -7,12 +7,13 @@ from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
 import time
 
+from app.config.settings import settings
+
 logger = logging.getLogger(__name__)
 
-# ✅ Corrected uploads dir for your environment
-UPLOADS_DIR = Path("./uploads")
-THUMBNAILS_DIR = UPLOADS_DIR / "thumbnails"
-THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+# ✅ Use uploads path from settings
+UPLOADS_DIR = Path(settings.uploads_path).resolve()
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ✅ Preconfigure headless OpenGL platform (start with EGL)
 if "PYOPENGL_PLATFORM" not in os.environ:
@@ -34,13 +35,15 @@ def _apply_gamma(image: Image.Image, gamma=1.8) -> Image.Image:
     return Image.fromarray(arr.astype(np.uint8))
 
 
-def _try_render(model_path: Path, model_id: str, size=(512, 512)) -> str:
-    """Render STL preview into temp file then atomically move to thumbnails folder."""
+def _try_render(model_path: Path, output_path: Path, size=(512, 512)) -> str:
+    """Render STL preview into temp file then atomically move to output path."""
     import trimesh
     import pyrender
 
-    tmp_file = Path(tempfile.gettempdir()) / f"{model_id}_thumb.png"
-    final_path = THUMBNAILS_DIR / f"{model_id}_thumb.png"
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = Path(tempfile.gettempdir()) / output_path.name
+    final_path = output_path
 
     mesh = trimesh.load(str(model_path), force='mesh')
     if mesh.is_empty:
@@ -125,17 +128,18 @@ def _try_render(model_path: Path, model_id: str, size=(512, 512)) -> str:
     return str(final_path)
 
 
-def render_thumbnail(model_path: Path, model_id: str, size=(512, 512)) -> str:
-    final_path = THUMBNAILS_DIR / f"{model_id}_thumb.png"
+def render_thumbnail(model_path: Path, output_path: Path, size=(512, 512)) -> str:
+    output_path = Path(output_path)
+    final_path = output_path
     start_time = time.time()
     try:
         try:
-            result = _try_render(model_path, model_id, size)
+            result = _try_render(model_path, final_path, size)
             return result
         except Exception as egl_err:
             logger.error(f"[Thumbnail] EGL rendering failed: {egl_err}")
             os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-            result = _try_render(model_path, model_id, size)
+            result = _try_render(model_path, final_path, size)
             return result
     except Exception as e:
         logger.exception(f"[Thumbnail] Generation failed: {e}")
@@ -146,15 +150,15 @@ def render_thumbnail(model_path: Path, model_id: str, size=(512, 512)) -> str:
         logger.info(f"[Thumbnail] ✅ Thumbnail completed in {elapsed:.2f}s → {final_path}")
 
 
-def ensure_thumbnail(model_path: Path, model_id: str, size=(512, 512)) -> str:
-    return render_thumbnail(model_path, model_id, size=size)
+def ensure_thumbnail(model_path: Path, output_path: Path, size=(512, 512)) -> str:
+    return render_thumbnail(model_path, output_path, size=size)
 
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("Usage: python render_thumbnail.py <model_path> <model_id>")
+        print("Usage: python render_thumbnail.py <model_path> <output_path>")
         sys.exit(1)
     model_path = Path(sys.argv[1])
-    model_id = sys.argv[2]
-    print(render_thumbnail(model_path, model_id))
+    output_path = Path(sys.argv[2])
+    print(render_thumbnail(model_path, output_path))

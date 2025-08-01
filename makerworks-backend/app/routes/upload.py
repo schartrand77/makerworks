@@ -131,7 +131,7 @@ async def upload_model(
 
         try:
             generate_model_previews.apply_async(
-                args=[str(file_path), model_uuid, str(turntable_abs)],
+                args=[str(file_path), model_uuid, str(user_id), str(turntable_abs)],
                 task_id=str(uuid4())
             )
             logger.info("🎨 Queued preview generation for %s", model_uuid)

@@ -47,7 +47,7 @@ def create_user_dirs(user_id: str) -> dict[str, bool]:
     base = Path(settings.uploads_path).resolve() / "users" / user_id
     results: dict[str, bool] = {}
 
-    for sub in ["avatars", "models"]:
+    for sub in ["avatars", "models", "thumbnails"]:
         path = base / sub
         try:
             path.mkdir(parents=True, exist_ok=True)

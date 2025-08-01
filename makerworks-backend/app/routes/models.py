@@ -114,18 +114,19 @@ async def browse_all_filesystem_models(
                 meta = db_map.get(model_file.name)
                 username = meta["username"] if meta else user_dir.name
 
-                # ✅ Ensure thumbnail exists in global thumbnails folder
+                # ✅ Ensure thumbnail exists in user thumbnails folder
                 if not (meta and meta["thumbnail"]):
                     ensure_user_model_thumbnails_for_user(user_dir.name)
 
-                # ✅ Build thumbnail URL using only filename
+                # ✅ Build thumbnail URL relative to /uploads
                 thumb_url = None
                 if meta and meta["thumbnail"]:
-                    thumb_url = f"/media/{Path(meta['thumbnail']).name}"
+                    thumb_url = f"/uploads/{meta['thumbnail']}"
                 else:
-                    thumb_candidate = Path("app/uploads/thumbnails") / f"{model_file.stem}_thumb.png"
+                    thumb_candidate = uploads_root / "users" / user_dir.name / "thumbnails" / f"{model_file.stem}_thumb.png"
                     if thumb_candidate.exists():
-                        thumb_url = f"/media/{thumb_candidate.name}"
+                        rel_thumb = thumb_candidate.relative_to(uploads_root).as_posix()
+                        thumb_url = f"/uploads/{rel_thumb}"
 
                 # ✅ Build turntable URL safely
                 webm_url = None

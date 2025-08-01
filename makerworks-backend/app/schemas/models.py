@@ -1,8 +1,8 @@
 # app/schemas/models.py
 
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field, constr, validator
+from typing import Optional
+from pydantic import BaseModel, Field, constr, field_validator, ConfigDict
 import os
 import re
 
@@ -60,12 +60,12 @@ class ModelOut(ModelBase):
     geometry_hash: Optional[str] = None
     is_duplicate: Optional[bool] = None
 
-    @validator('thumbnail_url', 'file_url', pre=True, always=True)
+    @field_validator('thumbnail_url', 'file_url', mode='before')
+    @classmethod
     def normalize_urls(cls, v):
         return _normalize_media_url(v)
 
-    class Config:
-        from_attributes = True  # ✅ Pydantic v2 replacement for orm_mode
+    model_config = ConfigDict(from_attributes=True)  # ✅ Pydantic v2
 
 # =========================
 # Upload Request/Response
@@ -91,7 +91,8 @@ class ModelUploadResponse(BaseModel):
     geometry_hash: Optional[str] = None
     is_duplicate: Optional[bool] = None
 
-    @validator('thumbnail_url', 'file_url', pre=True, always=True)
+    @field_validator('thumbnail_url', 'file_url', mode='before')
+    @classmethod
     def normalize_urls(cls, v):
         if not v:
             return v
@@ -99,8 +100,7 @@ class ModelUploadResponse(BaseModel):
         filename = re.sub(r"\?.*$", "", filename)
         return f"/media/{filename}"
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # =========================
 # Model Upload Output Schema
@@ -121,9 +121,9 @@ class ModelUploadOut(BaseModel):
     uploaded_at: datetime = Field(..., description="UTC timestamp of upload")
     job_id: Optional[str] = Field(None, description="Celery job ID for preview rendering")
 
-    @validator('thumbnail', 'file_path', pre=True, always=True)
+    @field_validator('thumbnail', 'file_path', mode='before')
+    @classmethod
     def normalize_urls(cls, v):
         return _normalize_media_url(v)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

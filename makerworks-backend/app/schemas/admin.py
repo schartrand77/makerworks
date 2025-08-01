@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 
 
 class UserOut(BaseModel):
@@ -17,8 +17,7 @@ class UserOut(BaseModel):
     created_at: Optional[datetime]
     last_login: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UploadOut(BaseModel):
@@ -30,8 +29,7 @@ class UploadOut(BaseModel):
     thumbnail_url: Optional[str]
     status: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiscordConfigOut(BaseModel):
@@ -39,5 +37,4 @@ class DiscordConfigOut(BaseModel):
     channel_id: str
     enabled: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

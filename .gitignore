@@ -66,3 +66,4 @@ env/
 package-lock.json
 yarn-error.log
 .pnpm-debug.log
+makerworks-backend/test_avatar.db

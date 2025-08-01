@@ -5,17 +5,12 @@
 *.tmp
 *.swp
 .DS_Store
+
+# Environment files
 .env
+!.env.example
 .env.local
 .env.*.local
-node_modules/
-dist/
-build/
-.cache/
-coverage/
-__pycache__/
-*.pyc
-*.pyo
 
 # ------------------------
 # Frontend (Vite + React)
@@ -24,15 +19,19 @@ makerworks-frontend/node_modules/
 makerworks-frontend/dist/
 makerworks-frontend/.vite/
 makerworks-frontend/.cache/
+makerworks-frontend/.env
+!makerworks-frontend/.env.example
 
 # ------------------------
 # Backend (FastAPI + Alembic)
 # ------------------------
-makerworks-backend/__pycache__/
+makerworks-backend/**/__pycache__/
 makerworks-backend/.mypy_cache/
 makerworks-backend/.pytest_cache/
 makerworks-backend/alembic/__pycache__/
 makerworks-backend/alembic/versions/__pycache__/
+makerworks-backend/.env
+!makerworks-backend/.env.example
 
 # SQLite (if used for dev)
 *.sqlite3
@@ -40,11 +39,18 @@ makerworks-backend/alembic/versions/__pycache__/
 # ------------------------
 # Docker / Volumes
 # ------------------------
-uploads/
-logs/
+uploads/*
+!uploads/.gitkeep
+logs/*
+!logs/.gitkeep
 pgdata/
 redis_data/
 *.pid
+
+# ------------------------
+# Alembic versions (keep folder, ignore generated pyc)
+makerworks-backend/alembic/versions/*
+!makerworks-backend/alembic/versions/.gitkeep
 
 # ------------------------
 # VSCode / Devcontainer

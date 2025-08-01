@@ -1,0 +1,4 @@
+touch uploads/.gitkeep
+touch logs/.gitkeep
+mkdir -p makerworks-backend/alembic/versions
+touch makerworks-backend/alembic/versions/.gitkeep

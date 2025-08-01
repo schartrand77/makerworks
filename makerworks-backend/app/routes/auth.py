@@ -82,7 +82,7 @@ async def signin(payload: UserSignIn, request: Request, response: Response, db: 
 
     # ✅ Ensure thumbnails are synced for this user
     try:
-        ensure_user_model_thumbnails_for_user(str(user.id), user_models_path)
+        ensure_user_model_thumbnails_for_user(str(user.id))
     except Exception as e:
         logger.error(f"[AUTH] Thumbnail synchronization failed: {e}")
 

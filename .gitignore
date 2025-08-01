@@ -1,0 +1,68 @@
+# ------------------------
+# General
+# ------------------------
+*.log
+*.tmp
+*.swp
+.DS_Store
+.env
+.env.local
+.env.*.local
+node_modules/
+dist/
+build/
+.cache/
+coverage/
+__pycache__/
+*.pyc
+*.pyo
+
+# ------------------------
+# Frontend (Vite + React)
+# ------------------------
+makerworks-frontend/node_modules/
+makerworks-frontend/dist/
+makerworks-frontend/.vite/
+makerworks-frontend/.cache/
+
+# ------------------------
+# Backend (FastAPI + Alembic)
+# ------------------------
+makerworks-backend/__pycache__/
+makerworks-backend/.mypy_cache/
+makerworks-backend/.pytest_cache/
+makerworks-backend/alembic/__pycache__/
+makerworks-backend/alembic/versions/__pycache__/
+
+# SQLite (if used for dev)
+*.sqlite3
+
+# ------------------------
+# Docker / Volumes
+# ------------------------
+uploads/
+logs/
+pgdata/
+redis_data/
+*.pid
+
+# ------------------------
+# VSCode / Devcontainer
+# ------------------------
+.vscode/
+.devcontainer/.env
+.devcontainer/.history
+
+# ------------------------
+# Python Virtualenvs
+# ------------------------
+.venv/
+venv/
+env/
+
+# ------------------------
+# Yarn / npm lock conflicts
+# ------------------------
+package-lock.json
+yarn-error.log
+.pnpm-debug.log

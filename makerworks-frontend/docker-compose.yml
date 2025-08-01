@@ -1,0 +1,38 @@
+services:
+  # ------------------------
+  # Frontend Dev (Vite Hot Reload)
+  # ------------------------
+  frontend-dev:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: makerworks_frontend_dev
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+    volumes:
+      - ./makerworks-frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host
+
+  # ------------------------
+  # Frontend Production (Optimized Build)
+  # ------------------------
+  frontend-prod:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: makerworks_frontend_prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    env_file:
+      - .env
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}

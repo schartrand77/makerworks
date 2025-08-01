@@ -1,0 +1,26 @@
+services:
+  backend:
+    volumes:
+      - ./makerworks-backend:/app
+      - ./makerworks-backend/uploads:/app/uploads
+      - ./makerworks-backend/logs:/app/logs
+      - ./makerworks-backend/alembic:/app/alembic
+    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    environment:
+      ENV: development
+      DEBUG: "true"
+
+  worker:
+    volumes:
+      - ./makerworks-backend:/app
+      - ./makerworks-backend/uploads:/app/uploads
+      - ./makerworks-backend/alembic:/app/alembic
+
+  frontend:
+    volumes:
+      - ./makerworks-frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host
+    environment:
+      VITE_ENV: development
+      VITE_API_BASE_URL: http://localhost:8000/api/v1

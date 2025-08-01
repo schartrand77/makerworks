@@ -67,7 +67,7 @@ downgrade:
 	$(DEV_CONTAINER) alembic downgrade -1
 
 ## 🌱 Seed the database with initial data
-seed:
+	seed:
 	@echo "🌱 Seeding database with default data..."
 	$(DEV_CONTAINER) python app/utils/seed_db.py
 	@echo "✅ Database seeded successfully."

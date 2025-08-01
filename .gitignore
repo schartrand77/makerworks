@@ -1,0 +1,23 @@
+# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build output
+/dist
+/build
+
+# Env files
+.env
+.env.local
+
+# Misc
+*.swo
+*.swp
+

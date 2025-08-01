@@ -138,7 +138,7 @@ def startup_banner():
     memory_percent_gauge.set(mem.percent)
 
     # Redis check
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
     redis_status = check_redis_available(redis_url)
     redis_text = f"{'✅ Connected' if redis_status else '❌ Unavailable'}"
     logger.info(

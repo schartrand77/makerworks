@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from '@/api/axios';
+import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
 import GlassCard from '@/components/ui/GlassCard';
 import PageHeader from '@/components/ui/PageHeader';
 import { Search } from 'lucide-react';
@@ -197,20 +198,7 @@ const Browse: React.FC = () => {
                 // 🔍 Debug logs
                 console.log('[Browse] Model data:', model);
 
-                let thumbUrl: string | null = null;
-                if (model.thumbnail_url != null) {
-                  const raw = String(model.thumbnail_url).trim();
-                  console.log('[Browse] Raw thumbnail path:', raw);
-                  if (raw !== '') {
-                    if (raw.startsWith('http')) {
-                      thumbUrl = raw;
-                    } else {
-                      const normalized = raw.replace(/^\.?\/*/, '');
-                      thumbUrl = `/${normalized}`;
-                    }
-                  }
-                }
-
+                const thumbUrl = getAbsoluteUrl(model.thumbnail_url);
                 console.log('[Browse] Final thumbnail URL:', thumbUrl);
 
                 return (

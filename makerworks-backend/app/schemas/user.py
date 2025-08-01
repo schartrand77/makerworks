@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 from typing import Optional
-from pydantic import BaseModel, EmailStr, HttpUrl, field_serializer
+from pydantic import BaseModel, EmailStr, HttpUrl, field_serializer, ConfigDict
 
 
 class UserOut(BaseModel):
@@ -29,8 +29,7 @@ class UserOut(BaseModel):
     def serialize_datetime(self, v: datetime | None, _info) -> Optional[str]:
         return v.isoformat() if v else None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UpdateUserProfile(BaseModel):
@@ -39,8 +38,7 @@ class UpdateUserProfile(BaseModel):
     language: Optional[str] = None
     avatar_url: Optional[HttpUrl] = None  # ✅ Allow avatar updates
 
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class AvatarUploadResponse(BaseModel):

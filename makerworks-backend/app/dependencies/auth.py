@@ -1,6 +1,5 @@
 # app/routes/auth.py
 import logging
-import os
 from fastapi import Depends, HTTPException, status, Request
 from app.db.database import get_async_db
 from app.models.models import User
@@ -8,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.services.session_backend import get_session_user_id
 from app.utils.filesystem import ensure_user_model_thumbnails_for_user
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +52,7 @@ async def get_current_user(
 
     # After successful authentication, ensure thumbnails exist for this user's models
     try:
-        user_models_path = os.path.join(settings.MODEL_DIR, str(user.id))
-        ensure_user_model_thumbnails(str(user.id), user_models_path)
+        ensure_user_model_thumbnails_for_user(str(user.id))
     except Exception as e:
         logger.exception("[AUTH] Thumbnail synchronization failed: %s", e)
 

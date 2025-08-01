@@ -94,7 +94,14 @@ class ModelUpload(Base):
     user = relationship("User", back_populates="uploads")
     estimates = relationship("Estimate", back_populates="model", cascade="all, delete-orphan")
     favorites = relationship("Favorite", back_populates="model", cascade="all, delete-orphan")
-    metadata_entries = relationship("ModelMetadata", back_populates="model", cascade="all, delete-orphan")
+
+    # ✅ Proper relationship to ModelMetadata
+    metadata_entries = relationship(
+        "ModelMetadata",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        lazy="joined"
+    )
 
 
 # ✅ Normalize all upload-related paths before insert/update
@@ -233,6 +240,7 @@ class ModelMetadata(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # ✅ Back-populate relationship to ModelUpload
     model = relationship("ModelUpload", back_populates="metadata_entries")
 
 

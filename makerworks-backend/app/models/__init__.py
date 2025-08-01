@@ -3,29 +3,33 @@
 from app.models.models import (
     Base,
     User,
+    ModelUpload,
+    ModelMetadata,
     Estimate,
     EstimateSettings,
     Favorite,
     Filament,
-    ModelMetadata,
-    AuditLog,
     FilamentPricing,
+    AuditLog,
     CheckoutSession,
-    ModelMetadata,
     UploadJob,
 )
 
+# Alias for backwards compatibility if anything referenced Model3D
 Model3D = ModelMetadata
 
 __all__ = [
     "Base",
     "User",
+    "ModelUpload",
+    "ModelMetadata",
+    "Model3D",
     "Estimate",
     "EstimateSettings",
     "Favorite",
     "Filament",
-    "ModelMetadata",
-    "Model3D",
-    "AuditLog",
     "FilamentPricing",
+    "AuditLog",
+    "CheckoutSession",
+    "UploadJob",
 ]

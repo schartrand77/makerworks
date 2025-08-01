@@ -34,11 +34,11 @@ router = APIRouter()
 BASE_UPLOAD_DIR = Path(settings.uploads_path).resolve()
 BASE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-THUMBNAIL_DIR = BASE_UPLOAD_DIR / "thumbnails"
-THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
-
 
 def get_model_dir(user_id: str) -> Path:
+    """
+    Always create a user-specific models folder under uploads/users/{user_id}/models
+    """
     path = BASE_UPLOAD_DIR / "users" / str(user_id) / "models"
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -89,7 +89,7 @@ async def upload_model(
     model_dir = get_model_dir(user_id)
 
     try:
-        # ✅ Check for duplicate filename (case-insensitive)
+        # ✅ Check duplicate filename per user
         result = await db.execute(
             select(ModelUpload)
             .options(load_only(ModelUpload.id, ModelUpload.filename))
@@ -99,7 +99,6 @@ async def upload_model(
             )
         )
         existing_model = result.scalars().first()
-
         if existing_model:
             logger.warning("⚠️ Duplicate filename detected for user %s: %s", user_id, file.filename)
             await db.rollback()
@@ -108,49 +107,55 @@ async def upload_model(
                 detail="Model with this filename already exists"
             )
 
-        # ✅ Save uploaded STL to user dir
+        # ✅ Save model file to user-specific folder
         file_path = model_dir / file.filename
         os.makedirs(model_dir, exist_ok=True)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        logger.info("📥 Uploaded model file: %s", file_path)
+        logger.info("📥 Saved model file: %s", file_path)
 
-        # ✅ Generate unique ID for DB + thumbnail
+        # ✅ Unique UUID for model and thumbnail
         model_uuid = str(uuid4())
 
-        # ✅ Generate thumbnail with UUID-based name using new render_thumbnail()
-        thumb_path = render_thumbnail(file_path, model_uuid)
-        logger.info("🖼️ Generated thumbnail: %s", thumb_path)
+        # ✅ Thumbnail saved in user-specific folder
+        thumb_rel = Path(f"users/{user_id}/thumbnails/{model_uuid}_thumb.png")
+        thumb_abs = BASE_UPLOAD_DIR / thumb_rel
+        thumb_abs.parent.mkdir(parents=True, exist_ok=True)
 
-        # ✅ Queue turntable render (optional)
-        task_id = str(uuid4())
-        turntable_filename = f"{model_uuid}.webm"
-        turntable_path = model_dir / turntable_filename
+        render_thumbnail(file_path, thumb_abs)
+        logger.info("🖼️ Generated thumbnail: %s", thumb_abs)
+
+        # ✅ Turntable path in user folder
+        turntable_rel = Path(f"users/{user_id}/models/{model_uuid}.webm")
+        turntable_abs = BASE_UPLOAD_DIR / turntable_rel
+
         try:
             generate_model_previews.apply_async(
-                args=[str(file_path), str(thumb_path), str(turntable_path)],
-                task_id=task_id
+                args=[str(file_path), model_uuid, str(turntable_abs)],
+                task_id=str(uuid4())
             )
-            logger.info("🎨 Queued preview generation task %s", task_id)
+            logger.info("🎨 Queued preview generation for %s", model_uuid)
         except Exception as e:
-            logger.error("❌ Failed to queue Celery preview task: %s", e)
-            turntable_path = None
+            logger.error("❌ Celery preview queue failed: %s", e)
 
-        # ✅ Save DB entry with normalized relative thumbnail path
+        # ✅ Commit DB entry with user-aware relative paths
         new_model = ModelUpload(
             id=model_uuid,
             user_id=user_id,
             filename=file.filename,
-            file_path=str(file_path),
-            file_url=None,
-            thumbnail_path=str(Path("uploads/thumbnails") / f"{model_uuid}_thumb.png"),
-            turntable_path=str(turntable_path) if turntable_path else None,
+            name=file.filename.rsplit(".", 1)[0],  # use filename as default name
+            description=None,
+            file_path=str(Path(f"users/{user_id}/models/{file.filename}")),
+            file_url=f"/uploads/users/{user_id}/models/{file.filename}",
+            thumbnail_path=str(thumb_rel),
+            turntable_path=str(turntable_rel),
             uploaded_at=datetime.utcnow(),
         )
         db.add(new_model)
         await db.commit()
         await db.refresh(new_model)
-        logger.info("✅ Model record committed: %s", new_model.id)
+
+        logger.info("✅ Model %s committed for user %s", new_model.id, user_id)
 
         return ModelUploadOut(
             status="queued",
@@ -158,11 +163,10 @@ async def upload_model(
             model_id=str(new_model.id),
             user_id=str(user_id),
             filename=file.filename,
-            file_path=file.filename,
+            file_path=new_model.file_url,
             thumbnail=new_model.thumbnail_path,
             turntable=new_model.turntable_path,
             uploaded_at=new_model.uploaded_at,
-            job_id=task_id
         )
 
     except HTTPException:

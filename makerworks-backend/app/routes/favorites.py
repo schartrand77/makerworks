@@ -1,150 +1,135 @@
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.db.database import get_async_db
-from app.models import Filament
-from app.schemas import FilamentOut
+from app.models import ModelUpload, ModelMetadata, Favorite, User
+from app.schemas.favorites import FavoriteOut
 from app.dependencies.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/favorites", tags=["Favorites"])
 
 
 @router.get(
     "/",
-    summary="List filaments with optional filters and pagination",
-    response_model=List[FilamentOut],
+    summary="List the current user's favorite models with metadata",
+    response_model=List[FavoriteOut],
     status_code=status.HTTP_200_OK,
 )
-async def list_filaments(
+async def list_favorites(
     db: AsyncSession = Depends(get_async_db),
-    is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    type: Optional[str] = Query(None, description="Filter by type"),
-    subtype: Optional[str] = Query(None, description="Filter by subtype"),
-    color_name: Optional[str] = Query(None, description="Filter by color name"),
-    skip: int = Query(0, ge=0, description="Pagination offset"),
-    limit: int = Query(25, gt=0, le=100, description="Pagination limit"),
+    current_user: User = Depends(get_current_user),
 ):
     """
-    Return a list of filaments, optionally filtered and paginated.
+    Return all favorite models for the current user, including optional metadata.
     """
-    logger.info("📋 Listing filaments with filters: is_active=%s, type=%s, subtype=%s, color=%s",
-                is_active, type, subtype, color_name)
+    logger.info("📋 Listing favorites for user %s", current_user.id)
 
-    stmt = select(Filament)
-
-    if is_active is not None:
-        stmt = stmt.where(Filament.is_active == is_active)
-    if type:
-        stmt = stmt.where(Filament.type.ilike(f"%{type}%"))
-    if subtype:
-        stmt = stmt.where(Filament.subtype.ilike(f"%{subtype}%"))
-    if color_name:
-        stmt = stmt.where(Filament.color_name.ilike(f"%{color_name}%"))
-
-    stmt = stmt.offset(skip).limit(limit)
+    # ✅ Fixed JOIN: start from ModelUpload, join Favorite, left join ModelMetadata
+    stmt = (
+        select(ModelUpload)
+        .join(Favorite, Favorite.model_id == ModelUpload.id)
+        .options(joinedload(ModelUpload.metadata_entries))
+        .where(Favorite.user_id == current_user.id)
+    )
 
     result = await db.execute(stmt)
-    filaments = result.scalars().all()
+    uploads = result.scalars().unique().all()
 
-    logger.debug("✅ Found %d filaments", len(filaments))
+    favorites_out = []
+    for upload in uploads:
+        metadata = upload.metadata_entries[0] if upload.metadata_entries else None
+        favorites_out.append(
+            FavoriteOut(
+                id=upload.id,
+                user_id=upload.user_id,
+                filename=upload.filename,
+                name=upload.name,
+                description=upload.description,
+                file_path=upload.file_path,
+                thumbnail_path=upload.thumbnail_path,
+                uploaded_at=upload.uploaded_at,
+                volume=metadata.volume if metadata else None,
+                surface_area=metadata.surface_area if metadata else None,
+                bbox_x=metadata.bbox_x if metadata else None,
+                bbox_y=metadata.bbox_y if metadata else None,
+                bbox_z=metadata.bbox_z if metadata else None,
+                faces=metadata.faces if metadata else None,
+                vertices=metadata.vertices if metadata else None,
+                geometry_hash=metadata.geometry_hash if metadata else None,
+            )
+        )
 
-    return [FilamentOut.model_validate(f).model_dump() for f in filaments]
+    logger.debug("✅ Found %d favorites for user %s", len(favorites_out), current_user.id)
+    return favorites_out
 
 
 @router.post(
-    "/",
-    summary="Create a new filament",
-    response_model=FilamentOut,
+    "/{model_id}",
+    summary="Add a model to the current user's favorites",
     status_code=status.HTTP_201_CREATED,
 )
-async def create_filament(
-    filament_in: FilamentOut,
+async def add_favorite(
+    model_id: str,
     db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
-    Create a new filament entry.
+    Add a model to the current user's favorites.
     """
-    logger.info("➕ Creating filament: %s", filament_in.model_dump())
+    logger.info("➕ Adding model %s to favorites for user %s", model_id, current_user.id)
 
-    filament = Filament(**filament_in.model_dump())
-    db.add(filament)
-    await db.commit()
-    await db.refresh(filament)
-
-    logger.info("✅ Created filament with ID %s", filament.id)
-
-    return FilamentOut.model_validate(filament).model_dump()
-
-
-@router.put(
-    "/{fid}",
-    summary="Update an existing filament",
-    response_model=FilamentOut,
-    status_code=status.HTTP_200_OK,
-)
-async def update_filament(
-    fid: int,
-    filament_in: FilamentOut,
-    db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_current_user),
-):
-    """
-    Update a filament by ID.
-    """
-    logger.info("✏️ Updating filament ID %s", fid)
-
-    stmt = select(Filament).where(Filament.id == fid)
+    stmt = select(Favorite).where(
+        Favorite.model_id == model_id,
+        Favorite.user_id == current_user.id,
+    )
     result = await db.execute(stmt)
-    filament = result.scalar_one_or_none()
+    existing = result.scalar_one_or_none()
 
-    if not filament:
-        logger.warning("❌ Filament ID %s not found", fid)
-        raise HTTPException(status_code=404, detail="Filament not found")
+    if existing:
+        return {"detail": "Already in favorites"}
 
-    for key, value in filament_in.model_dump().items():
-        setattr(filament, key, value)
-
+    favorite = Favorite(model_id=model_id, user_id=current_user.id)
+    db.add(favorite)
     await db.commit()
-    await db.refresh(filament)
 
-    logger.info("✅ Updated filament ID %s", fid)
-
-    return FilamentOut.model_validate(filament).model_dump()
+    logger.info("✅ Added model %s to favorites for user %s", model_id, current_user.id)
+    return {"detail": "Favorite added"}
 
 
 @router.delete(
-    "/{fid}",
-    summary="Delete a filament",
+    "/{model_id}",
+    summary="Remove a model from the current user's favorites",
     status_code=status.HTTP_200_OK,
 )
-async def delete_filament(
-    fid: int,
+async def remove_favorite(
+    model_id: str,
     db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
-    Delete a filament by ID.
+    Remove a model from the current user's favorites.
     """
-    logger.info("🗑️ Deleting filament ID %s", fid)
+    logger.info("🗑️ Removing model %s from favorites for user %s", model_id, current_user.id)
 
-    stmt = select(Filament).where(Filament.id == fid)
+    stmt = select(Favorite).where(
+        Favorite.model_id == model_id,
+        Favorite.user_id == current_user.id,
+    )
     result = await db.execute(stmt)
-    filament = result.scalar_one_or_none()
+    favorite = result.scalar_one_or_none()
 
-    if not filament:
-        logger.warning("❌ Filament ID %s not found", fid)
-        raise HTTPException(status_code=404, detail="Filament not found")
+    if not favorite:
+        raise HTTPException(status_code=404, detail="Favorite not found")
 
-    await db.delete(filament)
+    await db.delete(favorite)
     await db.commit()
 
-    logger.info("✅ Deleted filament ID %s", fid)
-
-    return {"detail": "Filament deleted"}
+    logger.info("✅ Removed model %s from favorites for user %s", model_id, current_user.id)
+    return {"detail": "Favorite removed"}

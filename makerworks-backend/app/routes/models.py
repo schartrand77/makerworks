@@ -8,7 +8,7 @@ from fastapi import APIRouter, status, Query, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.config.settings import settings
 from app.db.session import get_db
@@ -27,8 +27,7 @@ class ModelItem(BaseModel):
     thumbnail_url: Optional[str]
     webm_url: Optional[str]
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaginatedModelListResponse(BaseModel):

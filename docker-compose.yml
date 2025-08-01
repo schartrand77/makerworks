@@ -1,6 +1,7 @@
-version: "3.9"
-
 services:
+  # ------------------------
+  # PostgreSQL
+  # ------------------------
   postgres:
     image: postgres:15-alpine
     container_name: makerworks_postgres
@@ -13,12 +14,17 @@ services:
       POSTGRES_DB: makerworks
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    labels:
+      com.makerworks.service: "postgres"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U makerworks"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ------------------------
+  # Redis
+  # ------------------------
   redis:
     image: redis:7-alpine
     container_name: makerworks_redis
@@ -27,14 +33,18 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: >
-      redis-server --appendonly yes
+    command: redis-server --appendonly yes
+    labels:
+      com.makerworks.service: "redis"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ------------------------
+  # Backend (FastAPI)
+  # ------------------------
   backend:
     build:
       context: ./makerworks-backend
@@ -53,6 +63,8 @@ services:
       - ./makerworks-backend/uploads:/app/uploads
       - ./makerworks-backend/logs:/app/logs
       - ./makerworks-backend/alembic:/app/alembic
+    labels:
+      com.makerworks.service: "backend"
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,6 +77,9 @@ services:
       start_period: 40s
       retries: 5
 
+  # ------------------------
+  # Celery Worker
+  # ------------------------
   worker:
     build:
       context: ./makerworks-backend
@@ -80,16 +95,22 @@ services:
     volumes:
       - ./makerworks-backend/uploads:/app/uploads
       - ./makerworks-backend/alembic:/app/alembic
+    labels:
+      com.makerworks.service: "worker"
     depends_on:
       backend:
         condition: service_healthy
       redis:
         condition: service_healthy
 
+  # ------------------------
+  # Frontend (Dev: Vite hot-reload)
+  # ------------------------
   frontend:
     build:
       context: ./makerworks-frontend
       dockerfile: Dockerfile
+      target: dev
     container_name: makerworks_frontend
     restart: unless-stopped
     ports:
@@ -98,10 +119,43 @@ services:
       - makerworks-frontend/.env
     volumes:
       - ./makerworks-frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host
+    labels:
+      com.makerworks.service: "frontend"
     depends_on:
       backend:
         condition: service_healthy
 
+  # ------------------------
+  # Frontend Production (Optional)
+  # ------------------------
+  frontend-prod:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: makerworks_frontend_prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    env_file:
+      - makerworks-frontend/.env
+    labels:
+      com.makerworks.service: "frontend-prod"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+# ------------------------
+# Volumes
+# ------------------------
 volumes:
   postgres_data:
+    driver: local
+    labels:
+      com.makerworks.volume: "postgres_data"
   redis_data:
+    driver: local
+    labels:
+      com.makerworks.volume: "redis_data"

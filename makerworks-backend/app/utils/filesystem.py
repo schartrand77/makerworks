@@ -2,11 +2,36 @@
 
 from pathlib import Path
 import logging
+import os
 from app.config.settings import settings
 from app.utils.render_thumbnail import render_thumbnail
 
 UPLOADS_ROOT: Path = settings.uploads_path
 logger = logging.getLogger("makerworks.filesystem")
+
+
+def create_user_folders(user_id) -> dict[str, bool]:
+    """Ensure avatar and model folders exist for a user.
+
+    Parameters
+    ----------
+    user_id: UUID or str
+        Identifier for the user.  Converted to string when building paths.
+
+    Returns
+    -------
+    dict
+        Mapping of folder paths to booleans indicating whether each directory
+        exists after the operation.
+    """
+
+    root = Path(os.getenv("UPLOADS_PATH", UPLOADS_ROOT))
+    base = root / str(user_id)
+    avatars = base / "avatars"
+    models = base / "models"
+    avatars.mkdir(parents=True, exist_ok=True)
+    models.mkdir(parents=True, exist_ok=True)
+    return {str(avatars): avatars.exists(), str(models): models.exists()}
 
 
 def ensure_user_model_thumbnails_for_user(user_id: str) -> None:

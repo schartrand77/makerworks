@@ -30,8 +30,7 @@ RUN if [ "$WORKER_IMAGE" = "true" ]; then \
 COPY alembic.ini /app/alembic.ini
 COPY alembic /app/alembic
 
-COPY .env.dev /app/.env.dev
-RUN test -f /app/.env.dev || touch /app/.env.dev
+COPY .env.example /app/.env.dev
 
 ##############################################
 # ===== Runtime Stage =====

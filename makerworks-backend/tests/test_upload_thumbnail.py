@@ -78,6 +78,28 @@ def client(tmp_path):
     app = create_test_app(tmp_path)
     upload.BASE_UPLOAD_DIR = Path(tmp_path)
     upload.BASE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    async def _noop():
+        return None
+    upload.check_alembic_revision = _noop
+    class DummyResult:
+        def scalars(self):
+            return self
+        def first(self):
+            return None
+    class DummySession:
+        def add(self, *_args, **_kwargs):
+            pass
+        async def commit(self):
+            pass
+        async def refresh(self, _obj):
+            pass
+        async def rollback(self):
+            pass
+        async def execute(self, *_args, **_kwargs):
+            return DummyResult()
+    async def override_db():
+        yield DummySession()
+    app.dependency_overrides[upload.get_db] = override_db
     with TestClient(app) as c:
         c.upload_module = upload
         yield c

@@ -19,8 +19,11 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 if "PYOPENGL_PLATFORM" not in os.environ:
     os.environ["PYOPENGL_PLATFORM"] = "egl"
 
+# Thumbnails should remain reasonably small compared to the source model
+MAX_THUMBNAIL_RATIO = 0.5  # thumbnail must be <= 50% of model file size
 
-def _render_fallback(output_path: Path, size=(512, 512)):
+
+def _render_fallback(output_path: Path, size=(1024, 1024)):
     """Generate a simple 'No Preview' placeholder."""
     bg = Image.new("RGBA", size, (245, 245, 245, 255))
     draw = ImageDraw.Draw(bg)
@@ -35,7 +38,7 @@ def _apply_gamma(image: Image.Image, gamma=1.8) -> Image.Image:
     return Image.fromarray(arr.astype(np.uint8))
 
 
-def _try_render(model_path: Path, output_path: Path, size=(512, 512)) -> str:
+def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     """Render STL preview into temp file then atomically move to output path."""
     import trimesh
     import pyrender
@@ -128,29 +131,40 @@ def _try_render(model_path: Path, output_path: Path, size=(512, 512)) -> str:
     return str(final_path)
 
 
-def render_thumbnail(model_path: Path, output_path: Path, size=(512, 512)) -> str:
+def render_thumbnail(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     output_path = Path(output_path)
     final_path = output_path
     start_time = time.time()
+    model_size = model_path.stat().st_size if model_path.exists() else 0
+    attempt_size = size
     try:
-        try:
-            result = _try_render(model_path, final_path, size)
-            return result
-        except Exception as egl_err:
-            logger.error(f"[Thumbnail] EGL rendering failed: {egl_err}")
-            os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-            result = _try_render(model_path, final_path, size)
-            return result
+        while True:
+            try:
+                result = _try_render(model_path, final_path, attempt_size)
+            except Exception as egl_err:
+                logger.error(f"[Thumbnail] EGL rendering failed: {egl_err}")
+                os.environ["PYOPENGL_PLATFORM"] = "osmesa"
+                result = _try_render(model_path, final_path, attempt_size)
+
+            thumb_size = final_path.stat().st_size if final_path.exists() else 0
+            if thumb_size <= model_size * MAX_THUMBNAIL_RATIO or attempt_size[0] <= 64:
+                return result
+
+            # Reduce resolution and try again
+            attempt_size = (attempt_size[0] // 2, attempt_size[1] // 2)
+            logger.info(
+                f"[Thumbnail] 🔄 Re-rendering at {attempt_size} to meet size budget"
+            )
     except Exception as e:
         logger.exception(f"[Thumbnail] Generation failed: {e}")
-        _render_fallback(final_path, size)
+        _render_fallback(final_path, attempt_size)
         return str(final_path)
     finally:
         elapsed = time.time() - start_time
         logger.info(f"[Thumbnail] ✅ Thumbnail completed in {elapsed:.2f}s → {final_path}")
 
 
-def ensure_thumbnail(model_path: Path, output_path: Path, size=(512, 512)) -> str:
+def ensure_thumbnail(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     return render_thumbnail(model_path, output_path, size=size)
 
 

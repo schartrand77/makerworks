@@ -62,6 +62,25 @@ services:
         condition: service_healthy
 
   # ------------------------
+  # Database Migration
+  # ------------------------
+  migrate:
+    image: makerworks-backend:latest
+    container_name: makerworks_migrate
+    command: alembic upgrade head
+    env_file:
+      - .env.development
+      - makerworks-backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+      <<: *buildkit-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ------------------------
   # Backend (FastAPI)
   # ------------------------
   backend:
@@ -94,6 +113,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
       interval: 15s

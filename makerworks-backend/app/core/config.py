@@ -76,7 +76,20 @@ class Settings(BaseSettings):
     # ────────────────
     # REDIS
     # ────────────────
-    redis_url: str = Field(default="redis://makerworks_redis:6379/0", alias="REDIS_URL")
+    # ✅ Default now uses the Docker service name "redis" to ensure network resolution works.
+    # ✅ Provides a strong fallback even if REDIS_URL is unset or blank.
+    redis_url: str = Field(
+        default="redis://redis:6379/0",
+        alias="REDIS_URL"
+    )
+
+    @property
+    def safe_redis_url(self) -> str:
+        """Always returns a valid Redis URL, falling back to docker-compose default if empty."""
+        url = (self.redis_url or "").strip()
+        if not url:
+            return "redis://redis:6379/0"
+        return url
 
     # ────────────────
     # JWT

@@ -11,7 +11,6 @@ from alembic import context
 # ENV + PATH BOOTSTRAP
 # ─────────────────────────────────────────────────────────────
 
-# Load environment from `.env.dev` early (fallback to `.env` if needed)
 dotenv_path = Path(__file__).resolve().parents[1] / ".env.dev"
 if dotenv_path.exists():
     load_dotenv(dotenv_path)
@@ -19,17 +18,21 @@ if dotenv_path.exists():
 else:
     raise RuntimeError("❌ .env.dev not found — Alembic cannot continue")
 
-# Add project root to sys.path so imports like `from app.db.base` work
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 # ─────────────────────────────────────────────────────────────
-# AVOID ASYNC ENGINE IMPORTS
+# IMPORT MODELS / METADATA
 # ─────────────────────────────────────────────────────────────
 
-# DO NOT import `app.db.database` or `app.config.settings` — this would trigger async engine
-# Instead: import only metadata and model classes
 from app.db.base import Base
 import app.models.models  # ensure models are registered
+
+# Validate that metadata contains expected tables
+if not Base.metadata.tables:
+    raise RuntimeError("❌ No tables found in SQLAlchemy Base.metadata! Check model imports.")
+
+if "users" not in Base.metadata.tables:
+    raise RuntimeError("❌ 'users' table not found in metadata. Did you define the User model and import it?")
 
 # ─────────────────────────────────────────────────────────────
 # DATABASE URL FROM ENV
@@ -42,15 +45,12 @@ raw_url = os.getenv("DATABASE_URL")
 if not raw_url:
     raise RuntimeError("❌ DATABASE_URL environment variable is not set")
 
-# Alembic needs a sync driver — downgrade asyncpg to psycopg2
 if raw_url.startswith("postgresql+asyncpg://"):
     sqlalchemy_url = raw_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 else:
     sqlalchemy_url = raw_url
 
 print(f"✅ Using SYNC DATABASE_URL for Alembic: {sqlalchemy_url}")
-
-# Assign to config so `context.configure()` picks it up
 config.set_main_option("sqlalchemy.url", sqlalchemy_url)
 
 target_metadata = Base.metadata
@@ -76,7 +76,6 @@ def run_migrations_offline():
 
 def run_migrations_online():
     connectable = create_engine(sqlalchemy_url, poolclass=pool.NullPool)
-
     with connectable.connect() as connection:
         context.configure(
             connection=connection,

@@ -5,6 +5,7 @@ from typing import List, Optional
 import os
 from pydantic import Field
 
+
 def _default_upload_path() -> Path:
     """
     Determine the default uploads path:
@@ -14,6 +15,7 @@ def _default_upload_path() -> Path:
     if os.path.exists("/.dockerenv") or os.getenv("DOCKER_ENV") == "1":
         return Path("/app/uploads").resolve()
     return Path(os.getcwd(), "uploads").resolve()
+
 
 class Settings(BaseSettings):
     # ─── App Info ───────────────────────────────────────
@@ -51,7 +53,19 @@ class Settings(BaseSettings):
         return self.database_url.replace("postgresql://", "postgresql+asyncpg://")
 
     # ─── Redis ─────────────────────────────────────────
-    redis_url: str = Field(default="redis://makerworks_redis:6379/0", alias="REDIS_URL")
+    # ✅ Updated default to use service name "redis"
+    redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
+
+    @property
+    def safe_redis_url(self) -> str:
+        """
+        Always returns a valid Redis URL, falling back to the default
+        if the environment variable is unset or blank.
+        """
+        url = (self.redis_url or "").strip()
+        if not url:
+            return "redis://redis:6379/0"
+        return url
 
     # ─── JWT (Legacy) ──────────────────────────────────
     jwt_secret: Optional[str] = None
@@ -88,6 +102,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+
 @lru_cache()
 def get_settings() -> Settings:
     s = Settings()
@@ -97,5 +112,6 @@ def get_settings() -> Settings:
             "postgresql://", "postgresql+asyncpg://"
         )
     return s
+
 
 settings = get_settings()

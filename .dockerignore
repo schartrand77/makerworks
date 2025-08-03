@@ -1,0 +1,33 @@
+# Root-level ignores to keep global context small
+
+# Secrets and envs
+.env
+.env.*
+!.env.development
+*.pem
+*.key
+
+# Git and local configs
+.git
+.gitignore
+.github/
+
+# Editor/OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Build artifacts
+dist/
+build/
+.cache/
+
+# Docker Compose files (not needed in images)
+docker-compose.override.yml
+docker-compose.yml
+
+# Local runtime data
+logs/
+uploads/
+tmp/

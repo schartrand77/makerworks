@@ -1,15 +1,18 @@
-# Prevent secrets and envs from entering the Docker image
-#.env
-#.env.*
+# Prevent secrets and envs from entering the backend image
+.env
+.env.*
+!.env.dev
+
 keys/
 *.pem
+*.key
 
-# Ignore Python bytecode and caches
+# Python cache and bytecode
 __pycache__/
 *.py[cod]
 *.log
 
-# Ignore local builds and venvs
+# Virtual environments and local builds
 .venv/
 dist/
 build/
@@ -17,18 +20,20 @@ build/
 *.sqlite3
 *.db
 
-# Ignore test and coverage data
+# Test and coverage data
+.pytest_cache/
 .coverage
 *.test.*
-.pytest_cache/
 
-# Ignore editor and OS noise
+# Editor/OS noise
 .DS_Store
-*.swp
 .vscode/
 .idea/
+*.swp
 
-# Ignore frontend artifacts (this is backend-only)
-frontend/
-start.sh
-nginx.conf
+# Frontend and unrelated files
+../makerworks-frontend/**
+
+# ✅ Exclude runtime data from image; mount as volumes instead
+uploads/**
+logs/**

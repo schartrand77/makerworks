@@ -1,7 +1,9 @@
+x-buildkit-env: &buildkit-env
+  COMPOSE_BAKE: "true"
+  DOCKER_BUILDKIT: "1"
+  BUILDKIT_INLINE_CACHE: "1"
+
 services:
-  # ------------------------
-  # PostgreSQL
-  # ------------------------
   postgres:
     image: postgres:15-alpine
     container_name: makerworks_postgres
@@ -14,17 +16,12 @@ services:
       POSTGRES_DB: makerworks
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    labels:
-      com.makerworks.service: "postgres"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U makerworks"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ------------------------
-  # Redis
-  # ------------------------
   redis:
     image: redis:7-alpine
     container_name: makerworks_redis
@@ -34,37 +31,32 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
-    labels:
-      com.makerworks.service: "redis"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ------------------------
-  # Backend (FastAPI)
-  # ------------------------
   backend:
     build:
       context: ./makerworks-backend
       dockerfile: Dockerfile
+      args:
+        WORKER_IMAGE: "false"
+    image: makerworks-backend:latest
     container_name: makerworks_backend
     restart: unless-stopped
     ports:
       - "8000:8000"
     env_file:
+      - .env.development
       - makerworks-backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      # ✅ Hardcoded correct Redis URL using service name
       REDIS_URL: redis://redis:6379/0
       BASE_URL: http://localhost:8000
-    volumes:
-      - ./makerworks-backend/uploads:/app/uploads
-      - ./makerworks-backend/logs:/app/logs
-      - ./makerworks-backend/alembic:/app/alembic
-    labels:
-      com.makerworks.service: "backend"
+      <<: *buildkit-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,85 +69,75 @@ services:
       start_period: 40s
       retries: 5
 
-  # ------------------------
-  # Celery Worker
-  # ------------------------
   worker:
     build:
       context: ./makerworks-backend
       dockerfile: Dockerfile
+      args:
+        WORKER_IMAGE: "true"
+    image: makerworks-worker:latest
     container_name: makerworks_worker
     restart: unless-stopped
     command: celery -A app.celery_worker.celery_app worker --loglevel=INFO --concurrency=2
     env_file:
+      - .env.development
       - makerworks-backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      # ✅ Hardcoded correct Redis URL using service name
       REDIS_URL: redis://redis:6379/0
-    volumes:
-      - ./makerworks-backend/uploads:/app/uploads
-      - ./makerworks-backend/alembic:/app/alembic
-    labels:
-      com.makerworks.service: "worker"
+      <<: *buildkit-env
     depends_on:
       backend:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_worker.celery_app status | grep -q OK"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
-  # ------------------------
-  # Frontend (Dev: Vite hot-reload)
-  # ------------------------
   frontend:
     build:
       context: ./makerworks-frontend
       dockerfile: Dockerfile
       target: dev
+    image: makerworks-frontend:dev
     container_name: makerworks_frontend
     restart: unless-stopped
     ports:
       - "5173:5173"
     env_file:
+      - .env.development
       - makerworks-frontend/.env
-    volumes:
-      - ./makerworks-frontend:/app
-      - /app/node_modules
-    command: npm run dev -- --host
-    labels:
-      com.makerworks.service: "frontend"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      <<: *buildkit-env
     depends_on:
       backend:
         condition: service_healthy
 
-  # ------------------------
-  # Frontend Production (Optional)
-  # ------------------------
   frontend-prod:
     build:
       context: ./makerworks-frontend
       dockerfile: Dockerfile
       target: production
+    image: makerworks-frontend:prod
     container_name: makerworks_frontend_prod
     restart: unless-stopped
     ports:
       - "80:80"
     env_file:
+      - .env.development
       - makerworks-frontend/.env
-    labels:
-      com.makerworks.service: "frontend-prod"
+    environment:
+      <<: *buildkit-env
     depends_on:
       backend:
         condition: service_healthy
 
-# ------------------------
-# Volumes
-# ------------------------
 volumes:
   postgres_data:
-    driver: local
-    labels:
-      com.makerworks.volume: "postgres_data"
   redis_data:
-    driver: local
-    labels:
-      com.makerworks.volume: "redis_data"

@@ -1,0 +1,34 @@
+# Prevent secrets and envs from entering the frontend image
+.env
+.env.*
+!.env.development
+
+# ✅ Always include package manifests for Docker builds
+!package.json
+!package-lock.json
+
+# Ignore node modules (we use cache mounts instead)
+node_modules/
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Build artifacts
+dist/
+build/
+.cache/
+.vite/
+
+# Editor/OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Git and local configs
+.git
+.gitignore
+.github/
+
+# Backend and unrelated files
+../makerworks-backend/**

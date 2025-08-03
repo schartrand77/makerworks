@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1.5
+
+##############################################
+# ===== Base Python Environment =====
+##############################################
+
+# Accept TARGETPLATFORM for BuildKit cross-platform builds
+ARG TARGETPLATFORM
+ARG _PLATFORM_ARG
+
+# Use Python slim base image
+FROM python:3.12-slim AS base
+
+WORKDIR /app
+
+# ✅ Install build essentials, libpq runtime and headers, and Postgres client tools (pg_isready)
+# Try version-pinned first (Postgres 15), fallback to generic postgresql-client if not available
+# Add diagnostic output if pg_isready is missing
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        libpq5 \
+        postgresql-client-15 \
+        curl \
+        ca-certificates \
+    || apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        libpq5 \
+        postgresql-client \
+        curl \
+        ca-certificates) && \
+    command -v pg_isready || ( \
+        echo "❌ pg_isready missing after install! Dumping available packages:" && \
+        apt-cache search postgresql-client && \
+        exit 1 \
+    ) && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ✅ Verify pg_isready is installed at build time (second layer check)
+RUN command -v pg_isready || (echo "❌ pg_isready missing at build time!" && exit 1)
+
+# ✅ Copy requirements and install Python deps
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ✅ Verify psycopg2, libpq, and pg_isready availability (runtime safety)
+RUN python -c "import psycopg2; import ctypes.util; print('✅ psycopg2 OK, libpq:', ctypes.util.find_library('pq'))" \
+    && pg_isready --version && echo "✅ pg_isready available"

@@ -1,0 +1,47 @@
+{
+  "name": "MakerWorks Monorepo",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "backend",
+  "workspaceFolder": "/workspace/makerworks",
+  "runServices": ["backend", "frontend", "postgres", "redis"],
+  "forwardPorts": [8000, 5173],
+  "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "eslint.workingDirectories": ["makerworks-frontend"],
+        "python.analysis.autoImportCompletions": true,
+        "python.languageServer": "Pylance"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-azuretools.vscode-docker",
+        "ms-toolsai.jupyter",
+        "ms-vscode.vscode-typescript-next",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  },
+
+  "postCreateCommand": "pip install -r makerworks-backend/requirements.txt && cd makerworks-frontend && npm install",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "remoteEnv": {
+    "DATABASE_URL": "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks",
+    "REDIS_URL": "redis://redis:6379/0",
+    "BACKEND_URL": "http://localhost:8000",
+    "FRONTEND_URL": "http://localhost:5173"
+  }
+}

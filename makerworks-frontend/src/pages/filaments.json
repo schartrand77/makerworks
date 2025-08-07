@@ -1,0 +1,298 @@
+{
+  "filaments": [
+    {
+      "material": "PLA",
+      "variant": "Basic",
+      "price_cad_per_kg": 32.99,
+      "colors": [
+        "White", "Black", "Red", "Blue", "Green", "Yellow", "Gray", "Pink", "Orange", "Purple", "Beige", "Brown"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Matte",
+      "price_cad_per_kg": 36.99,
+      "colors": [
+        "Matte Ivory White", "Matte Latte Brown", "Matte Lilac Purple", "Matte Ash Grey", "Matte Mandarin Orange",
+        "Matte Sakura Pink", "Matte Ice Blue", "Matte Marine Blue", "Matte Lemon Yellow", "Matte Scarlet Red",
+        "Matte Dark Red", "Matte Dark Brown", "Matte Dark Green", "Matte Grass Green", "Matte Dark Blue",
+        "Matte Charcoal", "Matte Desert Tan", "Matte Bone White", "Matte Plum", "Matte Sky Blue", "Apple Green",
+        "Matte Dark Chocolate", "Matte Caramel", "Matte Terracotta", "Matte Nardo Gray"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Silk+",
+      "price_cad_per_kg": 39.99,
+      "colors": [
+        "Silk Gold", "Silk Silver", "Silk Bronze", "Silk Rose Gold", "Silk Copper", "Silk Champagne",
+        "Silk Purple", "Silk Blue", "Silk Green", "Silk Red", "Silk Pink", "Silk Teal", "Silk Black"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Silk Dual Color",
+      "price_cad_per_kg": 44.99,
+      "colors": [
+        "Twilight", "Aurora", "Galaxy", "Sunset", "Ocean", "Mystic", "Volcano", "Jungle"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Sparkle",
+      "price_cad_per_kg": 42.99,
+      "colors": [
+        "Sparkle White", "Sparkle Black", "Sparkle Red", "Sparkle Green", "Sparkle Blue", "Sparkle Gold"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Metal",
+      "price_cad_per_kg": 46.99,
+      "colors": [
+        "Aluminum", "Steel", "Copper", "Bronze", "Iron"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Wood",
+      "price_cad_per_kg": 49.99,
+      "colors": [
+        "Light Oak", "Dark Oak", "Cherry", "Walnut", "Maple", "Ebony"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Marble",
+      "price_cad_per_kg": 41.99,
+      "colors": [
+        "White Marble", "Black Marble"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Galaxy",
+      "price_cad_per_kg": 43.99,
+      "colors": [
+        "Nebula Purple", "Starlight Blue", "Milky Way Black", "Cosmic Silver"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Glow",
+      "price_cad_per_kg": 52.99,
+      "colors": [
+        "Glow Green", "Glow Blue", "Glow Orange", "Glow Pink", "Glow White"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "Aero",
+      "price_cad_per_kg": 35.99,
+      "colors": [
+        "Aero White", "Aero Black"
+      ]
+    },
+    {
+      "material": "PLA",
+      "variant": "CF",
+      "price_cad_per_kg": 59.99,
+      "colors": [
+        "Carbon Black", "Carbon Gray"
+      ]
+    },
+    {
+      "material": "PETG",
+      "variant": "Basic",
+      "price_cad_per_kg": 39.99,
+      "colors": [
+        "White", "Black", "Red", "Blue", "Green", "Gray", "Clear", "Yellow", "Orange"
+      ]
+    },
+    {
+      "material": "PETG",
+      "variant": "Translucent",
+      "price_cad_per_kg": 42.99,
+      "colors": [
+        "Clear Red", "Clear Blue", "Clear Green", "Clear Yellow", "Clear Orange", "Clear Purple", "Clear Pink", "Clear Teal", "Clear Smoke"
+      ]
+    },
+    {
+      "material": "PETG",
+      "variant": "HF",
+      "price_cad_per_kg": 45.99,
+      "colors": [
+        "White", "Black", "Red", "Blue", "Gray", "Green"
+      ]
+    },
+    {
+      "material": "PETG",
+      "variant": "CF",
+      "price_cad_per_kg": 56.99,
+      "colors": [
+        "Carbon Black", "Carbon Gray", "Dark Blue", "Dark Red", "Dark Green", "Dark Orange"
+      ]
+    },
+    {
+      "material": "ABS",
+      "variant": "Basic",
+      "price_cad_per_kg": 37.99,
+      "colors": [
+        "White", "Black", "Gray", "Red", "Blue", "Green", "Yellow", "Orange", "Beige", "Brown", "Pink", "Purple", "Dark Blue"
+      ]
+    },
+    {
+      "material": "ABS",
+      "variant": "GF",
+      "price_cad_per_kg": 64.99,
+      "colors": [
+        "Glass Black", "Glass Gray"
+      ]
+    },
+    {
+      "material": "ASA",
+      "variant": "Basic",
+      "price_cad_per_kg": 44.99,
+      "colors": [
+        "White", "Black", "Gray", "Red", "Blue", "Green"
+      ]
+    },
+    {
+      "material": "ASA",
+      "variant": "CF",
+      "price_cad_per_kg": 66.99,
+      "colors": [
+        "Carbon Black"
+      ]
+    },
+    {
+      "material": "PC",
+      "variant": "Basic",
+      "price_cad_per_kg": 59.99,
+      "colors": [
+        "Clear", "White", "Black", "Gray"
+      ]
+    },
+    {
+      "material": "PC",
+      "variant": "FR",
+      "price_cad_per_kg": 69.99,
+      "colors": [
+        "Black", "Gray", "White"
+      ]
+    },
+    {
+      "material": "TPU",
+      "variant": "85A",
+      "price_cad_per_kg": 62.99,
+      "colors": [
+        "White", "Black"
+      ]
+    },
+    {
+      "material": "TPU",
+      "variant": "90A",
+      "price_cad_per_kg": 62.99,
+      "colors": [
+        "White", "Black", "Red", "Blue"
+      ]
+    },
+    {
+      "material": "TPU",
+      "variant": "95A HF",
+      "price_cad_per_kg": 65.99,
+      "colors": [
+        "White", "Black", "Red", "Blue", "Yellow", "Green"
+      ]
+    },
+    {
+      "material": "TPU",
+      "variant": "AMS",
+      "price_cad_per_kg": 62.99,
+      "colors": [
+        "White", "Black", "Red", "Blue", "Green", "Yellow", "Clear"
+      ]
+    },
+    {
+      "material": "PA6",
+      "variant": "GF",
+      "price_cad_per_kg": 84.99,
+      "colors": [
+        "Black", "Gray", "Dark Blue", "Dark Green", "Dark Red", "Dark Orange", "Dark Yellow", "Dark Brown"
+      ]
+    },
+    {
+      "material": "PA6",
+      "variant": "CF",
+      "price_cad_per_kg": 86.99,
+      "colors": [
+        "Carbon Black"
+      ]
+    },
+    {
+      "material": "PAHT",
+      "variant": "CF",
+      "price_cad_per_kg": 88.99,
+      "colors": [
+        "Carbon Black"
+      ]
+    },
+    {
+      "material": "PPA",
+      "variant": "CF",
+      "price_cad_per_kg": 92.99,
+      "colors": [
+        "Carbon Black"
+      ]
+    },
+    {
+      "material": "PPS",
+      "variant": "CF",
+      "price_cad_per_kg": 96.99,
+      "colors": [
+        "Carbon Black"
+      ]
+    },
+    {
+      "material": "PET",
+      "variant": "CF",
+      "price_cad_per_kg": 78.99,
+      "colors": [
+        "Carbon Black"
+      ]
+    },
+    {
+      "material": "Support",
+      "variant": "PVA",
+      "price_cad_per_kg": 129.99,
+      "colors": [
+        "Clear"
+      ]
+    },
+    {
+      "material": "Support",
+      "variant": "PLA",
+      "price_cad_per_kg": 39.99,
+      "colors": [
+        "White"
+      ]
+    },
+    {
+      "material": "Support",
+      "variant": "ABS",
+      "price_cad_per_kg": 49.99,
+      "colors": [
+        "White"
+      ]
+    },
+    {
+      "material": "Support",
+      "variant": "PA/PET",
+      "price_cad_per_kg": 69.99,
+      "colors": [
+        "Green"
+      ]
+    }
+  ]
+}
+

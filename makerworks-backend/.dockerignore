@@ -1,0 +1,41 @@
+# Prevent secrets and envs from entering the backend image
+.env
+.env.*
+!.env.dev
+
+keys/
+*.pem
+*.key
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*.log
+
+# Virtual environments and local builds
+.venv/
+dist/
+build/
+.cache/
+*.sqlite3
+*.db
+
+alembic/versions
+
+# Test and coverage data
+.pytest_cache/
+.coverage
+*.test.*
+
+# Editor/OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Frontend and unrelated files
+../makerworks-frontend/**
+
+# ✅ Exclude runtime data from image; mount as volumes instead
+uploads/**
+logs/**

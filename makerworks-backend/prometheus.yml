@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: 'makerworks-backend'
+    static_configs:
+      - targets: ['backend:8000']
+    metrics_path: /metrics
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: backend
+
+  - job_name: 'flower'
+    static_configs:
+      - targets: ['flower:5555']
+    metrics_path: /metrics
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: flower
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:9121']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: redis

@@ -1,0 +1,52 @@
+{
+  "PLA": {
+    "MATTE": [
+      {
+        "name": "Matte Ice Blue",
+        "hex": "#D6EFFF"
+      },
+      {
+        "name": "Matte Scarlet Red",
+        "hex": "#B22222"
+      },
+      {
+        "name": "Matte Lemon Yellow",
+        "hex": "#FFE135"
+      },
+      {
+        "name": "Matte Charcoal",
+        "hex": "#333333"
+      },
+      {
+        "name": "Matte Marine Blue",
+        "hex": "#0E4D92"
+      },
+      {
+        "name": "Matte Sakura Pink",
+        "hex": "#F7C4D2"
+      }
+    ],
+    "SILK": [
+      {
+        "name": "Silk Gold",
+        "hex": "#FFD700"
+      },
+      {
+        "name": "Silk Silver",
+        "hex": "#C0C0C0"
+      }
+    ]
+  },
+  "PETG": {
+    "BASE": [
+      {
+        "name": "Clear PETG",
+        "hex": "#CCCCCC"
+      },
+      {
+        "name": "Black PETG",
+        "hex": "#000000"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  backend:
+    volumes:
+      - ../makerworks-backend:/app
+      - ../makerworks-backend/uploads:/app/uploads
+      - ../makerworks-backend/logs:/app/logs
+      - ../makerworks-backend/alembic:/app/alembic
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    volumes:
+      - ../makerworks-backend:/app
+      - ../makerworks-backend/uploads:/app/uploads
+      - ../makerworks-backend/alembic:/app/alembic
+
+  frontend:
+    volumes:
+      - ../makerworks-frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host

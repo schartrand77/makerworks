@@ -1,0 +1,60 @@
+x-buildkit-env: &buildkit-env
+  COMPOSE_BAKE: "true"
+  DOCKER_BUILDKIT: "1"
+  BUILDKIT_INLINE_CACHE: "1"
+
+# ✅ Allow TARGETPLATFORM override but default to native host architecture
+x-platform-args: &platform-args
+  TARGETPLATFORM: ${PLATFORM:-}
+
+services:
+  backend:
+    # ✅ Native builds, no hardcoded platform
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile
+      args:
+        <<: *platform-args
+        WORKER_IMAGE: "false"
+    volumes:
+      - ./makerworks-backend:/app
+      - ./makerworks-backend/uploads:/app/uploads
+      - ./makerworks-backend/logs:/app/logs
+      - ./makerworks-backend/alembic:/app/alembic
+    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      # ✅ Hardcoded correct Redis URL using service name
+      REDIS_URL: redis://redis:6379/0
+      BASE_URL: http://localhost:8000
+      <<: *buildkit-env
+
+  worker:
+    # ✅ Native builds, no hardcoded platform
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile
+      args:
+        <<: *platform-args
+        WORKER_IMAGE: "true"
+    volumes:
+      - ./makerworks-backend:/app
+      - ./makerworks-backend/uploads:/app/uploads
+      - ./makerworks-backend/alembic:/app/alembic
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      # ✅ Hardcoded correct Redis URL using service name
+      REDIS_URL: redis://redis:6379/0
+      <<: *buildkit-env
+
+  frontend:
+    # ✅ Native builds for frontend
+    build:
+      context: ./makerworks-frontend
+    volumes:
+      - ./makerworks-frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      <<: *buildkit-env

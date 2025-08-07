@@ -1,0 +1,149 @@
+  migrate:
+    build:
+      context: ./makerworks-backend
+    container_name: makerworks_migrate
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: >
+      "
+      echo '⏳ Waiting for PostgreSQL...';
+      until pg_isready -h postgres -p 5432 -U makerworks; do
+        echo '... still waiting for db';
+        sleep 1;
+      done;
+
+      echo '✅ PostgreSQL is ready!';
+      alembic upgrade head;
+
+      echo '👤 Seeding admin user...';
+      python -m app.utils.admin_seed || echo '⚠️ Admin seed failed';
+
+      echo '✅ Migration complete.'
+      "
+    volumes:
+      - ./makerworks-backend:/app
+      - ./makerworks-backend/alembic/versions:/app/alembic/versions
+    version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: makerworks_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: makerworks
+      POSTGRES_PASSWORD: makerworks
+      POSTGRES_DB: makerworks
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U makerworks"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: makerworks_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./makerworks-backend
+    container_name: makerworks_backend
+    restart: unless-stopped
+    command: [ "gunicorn", "-k", "uvicorn.workers.UvicornWorker", "app.main:app", "--bind", "0.0.0.0:8000" ]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./makerworks-backend:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: ./makerworks-backend
+    container_name: makerworks_migrate
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: >
+      "
+      echo '⏳ Waiting for PostgreSQL...';
+      until pg_isready -h postgres -p 5432 -U makerworks; do
+        echo '... waiting for db';
+        sleep 1;
+      done;
+
+      echo '✅ PostgreSQL is ready. Running alembic upgrade...';
+      alembic upgrade head;
+
+      echo '👤 Attempting admin seed...';
+      python -m app.utils.admin_seed || echo '⚠️ Admin seed failed';
+
+      echo '✅ Migration complete.'
+      "
+    volumes:
+      - ./makerworks-backend:/app
+      - ./makerworks-backend/alembic/versions:/app/alembic/versions
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      - REDIS_URL=redis://redis:6379/0
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./makerworks-backend
+    container_name: makerworks_worker
+    command: [ "celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info" ]
+    volumes:
+      - ./makerworks-backend:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./makerworks-frontend
+    container_name: makerworks_frontend
+    command: [ "npm", "run", "dev" ]
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./makerworks-frontend:/app
+    working_dir: /app
+    environment:
+      - NODE_ENV=development
+
+volumes:
+  postgres_data::
+      - DATABASE_URL=postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      - REDIS_URL=redis://redis:6379/0
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

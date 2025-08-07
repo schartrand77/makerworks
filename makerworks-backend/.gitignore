@@ -1,0 +1,29 @@
+# Python virtual env and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+
+# Environment config
+.env
+.env.*
+!.env.example
+
+# JWT keys
+keys/private.pem
+keys/public.pem
+
+# Editor and OS files
+.DS_Store
+*.swp
+
+# Test/cache/artifacts
+.coverage
+*.log
+*.sqlite3
+dist/
+build/
+.cache/
+
+# VSCode and IDE
+.vscode/
+.idea/

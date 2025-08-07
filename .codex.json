@@ -1,0 +1,17 @@
+{
+  "name": "MakerWorks",
+  "services": [
+    {
+      "name": "frontend",
+      "path": "makerworks-frontend",
+      "language": "typescript",
+      "framework": "react"
+    },
+    {
+      "name": "backend",
+      "path": "makerworks-backend",
+      "language": "python",
+      "framework": "fastapi"
+    }
+  ]
+}

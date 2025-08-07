@@ -1,0 +1,79 @@
+{
+  "info": {
+    "name": "MakerWorks Auth",
+    "_postman_id": "b3c2f6d3-0000-0000-0000-000000000000",
+    "description": "Tests signup, signin, and /me guest fallback",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "GET /me (guest)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://127.0.0.1:8000/api/v1/auth/me",
+          "protocol": "http",
+          "host": ["127.0.0.1"],
+          "port": "8000",
+          "path": ["api", "v1", "auth", "me"]
+        }
+      }
+    },
+    {
+      "name": "POST /signup",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"user@example.com\",\n  \"username\": \"user1\",\n  \"password\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8000/api/v1/auth/signup",
+          "protocol": "http",
+          "host": ["127.0.0.1"],
+          "port": "8000",
+          "path": ["api", "v1", "auth", "signup"]
+        }
+      }
+    },
+    {
+      "name": "POST /signin",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email_or_username\": \"user1\",\n  \"password\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8000/api/v1/auth/signin",
+          "protocol": "http",
+          "host": ["127.0.0.1"],
+          "port": "8000",
+          "path": ["api", "v1", "auth", "signin"]
+        }
+      }
+    },
+    {
+      "name": "GET /me (authenticated)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": {
+          "raw": "http://127.0.0.1:8000/api/v1/auth/me",
+          "protocol": "http",
+          "host": ["127.0.0.1"],
+          "port": "8000",
+          "path": ["api", "v1", "auth", "me"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "token", "value": "" }
+  ]
+}

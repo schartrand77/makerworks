@@ -1,0 +1,166 @@
+x-buildkit-env: &buildkit-env
+  COMPOSE_BAKE: "true"
+  DOCKER_BUILDKIT: "1"
+  BUILDKIT_INLINE_CACHE: "1"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: makerworks_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: makerworks
+      POSTGRES_PASSWORD: makerworks
+      POSTGRES_DB: makerworks
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U makerworks"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: makerworks_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile
+      args:
+        WORKER_IMAGE: "false"
+    image: makerworks-migrate:latest
+    container_name: makerworks_migrate
+    command: alembic upgrade head
+    working_dir: /app
+    env_file:
+      - .env.dev
+      - makerworks-backend/.env
+    environment:
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+      <<: *buildkit-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile
+      args:
+        WORKER_IMAGE: "false"
+    image: makerworks-backend:latest
+    container_name: makerworks_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.dev
+      - makerworks-backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+      BASE_URL: http://localhost:8000
+      <<: *buildkit-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 40s
+      retries: 5
+
+  worker:
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile
+      args:
+        WORKER_IMAGE: "true"
+    image: makerworks-worker:latest
+    container_name: makerworks_worker
+    restart: unless-stopped
+    command: celery -A app.celery_worker.celery_app worker --loglevel=INFO --concurrency=2
+    env_file:
+      - .env.dev
+      - makerworks-backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+      <<: *buildkit-env
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_worker.celery_app status | grep -q OK"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: dev
+    image: makerworks-frontend:dev
+    container_name: makerworks_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env.dev
+      - makerworks-frontend/.env
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      <<: *buildkit-env
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  frontend-prod:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: production
+    image: makerworks-frontend:prod
+    container_name: makerworks_frontend_prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    env_file:
+      - .env.dev
+      - makerworks-frontend/.env
+    environment:
+      <<: *buildkit-env
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

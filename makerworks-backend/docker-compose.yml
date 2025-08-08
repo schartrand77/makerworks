@@ -29,64 +29,72 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile.macos
+    image: makerworks-migrate:latest
+    container_name: makerworks_migrate
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      echo "⏳ Waiting for PostgreSQL..."
+      until PGPASSWORD=makerworks psql -h postgres -U makerworks -d makerworks -c '\q'; do
+        echo "... still waiting for db"
+        sleep 1
+      done
+      echo "✅ PostgreSQL is ready."
+      echo "🔖 Stamping initial stub..."
+      alembic -c alembic.ini stamp ecf884acd250
+      echo "🚀 Applying migrations..."
+      alembic -c alembic.ini upgrade head
+      echo "✅ Migrations complete."
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile.macos
     container_name: makerworks_backend
     restart: unless-stopped
-    command:
-      - gunicorn
-      - -k
-      - uvicorn.workers.UvicornWorker
-      - app.main:app
-      - --bind
-      - 0.0.0.0:8000
     ports:
       - "8000:8000"
-    volumes:
-      - ./:/app
-    environment:
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.macos
-    container_name: makerworks_migrate
-    entrypoint: [ "/bin/sh", "-c" ]
-    command: >
-      echo '⏳ Waiting for PostgreSQL...';
-      until pg_isready -h postgres -p 5432 -U makerworks; do
-        echo '... still waiting for db';
-        sleep 1;
-      done;
-      echo '✅ PostgreSQL is ready.';
-      echo '🔖 Stamping initial revision...';
-      alembic stamp ecf884acd250;
-      echo '🚀 Applying migrations...';
-      alembic upgrade head;
-      echo '👤 Seeding admin user...';
-      python -m app.utils.admin_seed || echo '⚠️ Admin seed failed';
-      echo '✅ Migration complete.';
-    volumes:
-      - ./:/app
-      - ./alembic/versions:/app/alembic/versions
-    environment:
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      echo "📦 Loading environment..."
+      [ -f .env.dev ] && export $(grep -v '^#' .env.dev | xargs) || echo "⚠️ No .env.dev"
+      echo "🕓 Waiting for database..."
+      until pg_isready -h postgres -U makerworks; do sleep 1; done
+      echo "✅ Database is ready."
+      echo "🚀 Starting application..."
+      exec gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000
     working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
 
   worker:
     build:
@@ -95,12 +103,9 @@ services:
       args:
         WORKER_IMAGE: "true"
     container_name: makerworks_worker
-    command:
-      - celery
-      - -A
-      - app.worker.celery_app
-      - worker
-      - --loglevel=info
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
+    working_dir: /app
     volumes:
       - ./:/app
     environment:

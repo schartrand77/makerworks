@@ -21,14 +21,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source
 COPY app ./app
-COPY alembic/env.py ./alembic/env.py
-COPY alembic/README ./alembic/README
-COPY alembic/script.py.mako ./alembic/script.py.mako
 
-# ✅ Include alembic.ini (critical)
-COPY alembic.ini ./
+# Copy Alembic config and scripts
+COPY alembic/env.py           ./alembic/env.py
+COPY alembic/README           ./alembic/README
+COPY alembic/script.py.mako   ./alembic/script.py.mako
+COPY alembic.ini              ./
 
-# ✅ Ensure versions dir exists inside container
+# Ensure the versions directory exists, then copy all your revision files
 RUN mkdir -p ./alembic/versions
+COPY alembic/versions        ./alembic/versions
 
+# Expose and run
+EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

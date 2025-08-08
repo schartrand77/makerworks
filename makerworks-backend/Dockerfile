@@ -22,15 +22,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend source
 COPY app ./app
 
-# Copy Alembic config and scripts
-COPY alembic/env.py           ./alembic/env.py
-COPY alembic/README           ./alembic/README
-COPY alembic/script.py.mako   ./alembic/script.py.mako
-COPY alembic.ini              ./
+# Copy entire Alembic directory (env.py, script.py.mako, README, versions/, etc.)
+COPY alembic ./alembic
+COPY alembic.ini ./
 
-# Ensure the versions directory exists, then copy all your revision files
-RUN mkdir -p ./alembic/versions
-COPY alembic/versions        ./alembic/versions
+# Ensure versions subfolder is present even if empty
+RUN test -d alembic/versions || mkdir -p alembic/versions
 
 # Expose and run
 EXPOSE 8000

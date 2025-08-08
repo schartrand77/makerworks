@@ -37,6 +37,13 @@ try:
     from app.startup.admin_seed import ensure_admin_user
     from app.utils.boot_messages import random_boot_message
     from app.utils.system_info import get_system_status_snapshot
+
+    # ─── Updated banner import ────────────────────────────────
+    try:
+        from app.logging_config import startup_banner
+    except Exception:
+        def startup_banner() -> None:
+            logging.getLogger("uvicorn").info("🚀 Backend startup (fallback banner)")
 except Exception:
     formatted_tb = "".join(traceback.format_exc())
     safe_stderr("=== STARTUP IMPORT FAILURE ===\n" + formatted_tb + "\n")
@@ -128,6 +135,10 @@ async def lifespan(app: FastAPI):
 
         await init_db()
         await ensure_admin_user()
+
+        # ─── Custom startup banner ───────────────────────────────────
+        startup_banner()
+        logger.info("✅ Backend is up and ready to accept requests")
 
         yield
 

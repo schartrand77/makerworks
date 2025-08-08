@@ -1,9 +1,8 @@
-"""
-initial stub
+"""initial stub
 
 Revision ID: ecf884acd250
 Revises:
-Create Date: 2025-08-08 09:00:00
+Create Date: 2025-08-08 10:30:00
 """
 
 from alembic import op
@@ -15,8 +14,12 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-def upgrade():
+
+def upgrade() -> None:
+    # no-op stub
     pass
 
-def downgrade():
+
+def downgrade() -> None:
+    # no-op stub
     pass

@@ -1,79 +1,58 @@
 # syntax=docker/dockerfile:1.5
 
-##############################################
-# ===== macOS ARM64 Backend =====
-##############################################
+###################################
+# Builder stage
+###################################
+FROM python:3.12-slim AS builder
 
-ARG TARGETPLATFORM
-FROM --platform=${TARGETPLATFORM:-linux/arm64} python:3.12-slim AS base
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=on
 
 WORKDIR /app
 
-# ✅ Install system dependencies
-RUN apt-get update && \
-    (apt-get install -y --no-install-recommends \
-        build-essential \
-        libpq-dev \
-        libpq5 \
-        gcc \
-        musl-dev \
-        curl \
-        git \
-        libfreetype6-dev \
-        libpng-dev \
-        pkg-config \
-        python3-dev \
-        postgresql-client-15 \
-     || apt-get install -y --no-install-recommends postgresql-client) && \
-    rm -rf /var/lib/apt/lists/*
+# System dependencies
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      libpq-dev \
+      curl \
+ && rm -rf /var/lib/apt/lists/*
 
-# ✅ Ensure pg_isready is available
-RUN command -v pg_isready || (echo "❌ pg_isready missing!" && exit 1)
-
-# ✅ Install all Python dependencies including asyncpg and gunicorn
+# Install Python dependencies
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip \
-    && pip install --no-cache-dir psycopg[binary]==3.2.9 \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir gunicorn uvicorn asyncpg
+RUN pip install --no-cache-dir -r requirements.txt
 
-##############################################
-# ===== Builder Stage =====
-##############################################
-ARG TARGETPLATFORM
-FROM --platform=${TARGETPLATFORM:-linux/arm64} base AS builder
+# Copy application code
+COPY app ./app
+
+# Copy the entire Alembic directory (env.py, script.py.mako, versions/, etc.)
+COPY alembic ./alembic
+COPY alembic.ini ./
+
+###################################
+# Final image stage
+###################################
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-COPY alembic.ini /app/alembic.ini
-COPY alembic /app/alembic
-
-# ✅ Safe env file creation
-ONBUILD COPY .env.example /app/.env.example
-RUN if [ -f "/app/.env.example" ]; then \
-      cp /app/.env.example /app/.env.dev; \
-    else \
-      echo "⚠️  No .env.example found, creating blank /app/.env.dev"; \
-      touch /app/.env.dev; \
-    fi
-
-##############################################
-# ===== Final Stage =====
-##############################################
-ARG TARGETPLATFORM
-FROM --platform=${TARGETPLATFORM:-linux/arm64} base AS final
-WORKDIR /app
-
-ARG CACHE_BUST=1
-
+# Copy installed packages from builder
 COPY --from=builder /usr/local /usr/local
-COPY --from=builder /app/alembic /app/alembic
-COPY --from=builder /app/alembic.ini /app/alembic.ini
-COPY --from=builder /app/.env.dev /app/.env.dev
 
-COPY ./app /app/app
-COPY ./docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
+# Copy application code
+COPY --from=builder /app/app ./app
+
+# Copy Alembic scripts (with full versions/ subfolder)
+COPY --from=builder /app/alembic ./alembic
+COPY --from=builder /app/alembic.ini ./
+
+# Copy and make entrypoint executable
+COPY docker-entrypoint.sh .
+RUN chmod +x docker-entrypoint.sh
 
 EXPOSE 8000
-CMD ["./docker-entrypoint.sh"]
+ENTRYPOINT ["./docker-entrypoint.sh"]

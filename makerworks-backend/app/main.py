@@ -28,6 +28,7 @@ try:
     from app.config.settings import settings
     from app.db.database import init_db
     from app.db.session import async_engine
+    from app.db.base import Base
     from app.routes import (
         admin, auth, avatar, cart, checkout, filaments, models,
         metrics, system, upload, users
@@ -84,7 +85,6 @@ def run_alembic_upgrade():
     try:
         alembic_cfg = AlembicConfig("/app/alembic.ini")
         alembic_command.upgrade(alembic_cfg, "head")
-        logger.info("✅ Alembic migrations applied at startup")
     except Exception as e:
         logger.error(f"❌ Failed to apply Alembic migrations: {e}")
         raise
@@ -103,8 +103,20 @@ async def lifespan(app: FastAPI):
         logger.info(f"✅ CORS origins allowed: {settings.cors_origins}")
         logger.info(f"🎬 Boot Message: {random_boot_message()}")
 
-        # ✅ Run Alembic migrations at startup
-        run_alembic_upgrade()
+        # ─── Ensure schema exists ────────────────────────────────────
+        try:
+            async with async_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("✅ Ensured all tables exist (auto-created missing tables).")
+        except Exception as e:
+            logger.error(f"❌ Failed to auto-create tables: {e}")
+
+        # ✅ Run Alembic migrations at startup (non-fatal)
+        try:
+            run_alembic_upgrade()
+            logger.info("✅ Alembic migrations applied at startup")
+        except Exception as e:
+            logger.warning(f"⚠️ Alembic migrations failed (continuing): {e}")
 
         await verify_alembic_revision()
 

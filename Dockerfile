@@ -6,7 +6,7 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY frontend/package.json frontend/package-lock.json* ./
 
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=cache,target=/app/node_modules \
@@ -23,11 +23,11 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /tmp/node_modules ./node_modules
-COPY package*.json ./
-COPY . .
+COPY frontend/package*.json ./
+COPY frontend/. .
 
 # Optional env fallback for Vite build
-COPY .env.dev .env || true
+COPY frontend/.env.dev .env || true
 
 RUN --mount=type=cache,target=/app/.vite \
     npm run build
@@ -38,10 +38,14 @@ RUN --mount=type=cache,target=/app/.vite \
 FROM nginx:alpine AS production
 WORKDIR /usr/share/nginx/html
 
-COPY --from=builder /app/dist .
+# Copy built files
+COPY --from=builder /app/dist ./
 
-RUN rm /etc/nginx/conf.d/default.conf
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Ensure nginx config dir exists and remove default if present
+RUN mkdir -p /etc/nginx/conf.d && rm -f /etc/nginx/conf.d/default.conf
+
+# Copy our custom nginx config
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
@@ -53,10 +57,10 @@ FROM node:20-alpine AS dev
 WORKDIR /app
 
 COPY --from=deps /tmp/node_modules ./node_modules
-COPY package*.json ./
-COPY . .
+COPY frontend/package*.json ./
+COPY frontend/. .
 
-COPY .env.development .env || true
+COPY frontend/.env.development .env || true
 
 EXPOSE 5173
 CMD ["npm", "run", "dev", "--", "--host"]

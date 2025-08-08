@@ -26,9 +26,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app ./app
 
-# Copy the entire Alembic directory (env.py, script.py.mako, versions/, etc.)
+# Copy entire Alembic directory (env.py, script.py.mako, README, versions/, etc.)
 COPY alembic ./alembic
 COPY alembic.ini ./
+
+# Ensure alembic/versions directory exists even if empty
+RUN test -d alembic/versions || mkdir -p alembic/versions
 
 ###################################
 # Final image stage
@@ -40,17 +43,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Install Postgres client so psql/pg_isready exist in the final image
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-client \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy installed packages from builder
 COPY --from=builder /usr/local /usr/local
 
-# Copy application code
+# Copy app code
 COPY --from=builder /app/app ./app
 
-# Copy Alembic scripts (with full versions/ subfolder)
+# Copy full Alembic tree from builder
 COPY --from=builder /app/alembic ./alembic
 COPY --from=builder /app/alembic.ini ./
 
-# Copy and make entrypoint executable
+# Copy and make your entrypoint executable
 COPY docker-entrypoint.sh .
 RUN chmod +x docker-entrypoint.sh
 

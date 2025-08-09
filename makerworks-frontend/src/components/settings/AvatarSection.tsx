@@ -10,25 +10,27 @@ interface AvatarSectionProps {
   onAvatarUpdate?: (newUrl: string) => void;
 }
 
+const AVATAR_UPLOAD_PATH = '/api/v1/users/avatar'; // ✅ correct backend route
+
 export default function AvatarSection({ currentAvatar, onAvatarUpdate }: AvatarSectionProps) {
   const { user, token, fetchUser, setUser } = useAuthStore();
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
+  // Make sure we have a user loaded if we already have a token
   useEffect(() => {
     if (!user && token) {
       fetchUser();
     }
   }, [user, token, fetchUser]);
 
-  // ✅ Safe URL builder from shared util
-
-  const cachedAvatar = localStorage.getItem('avatar_url');
+  // Build the avatar src with graceful fallbacks
+  const cachedAvatar = typeof window !== 'undefined' ? localStorage.getItem('avatar_url') : null;
   const avatarSrc =
     currentAvatar ||
-    getAbsoluteUrl(user?.avatar_url) ||
-    getAbsoluteUrl(user?.thumbnail_url) ||
-    (cachedAvatar ? getAbsoluteUrl(cachedAvatar) : null) ||
+    (user?.avatar_url ? getAbsoluteUrl(user.avatar_url) || user.avatar_url : null) ||
+    (user?.thumbnail_url ? getAbsoluteUrl(user.thumbnail_url) || user.thumbnail_url : null) ||
+    (cachedAvatar ? getAbsoluteUrl(cachedAvatar) || cachedAvatar : null) ||
     '/default-avatar.png';
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -36,40 +38,74 @@ export default function AvatarSection({ currentAvatar, onAvatarUpdate }: AvatarS
     if (!file) return;
 
     setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
 
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'multipart/form-data' };
-      if (token) headers.Authorization = `Bearer ${token}`;
-
-      const res = await axios.post('/avatar', formData, {
-        headers,
-        withCredentials: true,
-      });
-
-      if (res.data?.avatar_url) {
-        const newUrl = getAbsoluteUrl(res.data.avatar_url) || res.data.avatar_url;
-        toast.success('✅ Avatar updated!');
-
-        // ✅ Update Zustand store and localStorage immediately
-        if (user) {
-          const updatedUser = { ...user, avatar_url: newUrl };
-          setUser(updatedUser as any);
-        }
-        localStorage.setItem('avatar_url', newUrl);
-
-        // ✅ Call parent Settings handler if provided
-        if (onAvatarUpdate) onAvatarUpdate(newUrl);
-
-        // ✅ Force fetch to sync backend
-        await fetchUser(true);
-      } else {
-        toast.error('❌ Upload failed: no avatar URL returned');
+      // Basic client-side guardrails
+      if (!file.type.startsWith('image/')) {
+        toast.error('❌ Please select an image file.');
+        return;
       }
+      // 5 MB soft cap—tune to your backend max
+      const FIVE_MB = 5 * 1024 * 1024;
+      if (file.size > FIVE_MB) {
+        toast.error('❌ File too large (max 5MB).');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file, file.name); // ✅ backend expects "file"
+
+      // Let the browser set multipart boundary; don’t force Content-Type
+      const res = await axios.post(
+        AVATAR_UPLOAD_PATH,
+        formData,
+        {
+          withCredentials: true,
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        }
+      );
+
+      const newUrlRaw: string | undefined = res.data?.avatar_url;
+      if (!newUrlRaw) {
+        toast.error('❌ Upload failed: no avatar URL returned');
+        return;
+      }
+
+      const newUrl = getAbsoluteUrl(newUrlRaw) || newUrlRaw;
+
+      // Update Zustand store and localStorage immediately
+      if (user) {
+        const updatedUser = { ...user, avatar_url: newUrl };
+        setUser(updatedUser as any);
+      }
+      try {
+        localStorage.setItem('avatar_url', newUrl);
+      } catch {
+        /* non-fatal */
+      }
+
+      // Notify parent
+      onAvatarUpdate?.(newUrl);
+
+      // Sync from backend (force refresh)
+      await fetchUser(true);
+
+      toast.success('✅ Avatar updated!');
     } catch (err: any) {
+      // Better diagnostics
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail;
+      if (status === 404) {
+        toast.error('❌ Avatar endpoint not found. Check proxy & route: POST /api/v1/users/avatar');
+      } else if (status === 401) {
+        toast.error('🔒 Unauthorized. Please sign in again.');
+      } else if (status === 413) {
+        toast.error('❌ File too large for server.');
+      } else {
+        toast.error(`❌ Avatar upload failed${detail ? `: ${String(detail)}` : ''}`);
+      }
+      // eslint-disable-next-line no-console
       console.error('[Avatar Upload Error]', err);
-      toast.error('❌ Avatar upload failed');
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';

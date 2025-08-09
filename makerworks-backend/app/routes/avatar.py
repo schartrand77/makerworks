@@ -1,4 +1,9 @@
-"""Avatar upload routes."""
+# app/routes/avatar.py
+"""Avatar upload route: final path should be **POST /api/v1/avatar**.
+
+Mount this router in your app with:  app.include_router(avatar.router, prefix="/api/v1", tags=["Avatar"])
+DO NOT mount it under '/api/v1/avatar' or you’ll get '/api/v1/avatar/avatar'.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,6 @@ from app.db.database import get_db
 from app.models.models import User
 from app.config.settings import settings
 
-
 router = APIRouter()
 
 
@@ -27,11 +31,10 @@ class Token:
 def get_user_from_headers(authorization: str | None = Header(default=None)) -> Token:
     """Extract a user identifier from the Authorization header.
 
-    The real application would validate a JWT here.  For the purposes of the
-    tests we raise an HTTP 401 if no header is supplied.  Tests override this
-    dependency to return a `Token` with the desired ``sub`` value.
+    The real application would validate a JWT here. For tests we raise HTTP 401
+    if no header is supplied. Tests may override this dependency to return a
+    Token with the desired ``sub`` value.
     """
-
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
 
@@ -41,7 +44,6 @@ def get_user_from_headers(authorization: str | None = Header(default=None)) -> T
 
 async def _save_avatar(file: UploadFile, dest: Path) -> None:
     """Persist uploaded avatar to disk."""
-
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = await file.read()
     if len(content) > 5 * 1024 * 1024:  # 5MB
@@ -57,8 +59,8 @@ def _build_urls(request: Request, user_id: Any, filename: str) -> tuple[str, str
     return url, url  # avatar_url, thumbnail_url
 
 
-@router.post("/avatar")
-@router.post("/api/v1/avatar")
+# ✅ Single relative route. Final path becomes /api/v1/avatar when mounted with prefix="/api/v1".
+@router.post("/")
 async def upload_avatar(
     request: Request,
     file: UploadFile = File(...),
@@ -67,12 +69,9 @@ async def upload_avatar(
 ):
     """Handle avatar upload for a user.
 
-    Supports two paths:
-
-    * ``/api/v1/avatar`` when the router is mounted with no prefix
-    * ``/avatar`` when the router is mounted under ``/api/v1/users``
+    Mount this router with prefix="/api/v1" to expose:
+        POST /api/v1/avatar
     """
-
     if file.content_type not in {"image/png", "image/jpeg"}:
         raise HTTPException(status_code=400, detail="Unsupported image type")
 
@@ -101,4 +100,3 @@ async def upload_avatar(
 
 
 __all__ = ["router", "get_user_from_headers"]
-

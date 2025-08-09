@@ -4,12 +4,17 @@
 
 /* 🌌 Global Gradient Backgrounds */
 @layer base {
+  html, body, #root {
+    @apply min-h-screen;
+  }
+
   body {
-    @apply min-h-screen transition-colors duration-500 text-gray-900;
+    @apply transition-colors duration-500 text-gray-900;
     background: linear-gradient(180deg, #FFFFFF 0%, #C0C0C0 100%);
   }
 
   /* 🌙 Dark Theme Gradient */
+  body.dark,
   .dark body {
     @apply text-white;
     background: linear-gradient(180deg, #121212 0%, #FF6A1F 100%);

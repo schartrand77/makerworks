@@ -80,9 +80,13 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
+      # Persist uploads on the host; container writes to /uploads
+      - ./uploads:/uploads
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
+      # Backend should read this to save/serve files under /uploads/users/<user_id>/
+      UPLOAD_DIR: /uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,9 +112,12 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
+      # Worker needs access to the same uploads directory for render jobs, etc.
+      - ./uploads:/uploads
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /uploads
     depends_on:
       redis:
         condition: service_healthy

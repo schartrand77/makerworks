@@ -1,179 +1,159 @@
-import logging
-import shutil
-import sys
-import traceback
-from pathlib import Path
-from datetime import datetime
-from uuid import uuid4
-import os
+// src/pages/Upload.tsx
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import axios from '@/api/axios';
+import GlassCard from '@/components/ui/GlassCard';
+import PageHeader from '@/components/ui/PageHeader';
+import { useToast } from '@/context/ToastProvider';
+import { UploadCloud } from 'lucide-react';
+import { useAuthStore } from '@/store/useAuthStore';
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-import sqlalchemy
-from sqlalchemy.exc import ProgrammingError
-from sqlalchemy.orm import load_only
+const MAX_SIZE = 200 * 1024 * 1024; // 200MB
+const ACCEPT = '.stl,.3mf,model/stl,model/3mf,application/octet-stream';
 
-try:
-    from app.config.settings import settings
-    from app.db.session import get_db, async_engine
-    from app.dependencies.auth import get_current_user
-    from app.models.models import User, ModelUpload
-    from app.schemas.models import ModelUploadOut
-    from app.tasks.thumbnails import generate_model_previews
-    from app.utils.render_thumbnail import render_thumbnail
-except ImportError as e:
-    sys.__stderr__.write(f"❌ ImportError in upload.py: {e}\n")
-    traceback.print_exc(file=sys.__stderr__)
-    logging.shutdown()
-    sys.exit(1)
+const Upload: React.FC = () => {
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
+  const [busy, setBusy] = useState(false);
 
-logger = logging.getLogger(__name__)
-router = APIRouter()
+  const { token } = useAuthStore();
+  const toast = useToast();
+  const navigate = useNavigate();
 
-BASE_UPLOAD_DIR = Path(settings.uploads_path).resolve()
-BASE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+  const onChoose = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] || null;
+    if (!f) return;
+    const ext = f.name.toLowerCase().slice(f.name.lastIndexOf('.'));
+    if (!['.stl', '.3mf'].includes(ext)) {
+      toast.error('Only .stl or .3mf files are allowed.');
+      e.currentTarget.value = '';
+      return;
+    }
+    if (f.size > MAX_SIZE) {
+      toast.error('File too large (max 200MB).');
+      e.currentTarget.value = '';
+      return;
+    }
+    setFile(f);
+    if (!name) setName(f.name.replace(/\.(stl|3mf)$/i, ''));
+  };
 
-# 🔒 Used to block upload if startup schema validation fails
-upload_startup_failed = False
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) {
+      toast.error('Pick a file first.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      // If your backend accepts name/description, include them; if not, harmless.
+      if (name) fd.append('name', name);
+      if (desc) fd.append('description', desc);
 
+      const res = await axios.post('/upload/', fd, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        withCredentials: true,
+      });
 
-def get_model_dir(user_id: str) -> Path:
-    path = BASE_UPLOAD_DIR / "users" / str(user_id) / "models"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+      // ✅ Option B: treat status (201/2xx) OR presence of an id as success
+      const ok =
+        (res.status >= 200 && res.status < 300) ||
+        !!res.data?.id ||
+        !!res.data?.model?.id;
 
+      if (!ok) {
+        throw new Error('Upload response missing id');
+      }
 
-async def check_alembic_revision() -> bool:
-    """Check if expected upload tables exist."""
-    try:
-        async with async_engine.begin() as conn:
-            tables = await conn.run_sync(
-                lambda sync_conn: sqlalchemy.inspect(sync_conn).get_table_names()
-            )
-            return "model_uploads" in tables
-    except ProgrammingError as e:
-        logger.exception("❌ Alembic schema check failed")
-        return False
+      const model = res.data?.model ?? res.data;
+      const modelId = model?.id;
+      if (!modelId) {
+        // We still consider it success if 2xx, but we can’t route without id
+        toast.success('Model uploaded, but no ID returned.');
+        return;
+      }
 
+      toast.success('✅ Model uploaded!');
+      navigate(`/models/${modelId}`);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail;
+      if (status === 413) {
+        toast.error('File too large for server.');
+      } else if (status === 400) {
+        toast.error(`Upload rejected: ${detail ?? 'Bad request'}`);
+      } else if (status === 401) {
+        toast.error('Sign in required.');
+      } else if (status === 404) {
+        toast.error('Upload endpoint not found (POST /api/v1/upload/).');
+      } else {
+        toast.error('Upload failed. Please try again.');
+      }
+      // eslint-disable-next-line no-console
+      console.error('[Upload]', err);
+    } finally {
+      setBusy(false);
+    }
+  };
 
-@router.on_event("startup")
-async def validate_upload_module_startup():
-    """Gracefully check schema validity on boot without crashing app."""
-    global upload_startup_failed
+  return (
+    <main className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+      <PageHeader icon={<UploadCloud className="w-8 h-8 text-zinc-400" />} title="Upload a Model" />
+      <GlassCard className="p-6">
+        <form onSubmit={submit} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium mb-1">Model file (.stl / .3mf)</label>
+            <input
+              type="file"
+              accept={ACCEPT}
+              onChange={onChoose}
+              className="block w-full text-sm file:mr-3 file:px-4 file:py-2 file:rounded-full file:border-0 file:bg-brand-primary file:text-black file:cursor-pointer"
+            />
+            {file && (
+              <p className="mt-2 text-xs text-zinc-500">
+                {file.name} • {(file.size / (1024 * 1024)).toFixed(1)} MB
+              </p>
+            )}
+          </div>
 
-    skip_check = os.getenv("SKIP_SCHEMA_VALIDATION", "false").lower() in ("1", "true", "yes")
-    if skip_check:
-        logger.warning("⚠️ SKIP_SCHEMA_VALIDATION enabled — upload schema check skipped.")
-        return
+          <div>
+            <label className="block text-sm font-medium mb-1">Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Optional title for your model"
+              className="w-full rounded-lg px-3 py-2 border bg-white/60 dark:bg-zinc-900/60"
+            />
+          </div>
 
-    try:
-        sys.__stderr__.write("✅ upload.py startup validation running\n")
-        ok = await check_alembic_revision()
-        if not ok:
-            upload_startup_failed = True
-            logger.error("❌ model_uploads table missing at startup")
-        else:
-            sys.__stderr__.write("✅ upload.py passed startup validation\n")
-    except Exception as e:
-        upload_startup_failed = True
-        logger.exception("❌ Unexpected error during upload.py schema check")
+          <div>
+            <label className="block text-sm font-medium mb-1">Description</label>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              rows={3}
+              placeholder="Optional description…"
+              className="w-full rounded-lg px-3 py-2 border bg-white/60 dark:bg-zinc-900/60"
+            />
+          </div>
 
+          <div className="flex gap-3">
+            <button
+              type="submit"
+              disabled={busy || !file}
+              className="px-5 py-2 rounded-full bg-brand-primary text-black disabled:opacity-50"
+            >
+              {busy ? 'Uploading…' : 'Upload'}
+            </button>
+          </div>
+        </form>
+      </GlassCard>
+    </main>
+  );
+};
 
-@router.post("", response_model=ModelUploadOut)
-async def upload_model(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if upload_startup_failed:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Server not ready. Upload service unavailable — schema mismatch or migration missing.",
-        )
-
-    user_id = current_user.id
-    model_dir = get_model_dir(user_id)
-
-    try:
-        result = await db.execute(
-            select(ModelUpload)
-            .options(load_only(ModelUpload.id, ModelUpload.filename))
-            .where(
-                ModelUpload.user_id == user_id,
-                sqlalchemy.func.lower(ModelUpload.filename) == file.filename.lower()
-            )
-        )
-        existing_model = result.scalars().first()
-        if existing_model:
-            logger.warning("⚠️ Duplicate filename for user %s: %s", user_id, file.filename)
-            await db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Model with this filename already exists"
-            )
-
-        file_path = model_dir / file.filename
-        os.makedirs(model_dir, exist_ok=True)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        logger.info("📥 Saved model file: %s", file_path)
-
-        model_uuid = str(uuid4())
-
-        thumb_rel = Path(f"users/{user_id}/thumbnails/{model_uuid}_thumb.png")
-        thumb_abs = BASE_UPLOAD_DIR / thumb_rel
-        thumb_abs.parent.mkdir(parents=True, exist_ok=True)
-        render_thumbnail(file_path, thumb_abs)
-        logger.info("🖼️ Generated thumbnail: %s", thumb_abs)
-
-        turntable_rel = Path(f"users/{user_id}/models/{model_uuid}.webm")
-        turntable_abs = BASE_UPLOAD_DIR / turntable_rel
-
-        try:
-            generate_model_previews.apply_async(
-                args=[str(file_path), model_uuid, str(user_id), str(turntable_abs)],
-                task_id=str(uuid4())
-            )
-            logger.info("🎨 Queued preview generation for %s", model_uuid)
-        except Exception as e:
-            logger.error("❌ Celery preview task failed: %s", e)
-
-        new_model = ModelUpload(
-            id=model_uuid,
-            user_id=user_id,
-            filename=file.filename,
-            name=file.filename.rsplit(".", 1)[0],
-            description=None,
-            file_path=str(Path(f"users/{user_id}/models/{file.filename}")),
-            file_url=f"/uploads/users/{user_id}/models/{file.filename}",
-            thumbnail_path=str(thumb_rel),
-            turntable_path=str(turntable_rel),
-            uploaded_at=datetime.utcnow(),
-        )
-        db.add(new_model)
-        await db.commit()
-        await db.refresh(new_model)
-
-        logger.info("✅ Model %s committed for user %s", new_model.id, user_id)
-
-        return ModelUploadOut(
-            status="queued",
-            message="Model uploaded successfully",
-            model_id=str(new_model.id),
-            user_id=str(user_id),
-            filename=file.filename,
-            file_path=new_model.file_url,
-            thumbnail=new_model.thumbnail_path,
-            turntable=new_model.turntable_path,
-            uploaded_at=new_model.uploaded_at,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("❌ Upload failed for user %s", user_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Upload failed: {e}"
-        )
+export default Upload;

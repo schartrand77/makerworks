@@ -60,6 +60,7 @@ wcwidth==0.2.13
 packaging==25.0
 six==1.17.0
 tzdata==2025.2
+aiofiles==23.2.1             # ✅ for async file writes in uploads
 
 # ─── Image, Math, 3D Processing ─────────────────────────────────────
 matplotlib==3.10.3

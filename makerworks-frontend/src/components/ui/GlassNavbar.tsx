@@ -2,61 +2,110 @@
 import { Link, useLocation } from 'react-router-dom';
 import UserDropdown from '@/components/ui/UserDropdown';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
+
+/**
+ * Resolve a stable avatar URL with cache-busting based on avatar_updated_at.
+ * Falls back to thumbnail, then cached localStorage, then default asset.
+ */
+function buildAvatarUrl(
+  user?: {
+    avatar_url?: string | null;
+    thumbnail_url?: string | null;
+    avatar_updated_at?: string | number | null;
+  } | null
+) {
+  // Avoid hitting localStorage during SSR
+  const cached = typeof window !== 'undefined' ? localStorage.getItem('avatar_url') : null;
+
+  const base =
+    (user?.avatar_url && (getAbsoluteUrl(user.avatar_url) || user.avatar_url)) ||
+    (user?.thumbnail_url && (getAbsoluteUrl(user.thumbnail_url) || user.thumbnail_url)) ||
+    (cached && (getAbsoluteUrl(cached) || cached)) ||
+    '/default-avatar.png';
+
+  // Never cache-bust the baked-in default
+  if (!user?.avatar_updated_at || base === '/default-avatar.png') return base;
+
+  const ts = new Date(user.avatar_updated_at as any).getTime();
+  return `${base}${base.includes('?') ? '&' : '?'}v=${ts}`;
+}
 
 const GlassNavbar = () => {
   const user = useAuthStore((s) => s.user);
   const isAuthenticatedFn = useAuthStore((s) => s.isAuthenticated);
   const isAuthenticated = typeof isAuthenticatedFn === 'function' ? isAuthenticatedFn() : false;
+
   const location = useLocation();
   const gearRef = useRef<HTMLSpanElement>(null);
 
+  // Local state for live avatar updates
+  const [avatarUrl, setAvatarUrl] = useState<string>(() => buildAvatarUrl(user));
+
+  // Update when user in store changes
+  useEffect(() => {
+    setAvatarUrl(buildAvatarUrl(user));
+  }, [user?.avatar_url, user?.thumbnail_url, user?.avatar_updated_at]);
+
+  // Listen for uploads broadcasting a fresh avatar URL
+  useEffect(() => {
+    const onUpdate = (e: any) => {
+      const next: string | undefined = e?.detail?.url;
+      if (typeof next === 'string' && next.length > 0) {
+        setAvatarUrl(next);
+        // Also update Zustand store avatar_url so other components refresh
+        useAuthStore.setState((state) => ({
+          user: state.user ? { ...state.user, avatar_url: next } : state.user,
+        }));
+      }
+    };
+    window.addEventListener('avatar:updated', onUpdate);
+    return () => window.removeEventListener('avatar:updated', onUpdate);
+  }, []);
+
+  // Gear spin effect
   useEffect(() => {
     const interval = setInterval(() => {
       if (gearRef.current) {
         gearRef.current.classList.add('animate-spin-once');
-        setTimeout(() => {
-          gearRef.current?.classList.remove('animate-spin-once');
-        }, 1000);
+        setTimeout(() => gearRef.current?.classList.remove('animate-spin-once'), 1000);
       }
     }, Math.random() * 8000 + 3000);
-
     return () => clearInterval(interval);
   }, []);
 
-  const navRoutes = [
-    { path: '/dashboard', label: 'Dashboard' },
-    { path: '/browse', label: 'Browse' },
-    { path: '/estimate', label: 'Estimate' },
-    { path: '/upload', label: 'Upload' },
-    { path: '/cart', label: 'Cart' },
-    { path: '/checkout', label: 'Checkout' }
-  ];
+  const navRoutes = useMemo(
+    () => [
+      { path: '/dashboard', label: 'Dashboard' },
+      { path: '/browse', label: 'Browse' },
+      { path: '/estimate', label: 'Estimate' },
+      { path: '/upload', label: 'Upload' },
+      { path: '/cart', label: 'Cart' },
+      { path: '/checkout', label: 'Checkout' },
+    ],
+    []
+  );
 
-  // ✅ Safe URL builder from shared util
+  const fallbackUser = useMemo(
+    () => ({
+      username: 'Guest',
+      email: 'guest@example.com',
+      avatar_url: '/default-avatar.png',
+      role: 'guest',
+    }),
+    []
+  );
 
-  const fallbackUser = {
-    username: 'Guest',
-    email: 'guest@example.com',
-    avatar_url: '/default-avatar.png',
-    role: 'guest'
-  };
-
-  // ✅ Pull cached avatar_url from localStorage if user exists but avatar_url is missing
-  const cachedAvatar = localStorage.getItem('avatar_url');
-
-  const resolvedUser = isAuthenticated
-    ? {
-        ...fallbackUser,
-        ...user,
-        avatar_url:
-          getAbsoluteUrl(user?.avatar_url) ??
-          getAbsoluteUrl(user?.thumbnail_url) ??
-          (cachedAvatar ? getAbsoluteUrl(cachedAvatar) : '/default-avatar.png') ??
-          '/default-avatar.png'
-      }
-    : fallbackUser;
+  // Inject live avatar URL into resolvedUser
+  const resolvedUser = useMemo(() => {
+    if (!isAuthenticated) return fallbackUser;
+    return {
+      ...fallbackUser,
+      ...user,
+      avatar_url: avatarUrl || '/default-avatar.png',
+    };
+  }, [isAuthenticated, user, avatarUrl, fallbackUser]);
 
   return (
     <nav

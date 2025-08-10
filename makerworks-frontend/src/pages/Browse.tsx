@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+// src/pages/Browse.tsx
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from '@/api/axios';
 import GlassCard from '@/components/ui/GlassCard';
@@ -6,6 +7,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { Search } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useToast } from '@/context/ToastProvider';
+import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
 
 interface Model {
   id: string;
@@ -15,6 +17,16 @@ interface Model {
   file_url: string | null;
   uploader_username: string | null;
 }
+
+type SourceKey = 'local' | 'makerworld' | 'thingiverse' | 'printables' | 'thangs';
+
+const SOURCES: { key: SourceKey; label: string }[] = [
+  { key: 'local',       label: 'MakerWorks' },
+  { key: 'makerworld',  label: 'Makerworld' },
+  { key: 'thingiverse', label: 'Thingiverse' },
+  { key: 'printables',  label: 'Printables' },
+  { key: 'thangs',      label: 'Thangs' },
+];
 
 const Browse: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
@@ -26,7 +38,7 @@ const Browse: React.FC = () => {
 
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
-  const [source, setSource] = useState<'local' | 'makerworld' | 'thingiverse' | 'printables' | 'thangs'>('local');
+  const [source, setSource] = useState<SourceKey>('local');
 
   const { user } = useAuthStore();
   const navigate = useNavigate();
@@ -45,12 +57,14 @@ const Browse: React.FC = () => {
     } else {
       redirectToExternal(source);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source]);
 
   useEffect(() => {
     if (page > 1 && source === 'local') {
       fetchModels(page, limit);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, source]);
 
   const fetchModels = async (pageParam = 1, limitParam = limit) => {
@@ -60,8 +74,6 @@ const Browse: React.FC = () => {
         params: { page: pageParam, limit: limitParam },
       });
 
-      console.log('[Browse] Raw API response:', res.data);
-
       const fetched: Model[] = (res.data.models || []).map((m) => ({
         id: m.id,
         name: m.name ?? null,
@@ -70,8 +82,6 @@ const Browse: React.FC = () => {
         file_url: m.file_url || null,
         uploader_username: m.uploader_username || null,
       }));
-
-      console.log('[Browse] Parsed models:', fetched);
 
       setModels((prev) => (pageParam === 1 ? fetched : [...prev, ...fetched]));
       if (fetched.length < limitParam) setHasMore(false);
@@ -115,8 +125,8 @@ const Browse: React.FC = () => {
     }
   };
 
-  const redirectToExternal = (platform: string) => {
-    const urls: Record<string, string> = {
+  const redirectToExternal = (platform: Exclude<SourceKey, 'local'>) => {
+    const urls: Record<Exclude<SourceKey, 'local'>, string> = {
       makerworld: 'https://makerworld.com',
       thingiverse: 'https://www.thingiverse.com',
       printables: 'https://www.printables.com',
@@ -125,14 +135,14 @@ const Browse: React.FC = () => {
     window.location.href = urls[platform];
   };
 
-  const filteredModels = models.filter((model) => {
-    const name = model.name ?? '';
-    const desc = model.description ?? '';
-    return (
-      name.toLowerCase().includes(query.toLowerCase()) ||
-      desc.toLowerCase().includes(query.toLowerCase())
-    );
-  });
+  const filteredModels = useMemo(() => {
+    const q = query.toLowerCase();
+    return models.filter((model) => {
+      const name = (model.name ?? '').toLowerCase();
+      const desc = (model.description ?? '').toLowerCase();
+      return name.includes(q) || desc.includes(q);
+    });
+  }, [models, query]);
 
   const isLoading = loadingInitial;
 
@@ -156,18 +166,48 @@ const Browse: React.FC = () => {
           onChange={(e) => setQuery(e.target.value)}
           className="w-full sm:w-1/2 rounded-full px-4 py-2 glass-card border text-sm shadow placeholder:text-zinc-400 focus:outline-none"
         />
-        <select
-          value={source}
-          onChange={(e) => setSource(e.target.value as typeof source)}
-          className="w-full sm:w-1/4 rounded-full px-4 py-2 glass-card border text-sm shadow focus:outline-none"
-        >
-          <option value="local">MakerWorks (Local)</option>
-          <option disabled>—— External Links ——</option>
-          <option value="makerworld">Makerworld</option>
-          <option value="thingiverse">Thingiverse</option>
-          <option value="printables">Printables</option>
-          <option value="thangs">Thangs</option>
-        </select>
+
+        {/* VisionOS-style pill dropdown */}
+        <div className="relative inline-flex w-full sm:w-auto">
+          <select
+            aria-label="Source"
+            value={source}
+            onChange={(e) => setSource(e.target.value as SourceKey)}
+            className="
+              appearance-none
+              w-full sm:w-[220px]
+              px-4 pr-10 py-2
+              rounded-full
+              text-sm
+              bg-white/60 dark:bg-white/10
+              backdrop-blur-xl
+              ring-1 ring-black/10 dark:ring-white/10
+              shadow-[inset_0_-1px_0_rgba(255,255,255,0.6),0_4px_12px_rgba(0,0,0,0.12)]
+              text-zinc-800 dark:text-zinc-100
+              hover:bg-white/70 dark:hover:bg-white/15
+              focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40
+              transition
+            "
+          >
+            {SOURCES.map(({ key, label }) => (
+              <option key={key} value={key} className="bg-white dark:bg-zinc-900">
+                {label}
+              </option>
+            ))}
+          </select>
+
+          {/* custom chevron */}
+          <div
+            className="
+              pointer-events-none absolute inset-y-0 right-3 flex items-center
+              text-zinc-700/70 dark:text-zinc-300/70
+            "
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+        </div>
       </div>
 
       {source === 'local' && (
@@ -194,24 +234,15 @@ const Browse: React.FC = () => {
               filteredModels.map((model) => {
                 const modelKey = model.id || model.file_url || Math.random().toString();
 
-                // 🔍 Debug logs
-                console.log('[Browse] Model data:', model);
-
+                // Resolve thumbnail using our absolute URL helper (handles /thumbnails + /uploads)
                 let thumbUrl: string | null = null;
-                if (model.thumbnail_url != null) {
+                if (model.thumbnail_url) {
                   const raw = String(model.thumbnail_url).trim();
-                  console.log('[Browse] Raw thumbnail path:', raw);
-                  if (raw !== '') {
-                    if (raw.startsWith('http')) {
-                      thumbUrl = raw;
-                    } else {
-                      const normalized = raw.replace(/^\.?\/*/, '');
-                      thumbUrl = `/${normalized}`;
-                    }
+                  if (raw) {
+                    const abs = getAbsoluteUrl(raw);
+                    thumbUrl = abs || (raw.startsWith('/') ? raw : `/${raw}`);
                   }
                 }
-
-                console.log('[Browse] Final thumbnail URL:', thumbUrl);
 
                 return (
                   <GlassCard
@@ -236,6 +267,11 @@ const Browse: React.FC = () => {
                         src={thumbUrl}
                         alt={model.name ?? 'Model'}
                         className="rounded-md mb-2 w-full h-40 object-cover"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = '/default-avatar.png';
+                        }}
+                        draggable={false}
                       />
                     ) : (
                       <div

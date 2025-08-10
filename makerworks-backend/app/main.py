@@ -1,3 +1,5 @@
+# app/main.py
+
 import logging
 import os
 import sys
@@ -13,14 +15,14 @@ from sqlalchemy import text
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-# ─── Safe low-level error writer ──────────────────────────────
 def safe_stderr(msg: str):
+    """Low-level safe write to stderr for startup/debug logs."""
     try:
         os.write(sys.__stderr__.fileno(), msg.encode("utf-8"))
     except Exception:
         pass
 
-# ✅ Defensive import to avoid circulars and capture early errors
+# Defensive import of core dependencies so startup errors are visible
 try:
     from alembic.config import Config as AlembicConfig
     from alembic import command as alembic_command
@@ -38,7 +40,6 @@ try:
     from app.utils.boot_messages import random_boot_message
     from app.utils.system_info import get_system_status_snapshot
 
-    # ─── Updated banner import ────────────────────────────────
     try:
         from app.logging_config import startup_banner
     except Exception:
@@ -51,11 +52,11 @@ except Exception:
 
 logger = logging.getLogger("uvicorn")
 
-# ─── App ─────────────────────────────────────
+# ─── App Initialization ─────────────────────────────
 app = FastAPI(title="MakerWorks API", version="1.0.0", description="MakerWorks backend API")
-app.router.redirect_slashes = False  # 🧭 Control slash behavior explicitly
+app.router.redirect_slashes = True  # Let FastAPI handle /path vs /path/ equivalently
 
-# ─── Session Middleware ──────────────────────
+# ─── Session Middleware ─────────────────────────────
 SESSION_SECRET = os.getenv("SESSION_SECRET", "supersecretkey")
 app.add_middleware(
     SessionMiddleware,
@@ -64,7 +65,7 @@ app.add_middleware(
     https_only=settings.env == "production"
 )
 
-# ─── CORS Middleware ─────────────────────────
+# ─── CORS + Compression ─────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -74,7 +75,7 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# ─── Alembic Revision Check ──────────────────
+# ─── Alembic Revision Check ─────────────────────────
 async def verify_alembic_revision():
     try:
         async with async_engine.begin() as conn:
@@ -87,8 +88,8 @@ async def verify_alembic_revision():
     except Exception as e:
         logger.warning(f"⚠️ Alembic revision check failed: {e}")
 
-# ─── Programmatic Alembic Upgrade ────────────
 def run_alembic_upgrade():
+    """Apply Alembic migrations programmatically at startup."""
     try:
         alembic_cfg = AlembicConfig("/app/alembic.ini")
         alembic_command.upgrade(alembic_cfg, "head")
@@ -96,7 +97,7 @@ def run_alembic_upgrade():
         logger.error(f"❌ Failed to apply Alembic migrations: {e}")
         raise
 
-# ─── Lifespan tasks ─────────────────────────
+# ─── Lifespan Tasks ─────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -110,7 +111,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"✅ CORS origins allowed: {settings.cors_origins}")
         logger.info(f"🎬 Boot Message: {random_boot_message()}")
 
-        # ─── Ensure schema exists ────────────────────────────────────
+        # Ensure DB schema exists
         try:
             async with async_engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
@@ -118,7 +119,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"❌ Failed to auto-create tables: {e}")
 
-        # ✅ Run Alembic migrations at startup (non-fatal)
+        # Run Alembic migrations
         try:
             run_alembic_upgrade()
             logger.info("✅ Alembic migrations applied at startup")
@@ -136,10 +137,8 @@ async def lifespan(app: FastAPI):
         await init_db()
         await ensure_admin_user()
 
-        # ─── Custom startup banner ───────────────────────────────────
         startup_banner()
         logger.info("✅ Backend is up and ready to accept requests")
-
         yield
 
     except Exception:
@@ -149,7 +148,7 @@ async def lifespan(app: FastAPI):
 
 app.router.lifespan_context = lifespan
 
-# ─── Debug CORS Middleware ──────────────────
+# ─── Debug CORS Middleware ──────────────────────────
 @app.middleware("http")
 async def debug_origin(request: Request, call_next):
     origin = request.headers.get("origin")
@@ -157,7 +156,7 @@ async def debug_origin(request: Request, call_next):
     logger.debug(f"[CORS] Allowed Origins: {settings.cors_origins}")
     return await call_next(request)
 
-# ─── Debug Routes Endpoint ──────────────────
+# ─── Debug Routes Endpoint ──────────────────────────
 @app.get("/debug/routes", include_in_schema=False)
 async def debug_routes():
     if not settings.debug:
@@ -172,12 +171,12 @@ async def debug_routes():
         })
     return JSONResponse(routes_info)
 
-# ─── Route Mount Helper ─────────────────────
+# ─── Mount Helper ───────────────────────────────────
 def mount(router, prefix: str, tags: list[str]):
     app.include_router(router, prefix=prefix, tags=tags)
     logger.info(f"🔌 Mounted: {prefix or '/'} — Tags: {', '.join(tags)}")
 
-# ─── Mount All Routes ───────────────────────
+# ─── Mount All Routes ───────────────────────────────
 mount(auth.router, "/api/v1/auth", ["auth"])
 mount(users.router, "/api/v1/users", ["users"])
 mount(avatar.router, "/api/v1/avatar", ["avatar"])
@@ -195,27 +194,31 @@ else:
 mount(models.router, "/api/v1/models", ["models"])
 mount(metrics.router, "/metrics", ["metrics"])
 
-# ─── Mount Static Files ─────────────────────
-uploads_path = Path(settings.uploads_path).resolve()
+# ─── Mount Static Directories ───────────────────────
+# Uploads (user files)
+uploads_path = Path(settings.uploads_path or "/uploads").resolve()
 try:
     uploads_path.mkdir(parents=True, exist_ok=True)
-    testfile = uploads_path / ".write_test"
-    testfile.touch()
-    testfile.unlink()
+    (uploads_path / ".write_test").touch()
+    (uploads_path / ".write_test").unlink()
     logger.info(f"📁 Uploads directory ready at: {uploads_path}")
 except Exception as e:
     logger.error(f"❌ Uploads path check failed: {e}")
-
 logger.info(f"📂 Active uploads path from settings: {settings.uploads_path}")
 logger.info(f"📂 Resolved absolute path: {uploads_path}")
-
 app.mount("/uploads", StaticFiles(directory=str(uploads_path), html=False, check_dir=True), name="uploads")
 logger.info(f"📁 Uploads served from {uploads_path} at /uploads")
 
-# ─── Normalize Upload URL Handling ──────────
-@app.middleware("http")
-async def strip_trailing_slash(request: Request, call_next):
-    scope = request.scope
-    if scope["path"] != "/" and scope["path"].endswith("/"):
-        scope["path"] = scope["path"].rstrip("/")
-    return await call_next(request)
+# Thumbnails (flat library keyed by model id)
+thumbnails_path = Path(getattr(settings, "thumbnails_path", "/thumbnails")).resolve()
+try:
+    thumbnails_path.mkdir(parents=True, exist_ok=True)
+    (thumbnails_path / ".write_test").touch()
+    (thumbnails_path / ".write_test").unlink()
+    logger.info(f"📁 Thumbnails directory ready at: {thumbnails_path}")
+except Exception as e:
+    logger.error(f"❌ Thumbnails path check failed: {e}")
+logger.info(f"📂 Active thumbnails path from settings: {getattr(settings, 'thumbnails_path', None)}")
+logger.info(f"📂 Resolved absolute path: {thumbnails_path}")
+app.mount("/thumbnails", StaticFiles(directory=str(thumbnails_path), html=False, check_dir=True), name="thumbnails")
+logger.info(f"📁 Thumbnails served from {thumbnails_path} at /thumbnails")

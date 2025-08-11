@@ -10,8 +10,12 @@ export default {
 
   theme: {
     extend: {
-      // Drop brand tweaks here if/when you need them
-      // colors: { 'brand-highlight': '#FF6A1F' },
+      colors: {
+        'brand-primary': '#76B900',
+        'brand-secondary': '#000000',
+        'brand-accent': '#FFFFFF',
+        'brand-highlight': '#94E400',
+      },
       // boxShadow: { vision: '0 4px 30px rgba(0,0,0,0.1)' },
     },
   },

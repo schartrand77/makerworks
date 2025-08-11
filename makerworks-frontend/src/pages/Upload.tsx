@@ -13,12 +13,34 @@ const UploadPage: React.FC = () => {
   const [progress, setProgress] = useState(0)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([])
-  const { token } = useAuthStore()
+
+  // Try to grab both token and user; fall back to localStorage if needed
+  const { token, user } = useAuthStore.getState
+    ? useAuthStore()
+    : ({ token: undefined, user: undefined } as any)
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState('')
   const [credit, setCredit] = useState('')
+
+  const resolveUserId = (): string | undefined => {
+    const idFromStore = (user as any)?.id
+    if (idFromStore) return idFromStore
+
+    try {
+      const lsUser = localStorage.getItem('user') || localStorage.getItem('profile')
+      if (lsUser) {
+        const parsed = JSON.parse(lsUser)
+        if (parsed?.id) return parsed.id
+      }
+      const direct = localStorage.getItem('user_id')
+      if (direct) return direct
+    } catch {
+      // ignore JSON errors
+    }
+    return undefined
+  }
 
   const onDrop = useCallback((acceptedFiles: File[], fileRejections) => {
     setRejectedFiles([])
@@ -27,7 +49,7 @@ const UploadPage: React.FC = () => {
 
     if (!acceptedFiles.length) {
       toast.error('❌ No valid file selected.')
-      const names = fileRejections.map((rej) => rej.file.name)
+      const names = fileRejections.map((rej: any) => rej.file?.name || 'unknown')
       setRejectedFiles(names)
       return
     }
@@ -56,16 +78,24 @@ const UploadPage: React.FC = () => {
 
     setLoading(true)
     try {
-      await uploadModelWithProgress(selectedFile)
-      toast.success('✅ Model uploaded.')
+      const res = await uploadModelWithProgress(selectedFile)
+      // If we got here without throwing, assume success (Axios throws on 4xx/5xx)
+      const modelId = (res?.data?.model?.id || res?.data?.id) as string | undefined
+      toast.success(`✅ Model uploaded${modelId ? ` (${modelId.slice(0, 8)}…)` : ''}.`)
       setSelectedFile(null)
       setProgress(0)
       setName('')
       setDescription('')
       setTags('')
       setCredit('')
-    } catch {
-      toast.error(`❌ Upload failed.`)
+    } catch (err: any) {
+      const code = err?.response?.status
+      const detail =
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Unknown error'
+      toast.error(`❌ Upload failed${code ? ` (${code})` : ''}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
+      console.error('[Upload] error:', err)
     } finally {
       setLoading(false)
     }
@@ -73,8 +103,14 @@ const UploadPage: React.FC = () => {
 
   const uploadModelWithProgress = async (file: File) => {
     if (!token) {
-      toast.error('❌ Not authenticated.')
-      return
+      toast.error('❌ Not authenticated (missing token).')
+      throw new Error('Missing token')
+    }
+    const userId = resolveUserId()
+    if (!userId) {
+      // Your backend *requires* X-User-Id when the token is opaque.
+      toast.error('❌ Missing user id (X-User-Id). Sign in again.')
+      throw new Error('Missing user id')
     }
 
     const formData = new FormData()
@@ -87,11 +123,14 @@ const UploadPage: React.FC = () => {
     return axios.post(`/upload`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
-        Authorization: `Bearer ${token}`
+        Authorization: `Bearer ${token}`,
+        'X-User-Id': userId
       },
       onUploadProgress: (e: ProgressEvent) => {
         if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
-      }
+      },
+      // Treat only 2xx as success; Axios does this by default, but be explicit:
+      validateStatus: (status) => status >= 200 && status < 300
     })
   }
 

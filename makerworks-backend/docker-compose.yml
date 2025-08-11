@@ -23,6 +23,8 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -38,7 +40,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command: |
       echo "⏳ Waiting for PostgreSQL..."
-      until PGPASSWORD=makerworks psql -h postgres -U makerworks -d makerworks -c '\q'; do
+      until PGPASSWORD=makerworks psql -h postgres -U makerworks -d makerworks -c '\q' >/dev/null 2>&1; do
         echo "... still waiting for db"
         sleep 1
       done
@@ -50,7 +52,7 @@ services:
       echo "✅ Migrations complete."
     working_dir: /app
     volumes:
-      - ./:/app
+      - ./makerworks-backend:/app
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
@@ -62,7 +64,7 @@ services:
 
   backend:
     build:
-      context: .
+      context: ./makerworks-backend
       dockerfile: Dockerfile.macos
     container_name: makerworks_backend
     restart: unless-stopped
@@ -70,23 +72,36 @@ services:
       - "8000:8000"
     entrypoint: ["/bin/sh", "-c"]
     command: |
+      set -e
+      echo "📦 Preparing bind-mount directories..."
+      mkdir -p /uploads /thumbnails /models
       echo "📦 Loading environment..."
-      [ -f .env.dev ] && export $(grep -v '^#' .env.dev | xargs) || echo "⚠️ No .env.dev"
+      if [ -f .env.dev ]; then
+        set -a
+        . ./.env.dev
+        set +a
+        echo "✅ Environment loaded from .env.dev"
+      else
+        echo "⚠️ No .env.dev"
+      fi
       echo "🕓 Waiting for database..."
-      until pg_isready -h postgres -U makerworks; do sleep 1; done
+      until pg_isready -h postgres -U makerworks >/dev/null 2>&1; do sleep 1; done
       echo "✅ Database is ready."
       echo "🚀 Starting application..."
       exec gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000
     working_dir: /app
     volumes:
-      - ./:/app
-      # Persist uploads on the host; container writes to /uploads
+      - ./makerworks-backend:/app
       - ./uploads:/uploads
+      - ./thumbnails:/thumbnails
+      - ./models:/models
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
-      # Backend should read this to save/serve files under /uploads/users/<user_id>/
       UPLOAD_DIR: /uploads
+      THUMBNAILS_DIR: /thumbnails
+      MODELS_DIR: /models
+      CORS_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173"
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,34 +110,96 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); s.close(); sys.exit(0)"
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 24
+      start_period: 90s
 
   worker:
     build:
-      context: .
+      context: ./makerworks-backend
       dockerfile: Dockerfile.macos
       args:
         WORKER_IMAGE: "true"
     container_name: makerworks_worker
     restart: unless-stopped
-    command: celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      set -e
+      echo "📦 Preparing bind-mount directories..."
+      mkdir -p /uploads /thumbnails /models
+      echo "📦 Loading environment..."
+      if [ -f .env.dev ]; then
+        set -a
+        . ./.env.dev
+        set +a
+      fi
+      echo "🕓 Waiting for Redis & Postgres..."
+      until pg_isready -h postgres -U makerworks >/dev/null 2>&1; do sleep 1; done
+      sleep 2
+      echo "🚚 Starting Celery worker..."
+      exec celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
     working_dir: /app
     volumes:
-      - ./:/app
-      # Worker needs access to the same uploads directory for render jobs, etc.
+      - ./makerworks-backend:/app
       - ./uploads:/uploads
+      - ./thumbnails:/thumbnails
+      - ./models:/models
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
       UPLOAD_DIR: /uploads
+      THUMBNAILS_DIR: /thumbnails
+      MODELS_DIR: /models
+      C_FORCE_ROOT: "true"
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport sys, socket\ns=socket.socket();\ntry:\n s.connect(('redis',6379)); sys.exit(0)\nexcept Exception:\n sys.exit(1)\nPY"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: makerworks_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+    depends_on:
+      backend:
+        condition: service_started
+
+  frontend-prod:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: makerworks_frontend_prod
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_started
 
 volumes:
   postgres_data:

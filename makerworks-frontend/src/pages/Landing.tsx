@@ -24,7 +24,7 @@ const Landing = () => {
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-white to-brand-accent dark:from-brand-secondary dark:to-brand-primary">
       <GlassCard>
         <div className="flex flex-col items-center justify-center text-center p-8">
-          <h1 className="text-4xl font-bold mb-6">MakerWorks</h1>
+          <h1 className="text-4xl font-bold mb-6">MakerW⚙️rks</h1>
           <button
             onClick={() => navigate('/auth/signin')}
             className="px-8 py-3 bg-brand-primary hover:bg-brand-highlight text-black font-medium rounded-full shadow-lg"
@@ -38,3 +38,5 @@ const Landing = () => {
 }
 
 export default Landing
+
+

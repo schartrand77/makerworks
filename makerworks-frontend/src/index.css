@@ -9,15 +9,15 @@
   }
 
   body {
-    @apply transition-colors duration-500 text-gray-900;
-    background: linear-gradient(180deg, #FFFFFF 0%, #C0C0C0 100%);
+    @apply transition-colors duration-500 text-brand-secondary;
+    background: linear-gradient(180deg, #FFFFFF 0%, #76B900 100%);
   }
 
   /* 🌙 Dark Theme Gradient */
   body.dark,
   .dark body {
-    @apply text-white;
-    background: linear-gradient(180deg, #121212 0%, #FF6A1F 100%);
+    @apply text-brand-accent;
+    background: linear-gradient(180deg, #000000 0%, #76B900 100%);
   }
 }
 

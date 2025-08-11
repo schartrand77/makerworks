@@ -2,13 +2,10 @@
 
 import os
 import sys
-import asyncio
 import logging
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool, text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 
 from alembic import context
 
@@ -56,6 +53,13 @@ def _sync_url_from_env_or_ini() -> str:
     return url
 
 
+def _qualified_version_table() -> str:
+    """Return the fully-qualified version table name if a schema is specified."""
+    if VERSION_TABLE_SCHEMA:
+        return f"{VERSION_TABLE_SCHEMA}.{VERSION_TABLE}"
+    return VERSION_TABLE
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (no DBAPI connection)."""
     url = _sync_url_from_env_or_ini()
@@ -76,6 +80,7 @@ def run_migrations_online() -> None:
     """Run migrations in 'online' mode using a sync Engine."""
     # Make sure the ini reflects the resolved URL so engine_from_config uses it.
     sync_url = _sync_url_from_env_or_ini()
+
     # Push into Alembic's config object (so engine_from_config reads it)
     section = config.get_section(config.config_ini_section) or {}
     section["sqlalchemy.url"] = sync_url
@@ -99,24 +104,14 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
-    # Optional: async post-check if your runtime URL is asyncpg
-    final_url = os.getenv("DATABASE_URL", sync_url)
-    if "asyncpg" in final_url:
+        # Post-migration **sync** check (no asyncio.run in a running loop, thanks)
         try:
-            engine = create_async_engine(final_url, echo=False, future=True)
-            async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-            async def _check():
-                async with async_session() as sess:
-                    res = await sess.execute(text("SELECT version_num FROM {}".format(VERSION_TABLE)))
-                    logger.info("Current Alembic revision: %s", res.scalar())
-                await engine.dispose()
-
-            asyncio.run(_check())
+            vt = _qualified_version_table()
+            res = connection.execute(text(f"SELECT version_num FROM {vt}"))
+            rev = res.scalar()
+            logger.info("Current Alembic revision: %s", rev)
         except Exception as e:
-            logger.warning("Post-migration async check failed: %s", e)
-    else:
-        logger.info("ℹ️ Skipping async post-migration check (not using asyncpg driver).")
+            logger.warning("Post-migration revision check failed: %s", e)
 
 
 if context.is_offline_mode():

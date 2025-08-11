@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 
 export default function PageNotFound({ to = "/" }: { to?: string }) {
   return (
-    <main className="flex flex-col items-center justify-center h-screen text-center bg-gradient-to-br from-white to-brand-accent dark:from-brand-secondary dark:to-brand-primary">
+    <main className="flex flex-col items-center justify-center h-screen text-center bg-gradient-to-br from-white to-brand-primary dark:from-brand-secondary dark:to-brand-primary">
       <Helmet>
         <title>404 – Page Not Found</title>
         <meta name="robots" content="noindex" />

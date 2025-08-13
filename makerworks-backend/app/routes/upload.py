@@ -10,7 +10,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 from fastapi import (
     APIRouter,
@@ -35,8 +35,12 @@ UPLOAD_ROOT = Path(os.getenv("UPLOAD_DIR", "/uploads")).resolve()
 THUMB_ROOT = Path(os.getenv("THUMBNAILS_DIR", "/thumbnails")).resolve()
 ALLOWED_EXTS = {".stl", ".3mf"}
 MAX_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
+
 ALLOW_ANON_UPLOADS = os.getenv("ALLOW_ANON_UPLOADS", "false").lower() == "true"
-ANON_BUCKET = "anonymous"
+ANON_BUCKET = "anonymous"  # filesystem bucket name (not a UUID)
+# Optional: point anonymous uploads at a real DB user to satisfy FK/NOT NULL
+ANON_USER_ID = os.getenv("ANON_USER_ID", "").strip() or None
+ANON_USER_EMAIL = os.getenv("ANON_USER_EMAIL", "").strip() or None
 
 log = logging.getLogger("uvicorn.error")
 
@@ -175,6 +179,18 @@ async def _resolve_owner_id(
 
     return None
 
+async def _resolve_anon_db_user() -> Optional[str]:
+    """
+    If anonymous uploads need a real DB user (FK/NOT NULL), resolve via env:
+    - ANON_USER_ID (UUID)
+    - ANON_USER_EMAIL (lookup users.email)
+    """
+    if ANON_USER_ID and _uuid_or_none(ANON_USER_ID):
+        return ANON_USER_ID
+    if ANON_USER_EMAIL:
+        return await _lookup_user_id_by_email(ANON_USER_EMAIL)
+    return None
+
 async def _make_thumbnail(model_path: Path, thumb_path: Path):
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
     if _render_thumb_util is not None:
@@ -186,13 +202,29 @@ async def _make_thumbnail(model_path: Path, thumb_path: Path):
     with thumb_path.open("wb") as f:
         f.write(_PNG_1x1)
 
+async def _model_uploads_user_id_nullable() -> bool:
+    """Check if public.model_uploads.user_id is nullable."""
+    async with async_engine.connect() as conn:
+        res = await conn.execute(
+            text("""
+                SELECT is_nullable
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='model_uploads' AND column_name='user_id'
+            """)
+        )
+        row = res.first()
+        if not row:
+            # Table missing? We'll let the insert fail with a clear error below.
+            return False
+        return str(row[0]).upper() == "YES"
+
 # ── Route ─────────────────────────────────────────────────────────────────
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_model(
     file: UploadFile = File(...),
     name: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    user_id: Optional[str] = Form(None),
+    user_id: Optional[str] = Form(None),  # <- fixed typing
     # Hyphenated header name (works with Axios/fetch)
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     authorization: Optional[str] = Header(None),
@@ -220,7 +252,7 @@ async def upload_model(
     owner_id = await _resolve_owner_id(user_id, x_user_id, token_candidates)
     if not owner_id:
         if ALLOW_ANON_UPLOADS:
-            owner_id = ANON_BUCKET
+            owner_id = ANON_BUCKET  # filesystem bucket
             log.warning("[upload] unresolved user -> falling back to '%s' (ALLOW_ANON_UPLOADS)", ANON_BUCKET)
         else:
             raise HTTPException(
@@ -289,13 +321,10 @@ async def upload_model(
 
     uploaded_at = _now()
 
-    # ── INSERT into public.model_uploads (not 'models') ────────────────────
-    # Table columns (per your logs):
-    # id, user_id, filename, file_path, file_url, thumbnail_path, turntable_path,
-    # name, description, uploaded_at, volume, bbox, faces, vertices, geometry_hash, is_duplicate
+    # ── Prepare record for INSERT into public.model_uploads ─────────────────
     base_record = {
         "id": str(model_uuid),
-        "user_id": owner_id if owner_id != ANON_BUCKET else None,  # will be rejected if NULL
+        "user_id": None if owner_id == ANON_BUCKET else owner_id,  # (maybe None)
         "filename": Path(file.filename).name,
         "file_path": str(dest_path),
         "file_url": file_url,
@@ -313,20 +342,44 @@ async def upload_model(
     }
 
     async with async_engine.begin() as conn:
-        # discover columns in public.model_uploads
+        # discover columns + nullability on user_id
         cols_res = await conn.execute(
             text("""
-                SELECT column_name
+                SELECT column_name, is_nullable
                 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='model_uploads'
             """)
         )
-        table_cols = {r[0] for r in cols_res}
+        rows = cols_res.fetchall()
+        if not rows:
+            raise HTTPException(status_code=500, detail="Model uploads table is missing. Run migrations.")
 
-        if "user_id" in table_cols and base_record["user_id"] is None and not ALLOW_ANON_UPLOADS:
-            # Enforce NOT NULL user_id unless anon is explicitly allowed
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Anonymous uploads are disabled.")
+        table_cols = {r[0] for r in rows}
+        user_col_nullable = None
+        for col, is_null in rows:
+            if col == "user_id":
+                user_col_nullable = (str(is_null).upper() == "YES")
+                break
 
+        # If no resolved user and DB requires NOT NULL user_id, try anon mapping or bail clearly.
+        if base_record["user_id"] is None and ("user_id" in table_cols) and (user_col_nullable is False):
+            # Try to resolve to a configured anonymous DB user
+            anon_db_user = await _resolve_anon_db_user()
+            if anon_db_user:
+                base_record["user_id"] = anon_db_user
+                log.info("[upload] mapped anonymous upload to DB user %s to satisfy NOT NULL", anon_db_user)
+            elif ALLOW_ANON_UPLOADS:
+                raise HTTPException(
+                    status_code=401,
+                    detail=(
+                        "Anonymous uploads allowed, but model_uploads.user_id is NOT NULL. "
+                        "Set ANON_USER_ID (UUID) or ANON_USER_EMAIL to map anon uploads to a real user."
+                    ),
+                )
+            else:
+                raise HTTPException(status_code=401, detail="Sign in required.")
+
+        # Filter to existing columns
         record = {k: v for k, v in base_record.items() if k in table_cols}
         collist = ", ".join(f'"{c}"' for c in record.keys())
         vallist = ", ".join(f":{c}" for c in record.keys())
@@ -340,13 +393,13 @@ async def upload_model(
         "bytes_written": total,
         "model": {
             "id": str(model_uuid),
-            "user_id": base_record["user_id"],
-            "name": base_record["name"],
-            "description": base_record["description"],
-            "filename": base_record["filename"],
-            "file_path": base_record["file_path"],
+            "user_id": record.get("user_id"),
+            "name": record.get("name"),
+            "description": record.get("description"),
+            "filename": record.get("filename"),
+            "file_path": record.get("file_path"),
             "file_url": file_url,
-            "thumbnail_path": base_record["thumbnail_path"],
+            "thumbnail_path": record.get("thumbnail_path"),
             "thumbnail_url": thumb_url,  # not stored in DB, but handy for the client
             "turntable_path": None,
             "uploaded_at": uploaded_at.isoformat(),

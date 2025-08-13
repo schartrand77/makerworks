@@ -45,9 +45,7 @@ services:
         sleep 1
       done
       echo "✅ PostgreSQL is ready."
-      echo "🔖 Stamping initial stub..."
-      alembic -c alembic.ini stamp ecf884acd250
-      echo "🚀 Applying migrations..."
+      echo "🚀 Applying migrations to head..."
       alembic -c alembic.ini upgrade head
       echo "✅ Migrations complete."
     working_dir: /app

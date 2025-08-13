@@ -1,8 +1,12 @@
 # app/models/models.py
 
+from __future__ import annotations
+
 import uuid
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 from pathlib import Path
+
 from sqlalchemy import (
     Column,
     String,
@@ -13,20 +17,31 @@ from sqlalchemy import (
     Float,
     Integer,
     event,
+    JSON,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
-from app.db.base_class import Base
-from app.config.settings import settings
-
-# Resolve uploads root safely
+# ── Settings (tolerate both module layouts) ────────────────────────────────────
 try:
-    uploads_root = Path(settings.uploads_path).resolve()
+    from app.core.config import settings  # preferred
 except Exception:
-    import logging
-    logging.warning("⚠️ uploads_path not configured, using /app/uploads fallback")
-    uploads_root = Path("/app/uploads").resolve()
+    from app.config.settings import settings  # legacy
+
+# Base class
+try:
+    from app.db.base import Base  # newer layout
+except Exception:
+    from app.db.base_class import Base  # legacy layout
+
+# Resolve uploads root safely (used by the path normalizer)
+try:
+    # Prefer the canonical root the app sets; fall back to settings/uploads
+    uploads_root = Path(getattr(settings, "UPLOAD_DIR", getattr(settings, "uploads_path", "/uploads"))).resolve()
+except Exception:
+    logging.warning("⚠️ uploads path not configured, using /uploads fallback")
+    uploads_root = Path("/uploads").resolve()
 
 
 # =========================
@@ -43,7 +58,7 @@ class User(Base):
     name = Column(String, nullable=True)
     avatar = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
-    avatar_updated_at = Column(DateTime, nullable=True)
+    avatar_updated_at = Column(DateTime(timezone=True), nullable=True)
 
     bio = Column(Text, nullable=True)
     language = Column(String, default="en")
@@ -53,8 +68,8 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_login = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_login = Column(DateTime(timezone=True), nullable=True)
 
     uploads = relationship("ModelUpload", back_populates="user", cascade="all, delete-orphan")
     estimates = relationship("Estimate", back_populates="user", cascade="all, delete-orphan")
@@ -69,56 +84,64 @@ class ModelUpload(Base):
     __tablename__ = "model_uploads"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    filename = Column(String, nullable=False)
-    file_path = Column(String, nullable=False)
-    file_url = Column(String, nullable=True)
+    # Use Text for anything that can exceed 255 (filenames, file paths, URLs)
+    filename = Column(Text, nullable=False)        # original filename
+    file_path = Column(Text, nullable=False)       # filesystem path (container)
+    file_url = Column(Text, nullable=True)         # served URL (e.g., /models/... or /uploads/...)
 
-    thumbnail_path = Column(String, nullable=True)
-    turntable_path = Column(String, nullable=True)
+    thumbnail_path = Column(Text, nullable=True)
+    turntable_path = Column(Text, nullable=True)
 
-    name = Column(String, nullable=True)
+    name = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
 
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
-    volume = Column(String, nullable=True)
-    bbox = Column(String, nullable=True)
-    faces = Column(String, nullable=True)
-    vertices = Column(String, nullable=True)
+    # Geometry / analysis
+    volume = Column(Float, nullable=True)
+    bbox = Column(JSON, nullable=True)             # store dict like {"x":..,"y":..,"z":..}
+    faces = Column(Integer, nullable=True)
+    vertices = Column(Integer, nullable=True)
 
-    geometry_hash = Column(String, nullable=True)
+    geometry_hash = Column(String(64), nullable=True, index=True)
     is_duplicate = Column(Boolean, default=False, nullable=False)
 
     user = relationship("User", back_populates="uploads")
     estimates = relationship("Estimate", back_populates="model", cascade="all, delete-orphan")
     favorites = relationship("Favorite", back_populates="model", cascade="all, delete-orphan")
 
-    # ✅ Proper relationship to ModelMetadata
+    # Rich metadata rows
     metadata_entries = relationship(
         "ModelMetadata",
         back_populates="model",
         cascade="all, delete-orphan",
-        lazy="joined"
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        Index("ix_model_uploads_user_uploaded_at", "user_id", "uploaded_at"),
     )
 
 
-# ✅ Normalize all upload-related paths before insert/update
+# ✅ Normalize FS paths (NOT URLs) before insert/update to be relative to uploads_root
 @event.listens_for(ModelUpload, "before_insert")
 @event.listens_for(ModelUpload, "before_update")
-def normalize_modelupload_paths(mapper, connection, target):
+def normalize_modelupload_paths(mapper, connection, target: ModelUpload):
     def normalize_path(value: str) -> str:
         if not value:
             return value
-        path = Path(value)
-        if not path.is_absolute():
-            path = uploads_root / path
+        p = Path(value)
+        # if not absolute, interpret relative to uploads_root
+        if not p.is_absolute():
+            p = uploads_root / p
         try:
-            return path.relative_to(uploads_root).as_posix()
-        except ValueError:
-            import logging
-            logging.warning("⚠️ Path outside uploads root: %s", path)
+            # store relative-to-root path (portable across hosts)
+            rel = p.relative_to(uploads_root).as_posix()
+            return rel
+        except Exception:
+            logging.warning("⚠️ Path outside uploads root: %s (keeping as-is)", p)
             return value
 
     if target.file_path:
@@ -127,6 +150,7 @@ def normalize_modelupload_paths(mapper, connection, target):
         target.thumbnail_path = normalize_path(target.thumbnail_path)
     if target.turntable_path:
         target.turntable_path = normalize_path(target.turntable_path)
+    # IMPORTANT: do NOT normalize file_url — it's already a URL rooted at /uploads or /models
 
 
 # =========================
@@ -152,7 +176,7 @@ class Estimate(Base):
     estimated_time = Column(Float, nullable=True)
     estimated_cost = Column(Float, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="estimates")
     model = relationship("ModelUpload", back_populates="estimates")
@@ -167,8 +191,8 @@ class EstimateSettings(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key = Column(String, unique=True, nullable=False)
     value = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 # =========================
@@ -180,7 +204,7 @@ class Favorite(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     model_id = Column(UUID(as_uuid=True), ForeignKey("model_uploads.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="favorites")
     model = relationship("ModelUpload", back_populates="favorites")
@@ -199,10 +223,10 @@ class Filament(Base):
     color_hex = Column(String, nullable=False)
     price_per_kg = Column(Float, nullable=False)
     attributes = Column(Text, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False, server_default="true")
+    is_active = Column(Boolean, default=True, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class FilamentPricing(Base):
@@ -214,8 +238,8 @@ class FilamentPricing(Base):
     price_per_gram = Column(Float, nullable=False)
     price_per_mm3 = Column(Float, nullable=True)
 
-    effective_date = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    effective_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     filament = relationship("Filament")
 
@@ -236,11 +260,10 @@ class ModelMetadata(Base):
     bbox_z = Column(Float, nullable=True)
     faces = Column(Integer, nullable=True)
     vertices = Column(Integer, nullable=True)
-    geometry_hash = Column(String, nullable=True, unique=True)
+    geometry_hash = Column(String(64), nullable=True, unique=True, index=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    # ✅ Back-populate relationship to ModelUpload
     model = relationship("ModelUpload", back_populates="metadata_entries")
 
 
@@ -256,7 +279,7 @@ class AuditLog(Base):
     details = Column(Text, nullable=True)
     ip_address = Column(String, nullable=True)
     user_agent = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User")
 
@@ -274,8 +297,8 @@ class CheckoutSession(Base):
     amount_total = Column(Float, nullable=False)
     currency = Column(String, default="usd")
     status = Column(String, default="pending")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="checkout_sessions")
 
@@ -288,11 +311,12 @@ class UploadJob(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     model_id = Column(UUID(as_uuid=True), ForeignKey("model_uploads.id", ondelete="CASCADE"), nullable=False)
+
     status = Column(String, default="pending")
     progress = Column(Float, default=0.0)
     error_message = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    model = relationship("ModelUpload")
+    model = relationship("ModelUpload", lazy="joined")

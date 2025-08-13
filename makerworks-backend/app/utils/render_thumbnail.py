@@ -1,3 +1,5 @@
+# app/utils/render_thumbnail.py
+
 import logging
 import os
 import shutil
@@ -8,7 +10,14 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
 
-from app.config.settings import settings
+try:
+    # prefer centralized settings, but don’t crash if absent
+    from app.config.settings import settings
+except Exception:
+    class _S:  # minimal shim
+        uploads_path = "/uploads"
+        thumbnails_path = "/thumbnails"
+    settings = _S()
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +31,7 @@ if _env_uploads:
 else:
     _default_uploads = Path(getattr(settings, "uploads_path", "/uploads")).resolve()
     # Prefer repo-local ./uploads when running outside docker and settings points at /app
-    if _default_uploads.parts[:2] == ("/", "app") and not os.getenv("DOCKERIZED"):
+    if _default_uploads.as_posix().startswith("/app") and not os.getenv("DOCKERIZED"):
         BASE_DIR = Path(__file__).resolve().parents[2]  # app/utils -> app -> repo root
         UPLOADS_DIR = (BASE_DIR / "uploads").resolve()
     else:
@@ -35,7 +44,7 @@ if _env_thumbs:
     THUMBNAILS_DIR = Path(_env_thumbs).resolve()
 else:
     _default_thumbs = Path(getattr(settings, "thumbnails_path", "/thumbnails")).resolve()
-    if _default_thumbs.parts[:2] == ("/", "app") and not os.getenv("DOCKERIZED"):
+    if _default_thumbs.as_posix().startswith("/app") and not os.getenv("DOCKERIZED"):
         BASE_DIR = Path(__file__).resolve().parents[2]
         THUMBNAILS_DIR = (BASE_DIR / "thumbnails").resolve()
     else:
@@ -54,7 +63,9 @@ def _render_fallback(output_path: Path, size=(1024, 1024)):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     bg = Image.new("RGBA", size, (245, 245, 245, 255))
     draw = ImageDraw.Draw(bg)
-    draw.text((size[0] * 0.3, size[1] * 0.45), "No Preview", fill=(80, 80, 80, 255))
+    msg = "No Preview"
+    w, h = draw.textlength(msg), 14
+    draw.text(((size[0]-w)//2, (size[1]-h)//2), msg, fill=(80, 80, 80, 255))
     bg.save(output_path, "PNG", optimize=True)
     logger.warning(f"[Thumbnail] ⚠️ Using fallback placeholder → {output_path}")
 
@@ -67,8 +78,13 @@ def _apply_gamma(image: Image.Image, gamma=1.8) -> Image.Image:
 
 def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     """Render STL/3MF preview into temp file then atomically move to output path."""
-    import trimesh
-    import pyrender
+    try:
+        import trimesh  # type: ignore
+        import pyrender  # type: ignore
+    except Exception as imp_err:
+        logger.error(f"[Thumbnail] render deps missing ({imp_err}); writing placeholder")
+        _render_fallback(output_path, size)
+        return str(output_path)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,22 +92,24 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     final_path = output_path
 
     mesh = trimesh.load(str(model_path), force="mesh")
-    if mesh.is_empty:
+    if getattr(mesh, "is_empty", False):
         _render_fallback(tmp_file, size)
         shutil.move(str(tmp_file), str(final_path))
         return str(final_path)
 
     # Normalize pose
-    mesh.apply_translation(-mesh.center_mass)
-    if max(mesh.extents) > 0:
-        mesh.apply_scale(1.0 / max(mesh.extents))
-    mesh.apply_transform(trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0]))
-    bbox = mesh.bounds
-    center = mesh.centroid
-    mesh.apply_translation(-center + [0, 0, -0.05])
+    try:
+        mesh.apply_translation(-mesh.center_mass)
+        if max(mesh.extents) > 0:
+            mesh.apply_scale(1.0 / max(mesh.extents))
+        mesh.apply_transform(trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0]))
+        center = mesh.centroid
+        mesh.apply_translation(-center + [0, 0, -0.05])
+        extents = (mesh.bounds[1] - mesh.bounds[0]).astype(float)
+        max_extent = float(max(extents)) if extents.size else 1.0
+    except Exception:
+        max_extent = 1.0
 
-    extents = bbox[1] - bbox[0]
-    max_extent = float(max(extents))
     margin = 1.15
     xmag = max_extent * margin
     ymag = max_extent * margin
@@ -107,9 +125,9 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     # Lighting
     scene.ambient_light = np.array([0.25, 0.25, 0.25, 1.0])
     light_color = np.array([1.0, 1.0, 1.0])
-    key_pose = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 2], [0, 0, 0, 1]]
-    fill_pose = [[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 1.5], [0, 0, 0, 1]]
-    back_pose = [[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 1.5], [0, 0, 0, 1]]
+    key_pose = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 2], [0, 0, 0, 1]], dtype=float)
+    fill_pose = np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 1.5], [0, 0, 0, 1]], dtype=float)
+    back_pose = np.array([[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 1.5], [0, 0, 0, 1]], dtype=float)
 
     scene.add(pyrender.DirectionalLight(color=light_color, intensity=1.0), pose=key_pose)
     scene.add(pyrender.DirectionalLight(color=light_color, intensity=0.5), pose=fill_pose)
@@ -117,19 +135,19 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
 
     camera = pyrender.OrthographicCamera(xmag=xmag, ymag=ymag)
     cam_pose = np.array(
-        [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 2.5],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
+        [[1.0, 0.0, 0.0, 0.0],
+         [0.0, 1.0, 0.0, 0.0],
+         [0.0, 0.0, 1.0, 2.5],
+         [0.0, 0.0, 0.0, 1.0]]
     )
     scene.add(camera, pose=cam_pose)
 
     high_res = (size[0] * 4, size[1] * 4)
     r = pyrender.OffscreenRenderer(*high_res)
-    color, _ = r.render(scene)
-    r.delete()
+    try:
+        color, _ = r.render(scene)
+    finally:
+        r.delete()
 
     model_img = Image.fromarray(color).convert("RGBA")
     model_img = model_img.resize(size, Image.LANCZOS)
@@ -141,14 +159,15 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     top_color = (255, 248, 245, 255)
     bottom_color = (230, 235, 240, 255)
     for y in range(size[1]):
-        blend = y / size[1]
+        blend = y / max(1, size[1])
         r_c = int(top_color[0] * (1 - blend) + bottom_color[0] * blend)
         g_c = int(top_color[1] * (1 - blend) + bottom_color[1] * blend)
         b_c = int(top_color[2] * (1 - blend) + bottom_color[2] * blend)
         draw.line([(0, y), (size[0], y)], fill=(r_c, g_c, b_c, 255))
-    bg = bg.filter(ImageFilter.GaussianBlur(0.6))
 
+    bg = bg.filter(ImageFilter.GaussianBlur(0.6))
     bg.alpha_composite(model_img)
+    tmp_file.parent.mkdir(parents=True, exist_ok=True)
     bg.save(tmp_file, "PNG", optimize=True)
 
     shutil.move(str(tmp_file), str(final_path))
@@ -173,10 +192,17 @@ def render_thumbnail(model_path: Path, model_id: str, size=(1024, 1024)) -> str:
             try:
                 result = _try_render(model_path, final_path, attempt_size)
             except Exception as egl_err:
+                # Try OSMesa if EGL path blew up
                 logger.error(f"[Thumbnail] EGL rendering failed: {egl_err}")
                 os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-                result = _try_render(model_path, final_path, attempt_size)
+                try:
+                    result = _try_render(model_path, final_path, attempt_size)
+                except Exception as osmesa_err:
+                    logger.error(f"[Thumbnail] OSMesa rendering failed: {osmesa_err}")
+                    _render_fallback(final_path, attempt_size)
+                    return str(final_path)
 
+            # ✅ fixed var name (was mangled)
             thumb_size = final_path.stat().st_size if final_path.exists() else 0
             if thumb_size <= model_size * MAX_THUMBNAIL_RATIO or attempt_size[0] <= 64:
                 return result

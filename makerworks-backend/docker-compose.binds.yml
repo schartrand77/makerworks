@@ -1,0 +1,12 @@
+services:
+  backend:
+    volumes:
+      - ./uploads:/uploads
+      - ./thumbnails:/thumbnails
+      - ./models:/models
+
+  worker:
+    volumes:
+      - ./uploads:/uploads
+      - ./thumbnails:/thumbnails
+      - ./models:/models

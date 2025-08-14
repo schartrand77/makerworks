@@ -45,6 +45,8 @@ ANON_USER_EMAIL = os.getenv("ANON_USER_EMAIL", "").strip() or None
 log = logging.getLogger("uvicorn.error")
 
 # Try to use your real thumbnail util; otherwise write a tiny placeholder PNG.
+# Newer util signature: render_thumbnail(model_path, model_id)
+# Older util signature: render_thumbnail(model_path, output_path)
 try:
     from app.utils.render_thumbnail import render_thumbnail as _render_thumb_util  # type: ignore
 except Exception:  # pragma: no cover
@@ -191,15 +193,32 @@ async def _resolve_anon_db_user() -> Optional[str]:
         return await _lookup_user_id_by_email(ANON_USER_EMAIL)
     return None
 
-async def _make_thumbnail(model_path: Path, thumb_path: Path):
-    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+async def _make_thumbnail(model_path: Path, model_id: str):
+    """
+    Generate thumbnail under the global library: /thumbnails/<model_id>.png
+    Handles both util signatures:
+      - render_thumbnail(model_path, model_id)  [new]
+      - render_thumbnail(model_path, output_path)  [old]
+    Falls back to a 1x1 placeholder if util/import fails.
+    """
+    thumb_fs_path = THUMB_ROOT / f"{model_id}.png"
+    thumb_fs_path.parent.mkdir(parents=True, exist_ok=True)
+
     if _render_thumb_util is not None:
         try:
-            await run_in_threadpool(_render_thumb_util, str(model_path), str(thumb_path))
-            return
+            # Try new signature first
+            try:
+                await run_in_threadpool(_render_thumb_util, str(model_path), str(model_id))
+                return
+            except TypeError:
+                # Fall back to old signature (output path)
+                await run_in_threadpool(_render_thumb_util, str(model_path), str(thumb_fs_path))
+                return
         except Exception as e:
             log.warning("[thumbnail] render util failed (%s), writing placeholder", e)
-    with thumb_path.open("wb") as f:
+
+    # Fallback 1x1 transparent PNG
+    with thumb_fs_path.open("wb") as f:
         f.write(_PNG_1x1)
 
 async def _model_uploads_user_id_nullable() -> bool:
@@ -224,7 +243,7 @@ async def upload_model(
     file: UploadFile = File(...),
     name: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    user_id: Optional[str] = Form(None),  # <- fixed typing
+    user_id: Optional[str] = Form(None),
     # Hyphenated header name (works with Axios/fetch)
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     authorization: Optional[str] = Header(None),
@@ -247,7 +266,11 @@ async def upload_model(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing filename.")
 
     ext = _safe_ext(file.filename)
+
+    # DB id (with hyphens). Keep this for URLs & DB primary key.
     model_uuid = uuid.uuid4()
+    model_id = str(model_uuid)       # e.g. '08f19c89-...'
+    model_dir_id = model_uuid.hex    # used in filesystem layout
 
     owner_id = await _resolve_owner_id(user_id, x_user_id, token_candidates)
     if not owner_id:
@@ -260,8 +283,8 @@ async def upload_model(
                 detail="Could not resolve user id from token/headers/cookies. Send X-User-Id or include id/sub/email in JWT.",
             )
 
-    # Layout: /uploads/users/<user_id>/models/<model_id>/model.<ext>
-    dest_dir = UPLOAD_ROOT / "users" / owner_id / "models" / model_uuid.hex
+    # Layout: /uploads/users/<user_id>/models/<model_idhex>/model.<ext>
+    dest_dir = UPLOAD_ROOT / "users" / owner_id / "models" / model_dir_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / f"model{ext}"
 
@@ -269,7 +292,7 @@ async def upload_model(
         "[upload] resolved user=%s (anon=%s) model_id=%s -> %s  [hdr=%s, cookies=%s]",
         owner_id,
         owner_id == ANON_BUCKET,
-        model_uuid,
+        model_id,
         str(dest_path),
         bool(authorization),
         {"access_token": bool(access_token), "mw_token": bool(mw_token), "session": bool(session)},
@@ -299,39 +322,40 @@ async def upload_model(
     if total == 0:
         with contextlib.suppress(Exception):
             dest_path.unlink(missing_ok=True)
-        log.warning("[upload] empty upload for model_id=%s (filename=%s)", model_uuid, file.filename)
+        log.warning("[upload] empty upload for model_id=%s (filename=%s)", model_id, file.filename)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty upload.")
 
-    # Build URLs that match StaticFiles mounts in main.py (if any)
+    # Public URL to the model file (served by StaticFiles("/uploads"))
     try:
         rel_to_uploads = dest_path.relative_to(UPLOAD_ROOT)
         file_url = f"/uploads/{rel_to_uploads.as_posix()}"
     except Exception:
         file_url = None
 
-    # Thumbnail: /thumbnails/<model_id>.png
-    thumb_path = THUMB_ROOT / f"{model_uuid}.png"
-    await _make_thumbnail(dest_path, thumb_path)
+    # Thumbnail library: always root → /thumbnails/<model_id>.png
+    thumb_fs_path = THUMB_ROOT / f"{model_id}.png"
+    await _make_thumbnail(dest_path, model_id)
 
     try:
-        rel_to_thumbs = thumb_path.relative_to(THUMB_ROOT)
+        rel_to_thumbs = thumb_fs_path.relative_to(THUMB_ROOT)
         thumb_url = f"/thumbnails/{rel_to_thumbs.as_posix()}"
     except Exception:
         thumb_url = None
 
     uploaded_at = _now()
 
-    # ── Prepare record for INSERT into public.model_uploads ─────────────────
+    # ── Prepare record for INSERT into public.model_uploads ────────────────
     base_record = {
-        "id": str(model_uuid),
+        "id": model_id,
         "user_id": None if owner_id == ANON_BUCKET else owner_id,  # (maybe None)
         "filename": Path(file.filename).name,
         "file_path": str(dest_path),
         "file_url": file_url,
-        "thumbnail_path": str(thumb_path),
+        # ✅ Store the public URL in DB so the frontend Browse page can use it directly
+        "thumbnail_path": thumb_url,
         "turntable_path": None,
-        "name": name or Path(file.filename).stem,
-        "description": description or "",
+        "name": (name or Path(file.filename).stem),
+        "description": (description or ""),
         "uploaded_at": uploaded_at,
         "volume": None,
         "bbox": None,
@@ -386,21 +410,22 @@ async def upload_model(
         sql = text(f'INSERT INTO public.model_uploads ({collist}) VALUES ({vallist})')
         await conn.execute(sql, record)
 
-    log.info("[upload] wrote %s bytes -> %s; thumbnail -> %s", total, dest_path, thumb_path)
+    log.info("[upload] wrote %s bytes -> %s; thumbnail -> %s", total, dest_path, thumb_fs_path)
 
     payload = {
-        "id": str(model_uuid),
+        "id": model_id,
         "bytes_written": total,
         "model": {
-            "id": str(model_uuid),
+            "id": model_id,
             "user_id": record.get("user_id"),
             "name": record.get("name"),
             "description": record.get("description"),
             "filename": record.get("filename"),
             "file_path": record.get("file_path"),
             "file_url": file_url,
-            "thumbnail_path": record.get("thumbnail_path"),
-            "thumbnail_url": thumb_url,  # not stored in DB, but handy for the client
+            # both for convenience:
+            "thumbnail_path": record.get("thumbnail_path"),  # URL stored in DB
+            "thumbnail_url": thumb_url,                      # explicit URL in response
             "turntable_path": None,
             "uploaded_at": uploaded_at.isoformat(),
         },

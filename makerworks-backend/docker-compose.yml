@@ -1,65 +1,3 @@
-services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: makerworks_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: makerworks
-      POSTGRES_PASSWORD: makerworks
-      POSTGRES_DB: makerworks
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U makerworks"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    container_name: makerworks_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  migrate:
-    build:
-      context: ./makerworks-backend
-      dockerfile: Dockerfile.macos
-    image: makerworks-migrate:latest
-    container_name: makerworks_migrate
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      echo "⏳ Waiting for PostgreSQL..."
-      until PGPASSWORD=makerworks psql -h postgres -U makerworks -d makerworks -c '\q' >/dev/null 2>&1; do
-        echo "... still waiting for db"
-        sleep 1
-      done
-      echo "✅ PostgreSQL is ready."
-      echo "🚀 Applying migrations to head..."
-      alembic -c alembic.ini upgrade head
-      echo "✅ Migrations complete."
-    working_dir: /app
-    volumes:
-      - ./makerworks-backend:/app
-    environment:
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-      RUN_MIGRATIONS: "true"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   backend:
     build:
       context: ./makerworks-backend
@@ -71,28 +9,16 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command: |
       set -e
-      echo "📦 Preparing bind-mount directories..."
       mkdir -p /uploads /thumbnails /models
-      echo "📦 Loading environment..."
-      if [ -f .env.dev ]; then
-        set -a
-        . ./.env.dev
-        set +a
-        echo "✅ Environment loaded from .env.dev"
-      else
-        echo "⚠️ No .env.dev"
-      fi
-      echo "🕓 Waiting for database..."
+      if [ -f .env.dev ]; then set -a; . ./.env.dev; set +a; fi
       until pg_isready -h postgres -U makerworks >/dev/null 2>&1; do sleep 1; done
-      echo "✅ Database is ready."
-      echo "🚀 Starting application..."
       exec gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000
     working_dir: /app
     volumes:
       - ./makerworks-backend:/app
-      - ./uploads:/uploads
-      - ./thumbnails:/thumbnails
-      - ./models:/models
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/uploads
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
@@ -108,13 +34,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); s.close(); sys.exit(0)"
-        ]
+      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); s.close(); sys.exit(0)\""]
       interval: 10s
       timeout: 3s
       retries: 24
@@ -124,32 +44,23 @@ services:
     build:
       context: ./makerworks-backend
       dockerfile: Dockerfile.macos
-      args:
-        WORKER_IMAGE: "true"
+      args: { WORKER_IMAGE: "true" }
     container_name: makerworks_worker
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command: |
       set -e
-      echo "📦 Preparing bind-mount directories..."
       mkdir -p /uploads /thumbnails /models
-      echo "📦 Loading environment..."
-      if [ -f .env.dev ]; then
-        set -a
-        . ./.env.dev
-        set +a
-      fi
-      echo "🕓 Waiting for Redis & Postgres..."
+      if [ -f .env.dev ]; then set -a; . ./.env.dev; set +a; fi
       until pg_isready -h postgres -U makerworks >/dev/null 2>&1; do sleep 1; done
       sleep 2
-      echo "🚚 Starting Celery worker..."
       exec celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
     working_dir: /app
     volumes:
       - ./makerworks-backend:/app
-      - ./uploads:/uploads
-      - ./thumbnails:/thumbnails
-      - ./models:/models
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/uploads
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
     environment:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
@@ -164,12 +75,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "python - <<'PY'\nimport sys, socket\ns=socket.socket();\ntry:\n s.connect(('redis',6379)); sys.exit(0)\nexcept Exception:\n sys.exit(1)\nPY"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
 
   frontend:
     build:
@@ -178,13 +83,12 @@ services:
       target: dev
     container_name: makerworks_frontend
     restart: unless-stopped
-    ports:
-      - "5173:5173"
+    ports: ["5173:5173"]
     environment:
       VITE_API_BASE_URL: http://localhost:8000/api/v1
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
 
   frontend-prod:
     build:
@@ -193,11 +97,10 @@ services:
       target: production
     container_name: makerworks_frontend_prod
     restart: unless-stopped
-    ports:
-      - "8080:80"
+    ports: ["8080:80"]
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   postgres_data:

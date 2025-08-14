@@ -11,61 +11,55 @@ from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
 
 try:
-    # prefer centralized settings, but don’t crash if absent
     from app.config.settings import settings
 except Exception:
-    class _S:  # minimal shim
+    class _S:
         uploads_path = "/uploads"
         thumbnails_path = "/thumbnails"
     settings = _S()
 
 logger = logging.getLogger(__name__)
 
-# ---------- Directories ----------
-# Originals live under /uploads/... (handled elsewhere). Thumbnails are a flat library keyed by DB id.
+# ---------------- Directories ----------------
 
-# Uploads root (not used for output here, but kept for parity/debug)
+# Uploads root
 _env_uploads = os.getenv("UPLOADS_DIR")
 if _env_uploads:
     UPLOADS_DIR = Path(_env_uploads).resolve()
 else:
     _default_uploads = Path(getattr(settings, "uploads_path", "/uploads")).resolve()
-    # Prefer repo-local ./uploads when running outside docker and settings points at /app
     if _default_uploads.as_posix().startswith("/app") and not os.getenv("DOCKERIZED"):
-        BASE_DIR = Path(__file__).resolve().parents[2]  # app/utils -> app -> repo root
+        BASE_DIR = Path(__file__).resolve().parents[2]
         UPLOADS_DIR = (BASE_DIR / "uploads").resolve()
     else:
         UPLOADS_DIR = _default_uploads
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Thumbnails root
+# Thumbnails root — always force to root-level /thumbnails unless overridden
 _env_thumbs = os.getenv("THUMBNAILS_DIR")
 if _env_thumbs:
     THUMBNAILS_DIR = Path(_env_thumbs).resolve()
 else:
-    _default_thumbs = Path(getattr(settings, "thumbnails_path", "/thumbnails")).resolve()
-    if _default_thumbs.as_posix().startswith("/app") and not os.getenv("DOCKERIZED"):
-        BASE_DIR = Path(__file__).resolve().parents[2]
-        THUMBNAILS_DIR = (BASE_DIR / "thumbnails").resolve()
-    else:
-        THUMBNAILS_DIR = _default_thumbs
+    # Force root /thumbnails for production / docker
+    THUMBNAILS_DIR = Path("/thumbnails").resolve()
+
+# Ensure directory exists
 THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Prefer headless EGL; fall back to OSMesa if needed
+# Always prefer headless EGL
 if "PYOPENGL_PLATFORM" not in os.environ:
     os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-MAX_THUMBNAIL_RATIO = 0.5  # thumbnail must be <= 50% of model file size
+MAX_THUMBNAIL_RATIO = 0.5
 
 
 def _render_fallback(output_path: Path, size=(1024, 1024)):
-    """Generate a simple 'No Preview' placeholder."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     bg = Image.new("RGBA", size, (245, 245, 245, 255))
     draw = ImageDraw.Draw(bg)
     msg = "No Preview"
     w, h = draw.textlength(msg), 14
-    draw.text(((size[0]-w)//2, (size[1]-h)//2), msg, fill=(80, 80, 80, 255))
+    draw.text(((size[0] - w) // 2, (size[1] - h) // 2), msg, fill=(80, 80, 80, 255))
     bg.save(output_path, "PNG", optimize=True)
     logger.warning(f"[Thumbnail] ⚠️ Using fallback placeholder → {output_path}")
 
@@ -77,7 +71,6 @@ def _apply_gamma(image: Image.Image, gamma=1.8) -> Image.Image:
 
 
 def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
-    """Render STL/3MF preview into temp file then atomically move to output path."""
     try:
         import trimesh  # type: ignore
         import pyrender  # type: ignore
@@ -89,15 +82,13 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_file = Path(tempfile.gettempdir()) / (output_path.name + ".tmp")
-    final_path = output_path
 
     mesh = trimesh.load(str(model_path), force="mesh")
     if getattr(mesh, "is_empty", False):
         _render_fallback(tmp_file, size)
-        shutil.move(str(tmp_file), str(final_path))
-        return str(final_path)
+        shutil.move(str(tmp_file), str(output_path))
+        return str(output_path)
 
-    # Normalize pose
     try:
         mesh.apply_translation(-mesh.center_mass)
         if max(mesh.extents) > 0:
@@ -125,13 +116,13 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     # Lighting
     scene.ambient_light = np.array([0.25, 0.25, 0.25, 1.0])
     light_color = np.array([1.0, 1.0, 1.0])
-    key_pose = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 2], [0, 0, 0, 1]], dtype=float)
-    fill_pose = np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 1.5], [0, 0, 0, 1]], dtype=float)
-    back_pose = np.array([[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 1.5], [0, 0, 0, 1]], dtype=float)
-
-    scene.add(pyrender.DirectionalLight(color=light_color, intensity=1.0), pose=key_pose)
-    scene.add(pyrender.DirectionalLight(color=light_color, intensity=0.5), pose=fill_pose)
-    scene.add(pyrender.DirectionalLight(color=light_color, intensity=0.4), pose=back_pose)
+    poses = [
+        (light_color, 1.0, [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 2], [0, 0, 0, 1]]),
+        (light_color, 0.5, [[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 1.5], [0, 0, 0, 1]]),
+        (light_color, 0.4, [[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 1.5], [0, 0, 0, 1]])
+    ]
+    for color, intensity, pose in poses:
+        scene.add(pyrender.DirectionalLight(color=color, intensity=intensity), pose=np.array(pose, dtype=float))
 
     camera = pyrender.OrthographicCamera(xmag=xmag, ymag=ymag)
     cam_pose = np.array(
@@ -149,11 +140,10 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
     finally:
         r.delete()
 
-    model_img = Image.fromarray(color).convert("RGBA")
-    model_img = model_img.resize(size, Image.LANCZOS)
+    model_img = Image.fromarray(color).convert("RGBA").resize(size, Image.LANCZOS)
     model_img = _apply_gamma(model_img, gamma=1.8)
 
-    # Soft gradient background
+    # Gradient background
     bg = Image.new("RGBA", size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(bg)
     top_color = (255, 248, 245, 255)
@@ -167,19 +157,13 @@ def _try_render(model_path: Path, output_path: Path, size=(1024, 1024)) -> str:
 
     bg = bg.filter(ImageFilter.GaussianBlur(0.6))
     bg.alpha_composite(model_img)
-    tmp_file.parent.mkdir(parents=True, exist_ok=True)
     bg.save(tmp_file, "PNG", optimize=True)
 
-    shutil.move(str(tmp_file), str(final_path))
-    return str(final_path)
+    shutil.move(str(tmp_file), str(output_path))
+    return str(output_path)
 
 
 def render_thumbnail(model_path: Path, model_id: str, size=(1024, 1024)) -> str:
-    """
-    Render a thumbnail for `model_path` into the thumbnails library keyed by `model_id`.
-    Output path is forced to: THUMBNAILS_DIR / f"{model_id}.png"
-    Returns the absolute filesystem path as a string.
-    """
     model_path = Path(model_path)
     final_path = (THUMBNAILS_DIR / f"{model_id}.png").resolve()
 
@@ -192,7 +176,6 @@ def render_thumbnail(model_path: Path, model_id: str, size=(1024, 1024)) -> str:
             try:
                 result = _try_render(model_path, final_path, attempt_size)
             except Exception as egl_err:
-                # Try OSMesa if EGL path blew up
                 logger.error(f"[Thumbnail] EGL rendering failed: {egl_err}")
                 os.environ["PYOPENGL_PLATFORM"] = "osmesa"
                 try:
@@ -202,7 +185,6 @@ def render_thumbnail(model_path: Path, model_id: str, size=(1024, 1024)) -> str:
                     _render_fallback(final_path, attempt_size)
                     return str(final_path)
 
-            # ✅ fixed var name (was mangled)
             thumb_size = final_path.stat().st_size if final_path.exists() else 0
             if thumb_size <= model_size * MAX_THUMBNAIL_RATIO or attempt_size[0] <= 64:
                 return result
@@ -218,11 +200,7 @@ def render_thumbnail(model_path: Path, model_id: str, size=(1024, 1024)) -> str:
         logger.info(f"[Thumbnail] ✅ Thumbnail completed in {elapsed:.2f}s → {final_path}")
 
 
-# Back-compat wrapper: if someone insists on calling it with a fake "output path"
 def ensure_thumbnail(model_path: Path, model_id_or_path, size=(1024, 1024)) -> str:
-    """
-    If the second arg looks like an id, use it. If it's a Path, use its stem as id.
-    """
     if isinstance(model_id_or_path, (str, bytes)):
         model_id = str(model_id_or_path)
     else:

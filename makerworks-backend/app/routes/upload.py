@@ -6,6 +6,8 @@ import contextlib
 import logging
 import os
 import re
+import sys
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -24,6 +26,7 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from PIL import Image  # for PNG sanity check
 
 from app.db.session import async_engine
 from app.dependencies.auth import get_current_user  # ← wire in your auth dep
@@ -58,11 +61,9 @@ os.environ.setdefault("THUMBNAILS_DIR", str(THUMB_ROOT))
 ALLOWED_EXTS = {".stl", ".3mf"}
 MAX_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
 
-# ── Thumbnail util (uses your renderer; falls back to 1x1 PNG) ────────────
-try:
-    from app.utils.render_thumbnail import render_thumbnail as _render_thumb_util  # type: ignore
-except Exception:  # pragma: no cover
-    _render_thumb_util = None
+THUMBNAIL_SIZE    = int(os.getenv("THUMBNAIL_SIZE", "1024"))
+THUMBNAIL_BACKEND = os.getenv("THUMBNAIL_BACKEND", "auto")  # auto|pyrender|plotly
+ALLOW_THUMB_FALLBACK = os.getenv("THUMBNAIL_FALLBACK", "false").lower() == "true"
 
 # 1×1 transparent PNG (fallback)
 _PNG_1x1 = (
@@ -70,29 +71,59 @@ _PNG_1x1 = (
     b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0cIDATx\x9cc``\x00"
     b"\x00\x00\x04\x00\x01\xf2\x1d\xdcS\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
+# ── Thumbnail (call CLI renderer; validate output) ─────────────────────────
 async def _make_thumbnail(model_path: Path, model_id: str) -> Path:
-    thumb_fs_path = THUMB_ROOT / f"{model_id}.png"
-    thumb_fs_path.parent.mkdir(parents=True, exist_ok=True)
+    """
+    Call the CLI renderer: python -m app.utils.render_thumbnail <in> <out> --backend ... --size ...
+    Validate that we produced a non-trivial, real PNG. Optionally fall back to 1×1.
+    """
+    out_path = THUMB_ROOT / f"{model_id}.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    log.info("[thumbnail] starting: in=%s → out=%s (util=%s)",
-             model_path, thumb_fs_path, getattr(_render_thumb_util, "__name__", None))
+    cmd = [
+        sys.executable, "-m", "app.utils.render_thumbnail",
+        str(model_path), str(out_path),
+        "--backend", THUMBNAIL_BACKEND,
+        "--size", str(THUMBNAIL_SIZE),
+    ]
+    log.info("[thumbnail] render: %s", " ".join(cmd))
 
-    if _render_thumb_util is not None:
-        try:
-            # Support both signatures we've seen in your codebase:
-            # (src_path, model_id) or (src_path, dst_path)
-            try:
-                await run_in_threadpool(_render_thumb_util, str(model_path), str(model_id))
-            except TypeError:
-                await run_in_threadpool(_render_thumb_util, str(model_path), str(thumb_fs_path))
-            return thumb_fs_path
-        except Exception as e:
-            log.warning("[thumbnail] util failed (%s); falling back to 1x1", e)
+    # Run in a thread to avoid blocking the loop
+    def _run():
+        return subprocess.run(cmd, capture_output=True, text=True)
+    proc = await run_in_threadpool(_run)
 
-    with thumb_fs_path.open("wb") as f:
-        f.write(_PNG_1x1)
-    return thumb_fs_path
+    if proc.returncode != 0:
+        log.error("[thumbnail] renderer failed (%s)\nSTDOUT:\n%s\nSTDERR:\n%s",
+                  proc.returncode, proc.stdout, proc.stderr)
+        if ALLOW_THUMB_FALLBACK:
+            out_path.write_bytes(_PNG_1x1)
+            return out_path
+        raise HTTPException(status_code=500, detail="Thumbnail renderer failed.")
+
+    # Validate PNG signature + not tiny + Pillow verify
+    try:
+        with out_path.open("rb") as f:
+            sig = f.read(8)
+        if sig != _PNG_MAGIC:
+            raise RuntimeError("bad PNG signature")
+        size_bytes = out_path.stat().st_size
+        if size_bytes < 2048:  # a real thumb should be larger than our fallback
+            raise RuntimeError(f"suspiciously small PNG ({size_bytes} bytes)")
+        Image.open(out_path).verify()
+    except Exception as e:
+        log.error("[thumbnail] output validation failed: %s", e)
+        if ALLOW_THUMB_FALLBACK:
+            out_path.write_bytes(_PNG_1x1)
+            return out_path
+        # ensure we don't leave a bogus file lying around
+        with contextlib.suppress(Exception):
+            out_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Invalid thumbnail produced.")
+
+    return out_path
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 def _now() -> datetime:
@@ -206,7 +237,7 @@ async def upload_model(
     rel_to_uploads = dest_path.resolve().relative_to(UPLOAD_ROOT.resolve())
     file_url = f"/uploads/{rel_to_uploads.as_posix()}"
 
-    # Thumbnail
+    # Thumbnail (now using CLI renderer + validation)
     thumb_fs_path = await _make_thumbnail(dest_path, model_id)
     try:
         rel_to_thumbs = thumb_fs_path.resolve().relative_to(THUMB_ROOT.resolve())

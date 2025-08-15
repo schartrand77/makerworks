@@ -27,3 +27,9 @@ build/
 # VSCode and IDE
 .vscode/
 .idea/
+
+/uploads/
+/thumbnails/
+/models/
+
+*.bak

@@ -100,7 +100,7 @@ export default function PageLayout({
                   {crumb.href ? (
                     <Link
                       to={crumb.href}
-                      className="hover:underline hover:text-blue-600 dark:hover:text-blue-400"
+                      className="hover:underline hover:text-brand-blue dark:hover:text-brand-red"
                     >
                       {crumb.label}
                     </Link>

@@ -17,6 +17,7 @@ services:
     environment:
       # Browser hits localhost:8000 (not the Docker service name)
       VITE_API_URL: http://localhost:8000/api/v1
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
       VITE_THUMB_BASE: http://localhost:8000
       VITE_UPLOADS_BASE: http://localhost:8000
     networks:
@@ -46,6 +47,10 @@ services:
       # CORS & base URL so the API can emit absolute links
       CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:3000","http://127.0.0.1:3000"]'
       BASE_URL: http://localhost:8000
+
+      # Thumbnails: container path & public URL prefix
+      THUMBNAILS_DIR: /thumbnails
+      THUMBNAILS_URL_PREFIX: /thumbnails
 
       # Use CPU-safe Plotly path in Docker
       THUMBNAIL_BACKEND: "plotly"
@@ -84,8 +89,8 @@ services:
     volumes:
       - ./makerworks-backend:/app
       - ./uploads:/app/uploads
-      # Map thumbnails to your absolute macOS path (as requested)
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thunbnails:/thumbnails
+      # Map thumbnails to your absolute macOS path (fixed spelling)
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails:rw
     working_dir: /app
 
   migrate:
@@ -180,11 +185,14 @@ services:
       <<: *buildkit-env
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
+      # Make the worker write thumbnails to the same mounted dir
+      THUMBNAILS_DIR: /thumbnails
     networks:
       - default
     restart: unless-stopped
     volumes:
       - ./makerworks-backend:/app
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails:rw
     working_dir: /app
 
 volumes:

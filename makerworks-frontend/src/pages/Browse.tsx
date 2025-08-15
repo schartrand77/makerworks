@@ -28,6 +28,27 @@ const SOURCES: { key: SourceKey; label: string }[] = [
   { key: 'thangs',      label: 'Thangs' },
 ];
 
+/** Backend origin resolver (no guessing games). */
+const BACKEND_BASE =
+  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ||
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/api\/v1\/?$/, '') ||
+  `${window.location.protocol}//${window.location.hostname}:8000`;
+
+/** Always send media to the backend origin; never 5173. */
+function resolveMediaUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s; // already absolute
+
+  if (s.startsWith('/thumbnails') || s.startsWith('/uploads') || s.startsWith('/static')) {
+    return `${BACKEND_BASE}${s}`;
+  }
+  const viaHelper = getAbsoluteUrl(s);
+  if (viaHelper) return viaHelper;
+  return s.startsWith('/') ? s : `/${s}`;
+}
+
 const Browse: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
   const [page, setPage] = useState(1);
@@ -67,28 +88,50 @@ const Browse: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, source]);
 
+  type ListResponse = {
+    total: number;
+    items: any[];
+    limit: number;
+    offset: number;
+  };
+
   const fetchModels = async (pageParam = 1, limitParam = limit) => {
     if (pageParam > 1) setLoadingMore(true);
     try {
-      const res = await axios.get<{ models: any[] }>('/models', {
-        params: { page: pageParam, limit: limitParam },
+      // API is offset/limit-based; compute offset from page
+      const offset = (pageParam - 1) * limitParam;
+      const url = `${BACKEND_BASE}/api/v1/models`;
+      const res = await axios.get<ListResponse>(url, {
+        params: { offset, limit: limitParam },
+      });
+      // debug: verify shape { total, items, ... }
+      console.debug('[Browse] /models ->', res.status, res.data);
+
+      const fetched: Model[] = (res.data.items || []).map((m) => {
+        const defaultThumb = m?.id ? `/thumbnails/${m.id}.png` : null;
+        const rawThumb = m.thumbnail_url || m.thumbnail_path || defaultThumb;
+
+        return {
+          id: m.id,
+          name: m.name ?? null,
+          description: m.description ?? null,
+          thumbnail_url: resolveMediaUrl(rawThumb),
+          file_url: m.file_url || null,
+          uploader_username: m.uploader_username || null,
+        } as Model;
       });
 
-      const fetched: Model[] = (res.data.models || []).map((m) => ({
-        id: m.id,
-        name: m.name ?? null,
-        description: m.description ?? null,
-        thumbnail_url: m.thumbnail_url || m.thumbnail_path || null,
-        file_url: m.file_url || null,
-        uploader_username: m.uploader_username || null,
-      }));
-
       setModels((prev) => (pageParam === 1 ? fetched : [...prev, ...fetched]));
-      if (fetched.length < limitParam) setHasMore(false);
+
+      // hasMore if we haven't reached total yet
+      const nextCount = (pageParam - 1) * limitParam + fetched.length;
+      setHasMore(nextCount < (res.data.total ?? nextCount));
+
     } catch (err) {
       console.error('[Browse] Failed to load models:', err);
       toast.error('⚠️ Failed to load models. Please try again.');
       setError('Failed to load models');
+      setHasMore(false);
     } finally {
       setLoadingInitial(false);
       if (pageParam > 1) setLoadingMore(false);
@@ -98,11 +141,11 @@ const Browse: React.FC = () => {
   const fetchFavorites = async () => {
     if (!user?.id) return;
     try {
-      const res = await axios.get<string[]>(`/users/${user.id}/favorites`);
+      const res = await axios.get<string[]>(`${BACKEND_BASE}/api/v1/users/${user.id}/favorites`);
       setFavorites(new Set(res.data || []));
     } catch (err) {
       console.error('[Browse] Failed to load favorites:', err);
-      toast.error('⚠️ Failed to load favorites. Please try again.');
+      // not fatal
     }
   };
 
@@ -114,13 +157,16 @@ const Browse: React.FC = () => {
     setFavorites(updated);
 
     try {
+      const base = `${BACKEND_BASE}/api/v1`;
       if (isFav) {
-        await axios.delete(`/users/${user.id}/favorites/${id}`);
+        await axios.delete(`${base}/users/${user.id}/favorites/${id}`);
       } else {
-        await axios.post(`/users/${user.id}/favorites`, { modelId: id });
+        await axios.post(`${base}/users/${user.id}/favorites`, { modelId: id });
       }
     } catch (err) {
       console.error('[Browse] Failed to update favorite:', err);
+      const revert = new Set(favorites);
+      setFavorites(revert);
       toast.error('⚠️ Failed to update favorite. Please try again.');
     }
   };
@@ -233,16 +279,9 @@ const Browse: React.FC = () => {
             {!isLoading &&
               filteredModels.map((model) => {
                 const modelKey = model.id || model.file_url || Math.random().toString();
-
-                // Resolve thumbnail using our absolute URL helper (handles /thumbnails + /uploads)
-                let thumbUrl: string | null = null;
-                if (model.thumbnail_url) {
-                  const raw = String(model.thumbnail_url).trim();
-                  if (raw) {
-                    const abs = getAbsoluteUrl(raw);
-                    thumbUrl = abs || (raw.startsWith('/') ? raw : `/${raw}`);
-                  }
-                }
+                const thumbUrl = resolveMediaUrl(
+                  model.thumbnail_url || (model.id ? `/thumbnails/${model.id}.png` : null)
+                );
 
                 return (
                   <GlassCard
@@ -266,10 +305,10 @@ const Browse: React.FC = () => {
                         key={`thumb-${modelKey}`}
                         src={thumbUrl}
                         alt={model.name ?? 'Model'}
-                        className="rounded-md mb-2 w-full h-40 object-cover"
+                        className="rounded-md mb-2 w-full h-40 object-contain bg-white"
                         onError={(e) => {
                           e.currentTarget.onerror = null;
-                          e.currentTarget.src = '/default-avatar.png';
+                          e.currentTarget.src = `${BACKEND_BASE}/static/default-avatar.png`;
                         }}
                         draggable={false}
                       />

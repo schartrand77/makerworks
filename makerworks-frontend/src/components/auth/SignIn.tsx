@@ -74,14 +74,14 @@ const SignIn: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-7 text-xs text-blue-600 hover:text-blue-800"
+            className="absolute right-3 top-7 text-xs text-brand-blue hover:text-brand-red"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
         </div>
 
         <button
-          className="mt-4 rounded-full px-6 py-2 backdrop-blur-md bg-blue-200/30 border border-blue-300/30 shadow-inner shadow-blue-100/20 hover:bg-blue-200/50 hover:shadow-blue-200/30 text-blue-900 dark:text-blue-100 transition-all duration-200"
+          className="mt-4 rounded-full px-6 py-2 bg-brand-red text-brand-white hover:bg-brand-blue transition-colors duration-200 disabled:opacity-50"
           type="submit"
           disabled={loading}
         >
@@ -90,7 +90,7 @@ const SignIn: React.FC = () => {
 
         <p className="text-center text-sm mt-2">
           Not a member?{' '}
-          <Link to="/auth/signup" className="text-blue-600 hover:text-blue-800 font-medium underline">
+          <Link to="/auth/signup" className="text-brand-blue hover:text-brand-red font-medium underline">
             Sign up
           </Link>
         </p>

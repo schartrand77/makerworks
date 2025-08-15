@@ -68,7 +68,7 @@ export default function LoginPage() {
         value={usernameOrEmail}
         onChange={(e) => setUsernameOrEmail(e.target.value)}
         onKeyDown={handleKeyPress}
-        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-highlight"
+        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-blue"
       />
       <input
         type="password"
@@ -76,12 +76,12 @@ export default function LoginPage() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={handleKeyPress}
-        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-highlight"
+        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-blue"
       />
       <button
         onClick={handleLogin}
         disabled={loading}
-        className="bg-brand-primary hover:bg-brand-highlight text-black py-2 rounded disabled:opacity-50"
+        className="bg-brand-red hover:bg-brand-blue text-black py-2 rounded disabled:opacity-50"
       >
         {loading ? 'Logging in…' : 'Login'}
       </button>

@@ -11,10 +11,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        'brand-primary': '#76B900',
-        'brand-secondary': '#000000',
-        'brand-accent': '#FFFFFF',
-        'brand-highlight': '#94E400',
+        'brand-white': '#FFFFFF',
+        'brand-black': '#000000',
+        'brand-red': '#FF4F00',
+        'brand-blue': '#003366',
+        'brand-text': '#333333',
       },
       // boxShadow: { vision: '0 4px 30px rgba(0,0,0,0.1)' },
     },

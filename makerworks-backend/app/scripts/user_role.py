@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import async_session_maker
 from app.models.models import User
-from app.utils.logging import logger
+from app.utils.log_utils import logger
 
 
 async def list_users():

@@ -8,7 +8,7 @@ from app.dependencies.auth import get_user_from_token_query
 from app.services.redis_service import get_redis
 from app.services.session_status import set_session_status
 from app.utils.system_info import get_system_status_snapshot
-from app.utils.logging import logger
+from app.utils.log_utils import logger
 
 router = APIRouter()
 

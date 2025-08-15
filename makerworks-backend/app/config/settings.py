@@ -1,187 +1,286 @@
-# /app/config/settings.py
+# app/config/settings.py
 from __future__ import annotations
 
 import json
 import os
-import re
-import socket
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic import Field, ValidationError, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
 
-
-def _resolve_docker_host(service: str, fallback: str = "localhost") -> str:
+# ──────────────────────────────────────────────────────────────────────────────
+# Preload .env *once* (no DIY tokenizing nonsense)
+# Priority: explicit ENV_FILE -> .env.dev -> .env
+# ──────────────────────────────────────────────────────────────────────────────
+def _preload_env() -> None:
+    env_file = os.getenv("ENV_FILE")
     try:
-        socket.gethostbyname(service)
-        return service
-    except socket.gaierror:
-        return fallback
+        from dotenv import load_dotenv  # type: ignore
+    except Exception:
+        return
+    if env_file and Path(env_file).exists():
+        load_dotenv(env_file, override=False)
+        return
+    if Path(".env.dev").exists():
+        load_dotenv(".env.dev", override=False)
+    load_dotenv(".env", override=False)
+
+
+_preload_env()
+
+
+def _default_if_blank(value: Optional[str], default: str) -> str:
+    if value is None:
+        return default
+    v = str(value).strip()
+    return v or default
 
 
 class Settings(BaseSettings):
-    """
-    Robust settings that won’t faceplant on CORS or missing envs.
-    Accepts CORS_ORIGINS as JSON (["a","b"]) or comma/space list (a,b).
-    """
+    # ── App basics ────────────────────────────────────────────────────────────
+    PROJECT_NAME: str = Field(default="MakerWorks", env="PROJECT_NAME")
+    API_V1_STR: str = Field(default="/api/v1", env="API_V1_STR")
+    ENV: str = Field(default="development", env="ENV")
 
-    # Pydantic v2 config
-    model_config = SettingsConfigDict(
-        env_file=".env.dev",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        case_sensitive=True,
-    )
+    # ── Secrets / auth ────────────────────────────────────────────────────────
+    SECRET_KEY: str = Field(default="dev-secret-change-me", env="SECRET_KEY")
+    SESSION_SECRET: str = Field(default="dev-secret-change-me", env="SESSION_SECRET")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24 * 8, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # 8 days
 
-    # ───────────────  Environment / App  ───────────────
-    env: str = Field(default="development", alias="ENV")
-    env_file: str = Field(default=".env.dev", alias="ENV_FILE")
-    debug: bool = Field(default=True, alias="DEBUG")
+    # ── URLs ─────────────────────────────────────────────────────────────────
+    # DOMAIN = frontend origin, BASE_URL = backend base (don’t mix these up)
+    DOMAIN: str = Field(default="http://localhost:5173", env="DOMAIN")
+    BASE_URL: str = Field(default="http://localhost:8000", env="BASE_URL")
+    FRONTEND_ORIGIN: Optional[str] = Field(default=None, env="FRONTEND_ORIGIN")
 
-    app_name: str = Field(default="MakerWorks API", alias="APP_NAME")
-    api_version: str = Field(default="0.1.0", alias="API_VERSION")
-
-    # ───────────────  URLs (optional)  ───────────────
-    domain: str = Field(default="localhost", alias="DOMAIN")
-    base_url: str = Field(default="http://localhost:8000", alias="BASE_URL")
-
-    # ───────────────  Filesystem  ───────────────
-    upload_dir: str = Field(default="/uploads", alias="UPLOAD_DIR")
-    model_dir: str = Field(default="/uploads/models", alias="MODEL_DIR")
-    avatar_dir: str = Field(default="/uploads/avatars", alias="AVATAR_DIR")
-    thumbnails_dir: str = Field(default="/thumbnails", alias="THUMBNAILS_DIR")
-
-    # ───────────────  Database  ───────────────
-    database_url: str = Field(
+    # ── Database / Redis / Celery ────────────────────────────────────────────
+    DATABASE_URL: str = Field(
         default="postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks",
-        alias="DATABASE_URL",
+        env="DATABASE_URL",
     )
-    asyncpg_url: Optional[str] = Field(default=None, alias="ASYNCPG_URL")
+    REDIS_URL: str = Field(default="redis://redis:6379/0", env="REDIS_URL")
+    CELERY_BROKER_URL: str = Field(default="", env="CELERY_BROKER_URL")
+    CELERY_RESULT_BACKEND: str = Field(default="", env="CELERY_RESULT_BACKEND")
 
-    @property
-    def resolved_db_url(self) -> str:
-        return self.database_url.replace("@postgres", f"@{_resolve_docker_host('postgres')}")
+    # ── File system roots (mounted in Docker) ────────────────────────────────
+    # In containers we *bind* /uploads and /thumbnails. Outside Docker, we’ll
+    # create local ./uploads and ./thumbnails so dev still works.
+    UPLOAD_DIR: str = Field(default="/uploads", env="UPLOAD_DIR")
+    THUMBNAILS_DIR: Optional[str] = Field(default="/thumbnails", env="THUMBNAILS_DIR")
+    MODELS_DIR: str = Field(default="/models", env="MODELS_DIR")
+    STATIC_DIR: str = Field(default="app/static", env="STATIC_DIR")
 
-    @property
-    def resolved_asyncpg_url(self) -> str:
-        url = self.asyncpg_url or self.database_url
-        return url.replace("@postgres", f"@{_resolve_docker_host('postgres')}")
+    # ── CORS ─────────────────────────────────────────────────────────────────
+    # Accepts JSON list or CSV string. We normalize later.
+    CORS_ORIGINS: List[str] | str = Field(
+        default='["http://localhost:5173","http://127.0.0.1:5173","http://localhost:3000","http://127.0.0.1:3000"]',
+        env="CORS_ORIGINS",
+    )
+    CORS_ALLOW_ALL: bool = Field(default=False, env="CORS_ALLOW_ALL")
 
-    # ───────────────  Redis & Celery  ───────────────
-    redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
-    celery_broker_url: str = Field(default="redis://redis:6379/0", alias="CELERY_BROKER_URL")
-    celery_result_backend: str = Field(default="redis://redis:6379/0", alias="CELERY_RESULT_BACKEND")
-    celery_enabled: bool = Field(default=True, alias="CELERY_ENABLED")
+    # ── Payments (Stripe) ────────────────────────────────────────────────────
+    STRIPE_SECRET_KEY: str = Field(default="", env="STRIPE_SECRET_KEY")
+    STRIPE_WEBHOOK_SECRET: str = Field(default="", env="STRIPE_WEBHOOK_SECRET")
+    STRIPE_PUBLISHABLE_KEY: str = Field(default="", env="STRIPE_PUBLISHABLE_KEY")
 
-    # ───────────────  Security / JWT  ───────────────
-    jwt_secret: str = Field(default="dev-super-secret-change-me", alias="JWT_SECRET")
-    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")  # HS256 by default
-    jwt_alg: Optional[str] = Field(default=None, alias="JWT_ALG")       # alt name
-    jwt_private_key_path: str = Field(default="", alias="JWT_PRIVATE_KEY_PATH")
-    jwt_public_key_path: str = Field(default="", alias="JWT_PUBLIC_KEY_PATH")
-    jwt_issuer: str = Field(default="makerworks", alias="JWT_ISSUER")
-    jwt_audience: str = Field(default="makerworks-web", alias="JWT_AUDIENCE")
-    jwt_expires_min: int = Field(default=60, alias="JWT_EXPIRES_MIN")
-    jwt_refresh_expires_days: int = Field(default=14, alias="JWT_REFRESH_EXPIRES_DAYS")
+    # ── Admin seed ───────────────────────────────────────────────────────────
+    ADMIN_EMAIL: str = Field(default="admin@example.com", env="ADMIN_EMAIL")
+    ADMIN_USERNAME: str = Field(default="admin", env="ADMIN_USERNAME")
+    ADMIN_PASSWORD: str = Field(default="change-me-please", env="ADMIN_PASSWORD")
 
-    # also used by SessionMiddleware sometimes
-    secret_key: str = Field(default="change-me", alias="SECRET_KEY")
-    auth_audience: str = Field(default="makerworks", alias="AUTH_AUDIENCE")
+    # ── Optional devices ─────────────────────────────────────────────────────
+    BAMBU_IP: Optional[str] = Field(default=None, env="BAMBU_IP")
 
-    # ───────────────  Admin seed (optional)  ───────────────
-    admin_email: Optional[str] = Field(default="admin@example.com", alias="ADMIN_EMAIL")
-    admin_username: Optional[str] = Field(default="admin", alias="ADMIN_USERNAME")
-    admin_password: Optional[str] = Field(default="change-me-please", alias="ADMIN_PASSWORD")
+    class Config:
+        env_file = ".env.dev"
+        env_file_encoding = "utf-8"
+        extra = "ignore"
 
-    # ───────────────  Stripe (optional)  ───────────────
-    stripe_secret_key: Optional[str] = Field(default=None, alias="STRIPE_SECRET_KEY")
-    stripe_webhook_secret: Optional[str] = Field(default=None, alias="STRIPE_WEBHOOK_SECRET")
+    # ── Validators / normalizers ─────────────────────────────────────────────
+    @field_validator("ENV", mode="before")
+    @classmethod
+    def _env_lower(cls, v: str) -> str:
+        return (v or "development").strip().lower()
 
-    # ───────────────  Metrics (optional)  ───────────────
-    metrics_api_key: Optional[str] = Field(default=None, alias="METRICS_API_KEY")
-    grafana_admin_user: Optional[str] = Field(default=None, alias="GRAFANA_ADMIN_USER")
-    grafana_admin_password: Optional[str] = Field(default=None, alias="GRAFANA_ADMIN_PASSWORD")
+    @field_validator("DOMAIN", "BASE_URL", "FRONTEND_ORIGIN", mode="before")
+    @classmethod
+    def _normalize_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        s = str(v).strip().strip('"').strip("'")
+        if not s:
+            return s
+        # Kill accidental JSON-bracket debris from bad loaders
+        s = s.replace('["', "").replace('"]', "").replace("['", "").replace("']", "")
+        if not s.startswith(("http://", "https://")):
+            s = "http://" + s
+        return s.rstrip("/")
 
-    # ───────────────  CORS  ───────────────
-    # raw string from env; we’ll parse it into cors_origins below
-    cors_origins_raw: str = Field(default="", alias="CORS_ORIGINS")
-    cors_origins: List[str] = Field(default_factory=list)
-
-    # optional
-    bambu_ip: Optional[str] = Field(default=None, alias="BAMBU_IP")
-
-    @property
-    def algorithm(self) -> str:
-        """Back-compat property used by older code."""
-        return (self.jwt_alg or self.jwt_algorithm or "HS256").upper()
-
-    @model_validator(mode="after")
-    def _parse_cors(self) -> "Settings":
-        raw = (self.cors_origins_raw or "").strip()
-        if not raw:
-            self.cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
-            return self
-
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, v):
+        if v is None or v == "":
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        raw = str(v).strip()
         # Try JSON first
-        if raw and raw[0] in "[{\"'":
+        if raw.startswith("["):
             try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, str):
-                    vals = [parsed]
-                elif isinstance(parsed, list):
-                    vals = parsed
-                else:
-                    vals = [str(v) for v in getattr(parsed, "values", lambda: [])()]
-                self.cors_origins = [str(v).strip().strip('"').strip("'") for v in vals if str(v).strip()]
-                return self
+                arr = json.loads(raw)
+                if isinstance(arr, list):
+                    return [str(x).strip() for x in arr if str(x).strip()]
             except Exception:
-                # fall through to manual parsing
                 pass
+        # Fallback: CSV
+        return [part.strip().strip("'").strip('"') for part in raw.split(",") if part.strip()]
 
-        # Fallback: split on commas/whitespace; strip brackets/quotes
-        parts = re.split(r"[,\s]+", raw)
-        cleaned: list[str] = []
-        for p in parts:
-            p = p.strip().strip("[]").strip().strip('"').strip("'")
-            if p:
-                cleaned.append(p)
-        # dedupe while preserving order
-        seen = set()
-        deduped = []
-        for item in cleaned:
-            if item not in seen:
-                seen.add(item)
-                deduped.append(item)
-        self.cors_origins = deduped or ["http://localhost:5173", "http://127.0.0.1:5173"]
-        return self
+    @field_validator("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", mode="after")
+    @classmethod
+    def _celery_defaults(cls, v, info):
+        return v or os.getenv("REDIS_URL", "redis://redis:6379/0")
 
-    # Convenience resolved paths
+    # ── Convenience properties ───────────────────────────────────────────────
     @property
-    def uploads_path(self) -> Path:
-        return Path(self.upload_dir).resolve()
+    def cors_origins(self) -> List[str]:
+        normed: List[str] = []
+        def _norm(u: str) -> str:
+            s = str(u).strip().rstrip("/")
+            s = s.replace('["', "").replace('"]', "").replace("['", "").replace("']", "")
+            if not s.startswith(("http://", "https://")):
+                s = "http://" + s
+            return s
+
+        # From env list
+        for o in (self.CORS_ORIGINS if isinstance(self.CORS_ORIGINS, list) else []):
+            s = _norm(o)
+            if s and s not in normed:
+                normed.append(s)
+
+        # Also include DOMAIN + BASE_URL for sanity
+        for extra in (self.DOMAIN, self.BASE_URL, "http://localhost:5173", "http://127.0.0.1:5173"):
+            if extra:
+                s = _norm(extra)
+                if s not in normed:
+                    normed.append(s)
+        return normed
 
     @property
-    def models_path(self) -> Path:
-        return Path(self.model_dir).resolve()
+    def base_upload_path(self) -> Path:
+        # Prefer explicit env, else container bind, else local ./uploads
+        p = Path(self.UPLOAD_DIR)
+        if not p.is_absolute():
+            p = Path("/uploads") if Path("/uploads").exists() else Path("uploads")
+        return p.resolve()
 
     @property
     def thumbnails_path(self) -> Path:
-        return Path(self.thumbnails_dir).resolve()
+        # Prefer explicit env, else container bind, else local ./thumbnails
+        if self.THUMBNAILS_DIR:
+            p = Path(self.THUMBNAILS_DIR)
+        else:
+            p = Path("/thumbnails") if Path("/thumbnails").exists() else Path("thumbnails")
+        return p.resolve()
+
+    @property
+    def models_path(self) -> Path:
+        p = Path(self.MODELS_DIR)
+        if not p.is_absolute():
+            p = Path("/models") if Path("/models").exists() else Path("models")
+        return p.resolve()
+
+    @property
+    def static_path(self) -> Path:
+        p = Path(self.STATIC_DIR)
+        if not p.is_absolute():
+            p = Path("app/static")
+        return p.resolve()
+
+    # ── Back-compat lowercase aliases (some modules still expect these) ──────
+    @property
+    def env(self) -> str: return self.ENV
+    @property
+    def domain(self) -> str: return self.DOMAIN
+    @property
+    def base_url(self) -> str: return self.BASE_URL
+    @property
+    def frontend_url(self) -> str: return self.DOMAIN
+    @property
+    def backend_url(self) -> str: return self.BASE_URL
+    @property
+    def database_url(self) -> str: return self.DATABASE_URL
+    @property
+    def redis_url(self) -> str: return self.REDIS_URL
+    @property
+    def celery_broker_url(self) -> str: return self.CELERY_BROKER_URL or self.REDIS_URL
+    @property
+    def celery_result_backend(self) -> str: return self.CELERY_RESULT_BACKEND or self.REDIS_URL
+    @property
+    def upload_dir(self) -> str: return str(self.base_upload_path)
+    @property
+    def thumbnails_dir(self) -> str: return str(self.thumbnails_path)
+    @property
+    def models_dir(self) -> str: return str(self.models_path)
+    @property
+    def static_dir(self) -> str: return str(self.static_path)
+    @property
+    def stripe_secret_key(self) -> str: return self.STRIPE_SECRET_KEY
+    @property
+    def stripe_webhook_secret(self) -> str: return self.STRIPE_WEBHOOK_SECRET
+    @property
+    def stripe_publishable_key(self) -> str: return self.STRIPE_PUBLISHABLE_KEY
+    # Admin seed aliases
+    @property
+    def admin_email(self) -> str: return self.ADMIN_EMAIL
+    @property
+    def admin_username(self) -> str: return self.ADMIN_USERNAME
+    @property
+    def admin_password(self) -> str: return self.ADMIN_PASSWORD
+    # Legacy raw paths
+    @property
+    def uploads_path(self) -> str: return str(self.base_upload_path)
+    @property
+    def thumbnails_dir_raw(self) -> str: return str(self.thumbnails_path)
+    @property
+    def model_dir_raw(self) -> str: return str(self.models_path)
 
 
 @lru_cache()
 def get_settings() -> Settings:
-    try:
-        # Allow overriding the env file at runtime
-        env_file = os.getenv("ENV_FILE")
-        if env_file and Path(env_file).exists():
-            Settings.model_config["env_file"] = env_file  # type: ignore[index]
-        return Settings()
-    except ValidationError as e:
-        print("❌ Config error: Missing or invalid environment variables.")
-        raise e
+    s = Settings()
+
+    # Backfill empty strings with sane defaults (covers mangled .env values)
+    s.DOMAIN = _default_if_blank(s.DOMAIN, "http://localhost:5173")
+    s.BASE_URL = _default_if_blank(s.BASE_URL, "http://localhost:8000")
+    s.DATABASE_URL = _default_if_blank(
+        s.DATABASE_URL,
+        "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks",
+    )
+    s.REDIS_URL = _default_if_blank(s.REDIS_URL, "redis://redis:6379/0")
+    s.CELERY_BROKER_URL = _default_if_blank(s.CELERY_BROKER_URL, s.REDIS_URL)
+    s.CELERY_RESULT_BACKEND = _default_if_blank(s.CELERY_RESULT_BACKEND, s.REDIS_URL)
+    s.FRONTEND_ORIGIN = _default_if_blank(s.FRONTEND_ORIGIN or "", s.DOMAIN)
+
+    # Ensure directories exist (binds in Docker; local dirs in bare metal)
+    for p in (s.base_upload_path, s.thumbnails_path, s.models_path, s.static_path):
+        p.mkdir(parents=True, exist_ok=True)
+
+    # Backfill env for libs that read os.environ directly
+    os.environ.setdefault("UPLOAD_DIR", str(s.base_upload_path))
+    os.environ.setdefault("THUMBNAILS_DIR", str(s.thumbnails_path))
+    os.environ.setdefault("MODELS_DIR", str(s.models_path))
+    os.environ.setdefault("STATIC_DIR", str(s.static_path))
+    os.environ.setdefault("DOMAIN", s.DOMAIN)
+    os.environ.setdefault("BASE_URL", s.BASE_URL)
+    os.environ.setdefault("FRONTEND_ORIGIN", s.FRONTEND_ORIGIN or s.DOMAIN)
+    os.environ.setdefault("ADMIN_EMAIL", s.ADMIN_EMAIL)
+    os.environ.setdefault("ADMIN_USERNAME", s.ADMIN_USERNAME)
+    os.environ.setdefault("ADMIN_PASSWORD", s.ADMIN_PASSWORD)
+
+    return s
 
 
-settings = get_settings()
+# Export singleton
+settings: Settings = get_settings()

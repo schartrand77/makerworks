@@ -33,6 +33,11 @@ router = APIRouter()
 # ── Config ────────────────────────────────────────────────────────────────
 UPLOAD_ROOT = Path(os.getenv("UPLOAD_DIR", "/uploads")).resolve()
 THUMB_ROOT = Path(os.getenv("THUMBNAILS_DIR", "/thumbnails")).resolve()
+
+# ✅ backfill env so any subprocess/lib sees the same resolved dirs
+os.environ.setdefault("UPLOAD_DIR", str(UPLOAD_ROOT))
+os.environ.setdefault("THUMBNAILS_DIR", str(THUMB_ROOT))
+
 ALLOWED_EXTS = {".stl", ".3mf"}
 MAX_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
 
@@ -204,22 +209,35 @@ async def _make_thumbnail(model_path: Path, model_id: str):
     thumb_fs_path = THUMB_ROOT / f"{model_id}.png"
     thumb_fs_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # clearer logging so we can see exactly which branch ran
+    log.info("[thumbnail] starting: in=%s → out=%s (util=%s)",
+             model_path, thumb_fs_path, getattr(_render_thumb_util, "__name__", None))
+
     if _render_thumb_util is not None:
         try:
             # Try new signature first
             try:
                 await run_in_threadpool(_render_thumb_util, str(model_path), str(model_id))
+                log.info("[thumbnail] util(new) OK: %s (exists=%s size=%s)",
+                         thumb_fs_path, thumb_fs_path.exists(),
+                         thumb_fs_path.stat().st_size if thumb_fs_path.exists() else -1)
                 return
             except TypeError:
                 # Fall back to old signature (output path)
                 await run_in_threadpool(_render_thumb_util, str(model_path), str(thumb_fs_path))
+                log.info("[thumbnail] util(old) OK: %s (exists=%s size=%s)",
+                         thumb_fs_path, thumb_fs_path.exists(),
+                         thumb_fs_path.stat().st_size if thumb_fs_path.exists() else -1)
                 return
         except Exception as e:
-            log.warning("[thumbnail] render util failed (%s), writing placeholder", e)
+            log.warning("[thumbnail] render util failed (%s), writing placeholder -> %s", e, thumb_fs_path)
 
     # Fallback 1x1 transparent PNG
     with thumb_fs_path.open("wb") as f:
         f.write(_PNG_1x1)
+    log.warning("[thumbnail] placeholder written: %s (exists=%s size=%s)",
+                thumb_fs_path, thumb_fs_path.exists(),
+                thumb_fs_path.stat().st_size if thumb_fs_path.exists() else -1)
 
 async def _model_uploads_user_id_nullable() -> bool:
     """Check if public.model_uploads.user_id is nullable."""

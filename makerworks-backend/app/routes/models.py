@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
@@ -12,16 +14,14 @@ from sqlalchemy import text
 
 from app.db.session import async_engine
 
-# Try to use the same thumbnail util the upload route uses.
-try:
-    from app.utils.render_thumbnail import render_thumbnail as _render_thumb_util  # type: ignore
-except Exception:  # pragma: no cover
-    _render_thumb_util = None
-
 log = logging.getLogger("uvicorn.error")
 
 # ── Path roots (bind-safe) ────────────────────────────────────────────────────
 def _norm_root(p: str) -> str:
+    """
+    Map container-internal defaults to the bind-mounted external roots.
+    Example: '/app/uploads' -> '/uploads' (since we mount those at FS root).
+    """
     return (
         (p or "")
         .replace("/app/uploads", "/uploads")
@@ -29,15 +29,18 @@ def _norm_root(p: str) -> str:
         .replace("/app/models", "/models")
     )
 
+
 UPLOAD_ROOT = Path(_norm_root(os.getenv("UPLOAD_DIR") or "/uploads")).resolve()
 THUMB_ROOT = Path(_norm_root(os.getenv("THUMBNAILS_DIR") or "/thumbnails")).resolve()
 
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 THUMB_ROOT.mkdir(parents=True, exist_ok=True)
 
+
 # ── Utilities ────────────────────────────────────────────────────────────────
 def _thumb_url_from_id(model_id: str) -> str:
     return f"/thumbnails/{model_id}.png"
+
 
 def _public_file_url(file_path: str | None) -> Optional[str]:
     if not file_path:
@@ -48,6 +51,7 @@ def _public_file_url(file_path: str | None) -> Optional[str]:
         return f"/uploads/{rel.as_posix()}"
     except Exception:
         return None
+
 
 def _row_to_model(row: Any) -> Dict[str, Any]:
     """
@@ -82,8 +86,49 @@ def _row_to_model(row: Any) -> Dict[str, Any]:
         "is_duplicate": d.get("is_duplicate", False),
     }
 
+
+def _is_png(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            return f.read(8) == b"\x89PNG\r\n\x1a\n"
+    except Exception:
+        return False
+
+
+async def _render_thumbnail_subprocess(input_path: Path, output_path: Path, size: int = 1024, backend: str = "cpu") -> None:
+    """
+    Call the thumbnail renderer as a module to avoid import path collisions
+    (e.g., local modules shadowing stdlib).
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "app.utils.render_thumbnail",
+        str(input_path),
+        str(output_path),
+        "--backend",
+        backend,
+        "--size",
+        str(size),
+    ]
+
+    def _run() -> None:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            log.error("Thumbnail render failed: %s\nstdout:\n%s\nstderr:\n%s", cmd, proc.stdout, proc.stderr)
+            raise RuntimeError(f"Renderer failed ({proc.returncode})")
+
+    await run_in_threadpool(_run)
+
+    if not output_path.exists() or not _is_png(output_path):
+        raise RuntimeError("Renderer did not produce a valid PNG")
+
+
 # ── Router ───────────────────────────────────────────────────────────────────
 router = APIRouter()
+
 
 @router.get("/models", status_code=status.HTTP_200_OK)
 async def list_models(
@@ -125,6 +170,7 @@ async def list_models(
     items = [_row_to_model(r) for r in rows]
     return {"total": total, "items": items, "limit": limit, "offset": offset}
 
+
 @router.get("/models/{model_id}", status_code=status.HTTP_200_OK)
 async def get_model(model_id: str) -> Dict[str, Any]:
     async with async_engine.begin() as conn:
@@ -148,16 +194,18 @@ async def get_model(model_id: str) -> Dict[str, Any]:
 
     return _row_to_model(row)
 
+
 @router.post("/models/{model_id}/rethumb", status_code=status.HTTP_202_ACCEPTED)
 async def rethumb_model(model_id: str) -> Dict[str, Any]:
     """
-    Force re-generate the thumbnail and update the library.
+    Force re-generate the thumbnail file at THUMB_ROOT/<id>.png, and update the DB to
+    expose the thumbnail at /thumbnails/<id>.png for the frontend.
     """
-    # find file_path
+    # Look up the stored file_path
     async with async_engine.begin() as conn:
         row = (
             await conn.execute(
-                text("SELECT file_path FROM public.model_uploads WHERE id=:id"),
+                text("SELECT file_path, filename FROM public.model_uploads WHERE id = :id"),
                 {"id": model_id},
             )
         ).first()
@@ -165,28 +213,35 @@ async def rethumb_model(model_id: str) -> Dict[str, Any]:
     if not row or not row[0]:
         raise HTTPException(status_code=404, detail="Model not found or missing file_path.")
 
-    file_path = Path(_norm_root(str(row[0]))).resolve()
-    if not file_path.exists():
+    src = Path(_norm_root(str(row[0]))).resolve()
+    if not src.exists():
         raise HTTPException(status_code=404, detail="Model file missing on disk.")
 
-    thumb_path = THUMB_ROOT / f"{model_id}.png"
-    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+    # Only allow STL/3MF for now
+    if not src.suffix.lower() in {".stl", ".3mf"}:
+        raise HTTPException(status_code=400, detail="Only .stl or .3mf files are supported for thumbnails.")
 
-    if _render_thumb_util is None:
-        # best effort placeholder
-        from PIL import Image
-        img = Image.new("RGBA", (16, 16), (240, 240, 240, 255))
-        img.save(thumb_path, "PNG")
-        ok = thumb_path.exists()
-    else:
-        # try new signature first, fall back to old
-        try:
-            await run_in_threadpool(_render_thumb_util, str(file_path), str(model_id))
-        except TypeError:
-            await run_in_threadpool(_render_thumb_util, str(file_path), str(thumb_path))
-        ok = thumb_path.exists()
+    dst = THUMB_ROOT / f"{model_id}.png"
 
-    if not ok:
+    size = int(os.getenv("THUMBNAIL_SIZE", "1024"))
+    backend = os.getenv("THUMBNAIL_BACKEND", "cpu")
+
+    try:
+        await _render_thumbnail_subprocess(src, dst, size=size, backend=backend)
+    except Exception as e:
+        log.exception("Failed to render thumbnail for %s: %s", model_id, e)
         raise HTTPException(status_code=500, detail="Failed to generate thumbnail.")
 
-    return {"ok": True, "thumbnail_url": f"/thumbnails/{model_id}.png"}
+    # Update DB record to point to the public URL (keeps old consumers happy)
+    thumb_url = _thumb_url_from_id(model_id)
+    async with async_engine.begin() as conn:
+        try:
+            await conn.execute(
+                text("UPDATE public.model_uploads SET thumbnail_path = :u WHERE id = :i"),
+                {"u": thumb_url, "i": model_id},
+            )
+        except Exception as e:
+            # Non-fatal; file is there, API will still compute the URL.
+            log.warning("Could not update thumbnail_path for %s: %s", model_id, e)
+
+    return {"ok": True, "thumbnail_url": thumb_url}

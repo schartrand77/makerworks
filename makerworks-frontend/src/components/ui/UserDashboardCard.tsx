@@ -99,7 +99,7 @@ const UserDashboardCard = () => {
       <div className="mt-4 flex gap-3 justify-center">
         <button
           onClick={() => navigate('/settings')}
-          className="px-4 py-1.5 rounded-full bg-brand-primary/90 text-zinc-900 dark:text-white shadow-sm hover:bg-brand-primary transition text-sm font-medium"
+          className="px-4 py-1.5 rounded-full bg-brand-red/90 text-zinc-900 dark:text-white shadow-sm hover:bg-brand-red transition text-sm font-medium"
         >
           Edit Profile
         </button>

@@ -15,7 +15,10 @@ services:
         condition: service_healthy
         required: true
     environment:
-      VITE_API_URL: http://backend:8000/api/v1
+      # Browser hits localhost:8000 (not the Docker service name)
+      VITE_API_URL: http://localhost:8000/api/v1
+      VITE_THUMB_BASE: http://localhost:8000
+      VITE_UPLOADS_BASE: http://localhost:8000
     networks:
       - default
     ports:
@@ -40,13 +43,21 @@ services:
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       REDIS_URL: redis://redis:6379/0
 
-      # ---- Thumbnail defaults (side-on, facing right; soft, not shiny) ----
+      # CORS & base URL so the API can emit absolute links
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:3000","http://127.0.0.1:3000"]'
+      BASE_URL: http://localhost:8000
+
+      # Use CPU-safe Plotly path in Docker
+      THUMBNAIL_BACKEND: "plotly"
+      THUMBNAIL_SIZE: "1024"
+
+      # ---- Thumbnail look defaults ----
       THUMBNAIL_AZIM_DEG: "90"
       THUMBNAIL_ELEV_DEG: "0"
       THUMBNAIL_SSAA: "4"
       THUMBNAIL_FRAME_MARGIN: "0.06"
-      THUMBNAIL_MAX_RATIO: "0.85"     # was 0.5 — too tight
-      THUMBNAIL_CULL: "0"             # was 1 — killed every triangle
+      THUMBNAIL_MAX_RATIO: "0.85"
+      THUMBNAIL_CULL: "0"
       THUMBNAIL_BASE_RGB: "0.90,0.90,0.90"
       THUMBNAIL_AMBIENT: "0.62"
       THUMBNAIL_DIFFUSE: "0.38"
@@ -57,7 +68,7 @@ services:
       THUMBNAIL_SPEC_K: "0.03"
       THUMBNAIL_SPEC_P: "24"
       THUMBNAIL_RIM_K: "0.03"
-      THUMBNAIL_FLATTEN_BG: "white"   # always write opaque PNGs
+      THUMBNAIL_FLATTEN_BG: "white"
 
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
@@ -72,8 +83,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./makerworks-backend:/app
-      - ./uploads:/app/uploads        # persist uploads
-      - ./thumbnails:/thumbnails      # persist thumbnails
+      - ./uploads:/app/uploads
+      # Map thumbnails to your absolute macOS path (as requested)
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thunbnails:/thumbnails
     working_dir: /app
 
   migrate:

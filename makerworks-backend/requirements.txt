@@ -68,11 +68,11 @@ trimesh==4.7.1
 imageio[ffmpeg]==2.35.1
 
 # ✅ CPU renderer (headless)
-plotly>=5.23.0        # static image export via kaleido
-kaleido>=0.2.1        # headless engine for write_image
+plotly>=5.23.0         # static image export via kaleido
+kaleido==0.2.1         # pin for reproducible headless export
 
 # ✅ 3MF loader for trimesh
-meshio>=5.3           # enables trimesh to read .3mf files
+meshio>=5.3            # enables trimesh to read .3mf files
 
 # ─── Stripe Integration ─────────────────────────────────────────────
 stripe==12.3.0

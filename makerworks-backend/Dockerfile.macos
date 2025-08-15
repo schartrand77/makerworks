@@ -11,56 +11,62 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System dependencies
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      build-essential \
-      libpq-dev \
-      curl \
+      build-essential libpq-dev curl \
  && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# These paths are relative to the build context = makerworks-backend/
 COPY app ./app
-
-# Copy entire Alembic directory (env.py, script.py.mako, README, versions/, etc.)
 COPY alembic ./alembic
 COPY alembic.ini ./
 
-# Ensure alembic/versions directory exists even if empty
 RUN test -d alembic/versions || mkdir -p alembic/versions
 
 ###################################
-# Final image stage
+# Final image stage (with headless GL for thumbnails)
 ###################################
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    # prefer OSMesa for headless rendering; code can switch to EGL if present
+    PYOPENGL_PLATFORM=osmesa
 
 WORKDIR /app
 
-# Install Postgres client so psql/pg_isready exist in the final image
-RUN apt-get update \
- && apt-get install -y --no-install-recommends postgresql-client \
- && rm -rf /var/lib/apt/lists/*
+# Debian Bookworm: libgl1-mesa-glx is gone. Use libgl1 + libglx-mesa0.
+RUN set -eux; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      postgresql-client \
+      curl \
+      libgl1 \
+      libglx-mesa0 \
+      libgl1-mesa-dri \
+      libglu1-mesa \
+      libegl1 \
+      libgles2 \
+      libosmesa6 \
+      libosmesa6-dev \
+      libglfw3 \
+      libxext6 \
+      libx11-6 \
+      libxrender1 \
+      libxi6 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
 COPY --from=builder /usr/local /usr/local
-
-# Copy app code
 COPY --from=builder /app/app ./app
-
-# Copy full Alembic tree from builder
 COPY --from=builder /app/alembic ./alembic
 COPY --from=builder /app/alembic.ini ./
 
-# Copy and make your entrypoint executable
+# This file lives at the CONTEXT ROOT, not under backend/
 COPY docker-entrypoint.sh .
-RUN chmod +x docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["./docker-entrypoint.sh"]

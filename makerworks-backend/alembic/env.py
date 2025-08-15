@@ -1,19 +1,20 @@
 # alembic/env.py
 
+from __future__ import annotations
+
 import os
 import sys
 import logging
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool, text
-
 from alembic import context
 
 # ── Ensure we can import the app package (app/...) ─────────────────────────────
 # This file lives at <repo_root>/alembic/env.py, so add <repo_root> to sys.path.
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Import Base metadata for autogenerate
+# Import Base metadata for autogenerate (must aggregate ALL model modules)
 from app.db.base import Base  # noqa: E402
 
 # Alembic Config object; provides access to .ini values
@@ -26,30 +27,48 @@ logger = logging.getLogger("alembic.env")
 # Target metadata for 'autogenerate'
 target_metadata = Base.metadata
 
-# Optional: version table settings (env overrides if you care)
+# Version table settings (defaults work for Postgres/public schema)
 VERSION_TABLE = os.getenv("ALEMBIC_VERSION_TABLE", "alembic_version")
-VERSION_TABLE_SCHEMA = os.getenv("ALEMBIC_VERSION_SCHEMA", None)  # e.g., "public" for Postgres
+VERSION_TABLE_SCHEMA = os.getenv("ALEMBIC_VERSION_SCHEMA", "public")  # keep migrations in public schema
+
+
+def _coerce_sync_url(url: str | None) -> str:
+    """
+    Alembic needs a **sync** SQLAlchemy URL/driver.
+    Convert any async or psycopg2 URLs to psycopg (v3, sync).
+    """
+    if not url:
+        return ""
+    u = url.strip()
+
+    # Convert known async drivers to psycopg (sync)
+    u = u.replace("+asyncpg", "+psycopg").replace("+aiopg", "+psycopg")
+
+    # If no driver specified, prefer psycopg (v3) explicitly
+    if u.startswith("postgresql://"):
+        u = u.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    # Convert psycopg2 to psycopg so we don't require psycopg2
+    u = u.replace("+psycopg2", "+psycopg")
+
+    return u
 
 
 def _sync_url_from_env_or_ini() -> str:
     """
-    Alembic needs a **sync** SQLAlchemy URL.
-    If DATABASE_URL is async (postgresql+asyncpg://...), convert to psycopg2.
+    Resolve DB URL with priority:
+    1) DATABASE_URL
+    2) SQLALCHEMY_DATABASE_URI
+    3) sqlalchemy.url from alembic.ini
     """
-    env_url = os.getenv("DATABASE_URL")
-    if env_url:
-        url = env_url
-    else:
-        url = config.get_main_option("sqlalchemy.url")
-
+    env_url = (
+        os.getenv("DATABASE_URL")
+        or os.getenv("SQLALCHEMY_DATABASE_URI")
+        or config.get_main_option("sqlalchemy.url")
+    )
+    url = _coerce_sync_url(env_url)
     if not url:
         raise RuntimeError("No database URL provided to Alembic (set DATABASE_URL or sqlalchemy.url).")
-
-    # Convert +asyncpg → +psycopg2 for Alembic sync engine
-    if "+asyncpg" in url:
-        url = url.replace("+asyncpg", "+psycopg2")
-
-    # Some folks use plain 'postgresql://' (driverless); that's fine.
     return url
 
 
@@ -68,8 +87,10 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
+        include_schemas=True,
         version_table=VERSION_TABLE,
         version_table_schema=VERSION_TABLE_SCHEMA,
+        dialect_opts={"paramstyle": "named"},
     )
 
     with context.begin_transaction():
@@ -78,16 +99,13 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode using a sync Engine."""
-    # Make sure the ini reflects the resolved URL so engine_from_config uses it.
-    sync_url = _sync_url_from_env_or_ini()
-
-    # Push into Alembic's config object (so engine_from_config reads it)
+    # Build a config section Alembic understands, forcing our resolved URL
     section = config.get_section(config.config_ini_section) or {}
-    section["sqlalchemy.url"] = sync_url
+    section["sqlalchemy.url"] = _sync_url_from_env_or_ini()
 
     connectable = engine_from_config(
         section,
-        prefix="sqlalchemy.",
+        prefix="sqlalchemy.",  # ← FIX: dot, not colon
         poolclass=pool.NullPool,
         future=True,
     )
@@ -97,6 +115,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_schemas=True,
             version_table=VERSION_TABLE,
             version_table_schema=VERSION_TABLE_SCHEMA,
         )
@@ -104,7 +123,7 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
-        # Post-migration **sync** check (no asyncio.run in a running loop, thanks)
+        # Post-migration revision check (sync)
         try:
             vt = _qualified_version_table()
             res = connection.execute(text(f"SELECT version_num FROM {vt}"))

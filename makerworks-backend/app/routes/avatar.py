@@ -1,13 +1,14 @@
 # app/routes/avatar.py
-"""Avatar upload route.
+"""Avatar upload & lookup routes.
 
 Mount with:
     app.include_router(avatar.router, prefix="/api/v1/avatar", tags=["avatar"])
 
-Accepted paths:
-    POST /api/v1/avatar
-    POST /api/v1/avatar/          (trailing slash)
-    POST /api/v1/avatar/upload    (legacy alias)
+Endpoints:
+    POST    /api/v1/avatar            (also accepts trailing slash)
+    POST    /api/v1/avatar/upload     (legacy alias)
+    GET     /api/v1/avatar/me         (return caller's avatar or default)
+    GET     /api/v1/avatar/{user_id}  (return user's avatar or default)
 """
 
 from __future__ import annotations
@@ -20,16 +21,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Path as PathParam,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 logger = logging.getLogger("uvicorn")
 
 # ── Settings (tolerate both old/new modules) ───────────────────────────────────
 try:
     from app.core.config import settings  # preferred
-except Exception:
+except Exception:  # pragma: no cover
     from app.config.settings import settings  # legacy
 
 # ── DB / Models ────────────────────────────────────────────────────────────────
@@ -39,7 +50,7 @@ from app.models.models import User
 # ── Auth dep (tolerate legacy layout) ─────────────────────────────────────────
 try:
     from app.dependencies.auth import get_current_user  # preferred
-except Exception:
+except Exception:  # pragma: no cover
     from app.dependencies import get_current_user  # legacy
 
 router = APIRouter()
@@ -48,6 +59,8 @@ router = APIRouter()
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 ALLOWED_CT = {"image/png", "image/jpeg", "image/jpg"}
 FILENAME_RE = re.compile(r"[^a-zA-Z0-9_.-]")
+
+DEFAULT_AVATAR_REL = "/static/default-avatar.png"  # main.py mounts /static
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _safe_name(name: str) -> str:
@@ -115,7 +128,10 @@ async def _stream_save(upload: UploadFile, dest: Path) -> None:
                 raise HTTPException(status_code=413, detail=f"Avatar too large (max {MAX_BYTES // (1024*1024)} MB)")
             f.write(chunk)
 
-# ── Core handler ──────────────────────────────────────────────────────────────
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+# ── Core handlers ─────────────────────────────────────────────────────────────
 async def _handle_upload(
     request: Request,
     avatar: Optional[UploadFile],
@@ -157,7 +173,7 @@ async def _handle_upload(
     # Persist on user (relative URL)
     current_user.avatar_url = rel_url
     if hasattr(current_user, "avatar_updated_at"):
-        setattr(current_user, "avatar_updated_at", datetime.now(timezone.utc))
+        setattr(current_user, "avatar_updated_at", _now())
 
     db.add(current_user)
     await db.commit()
@@ -171,11 +187,20 @@ async def _handle_upload(
             "status": "ok",
             "avatar_url": rel_url,      # store this
             "avatar_url_abs": abs_url,  # convenience
-            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "uploaded_at": _now().isoformat(),
         },
     )
 
-# Accept BOTH "" and "/" so trailing slashes don't 405, plus a legacy alias.
+def _best_avatar_urls(request: Request, user: User) -> tuple[str, str]:
+    """
+    Returns (relative_url, absolute_url), falling back to default avatar if necessary.
+    """
+    candidate = (getattr(user, "avatar_url", None) or "").strip()
+    rel = candidate if candidate else DEFAULT_AVATAR_REL
+    abs_url = f"{str(request.base_url).rstrip('/')}{rel}"
+    return rel, abs_url
+
+# ── Upload routes (accept BOTH "" and "/"; plus legacy alias) ────────────────
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_avatar_no_slash(
     request: Request,
@@ -205,5 +230,40 @@ async def upload_avatar_legacy(
     current_user: User = Depends(get_current_user),
 ):
     return await _handle_upload(request, avatar, file, db, current_user)
+
+# ── Read routes (serve current avatar URL or default) ─────────────────────────
+@router.get("/me", status_code=status.HTTP_200_OK)
+async def get_my_avatar(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    rel, abs_url = _best_avatar_urls(request, current_user)
+    return {"avatar_url": rel, "avatar_url_abs": abs_url}
+
+@router.get("/{user_id}", status_code=status.HTTP_200_OK)
+async def get_user_avatar(
+    request: Request,
+    user_id: str = PathParam(..., description="Target user UUID"),
+    db: AsyncSession = Depends(get_db),
+    _caller: User = Depends(get_current_user),  # auth gate; replace with RBAC as needed
+):
+    try:
+        uuid.UUID(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        # match your default behavior: if user doesn't exist, 404
+        raise HTTPException(status_code=404, detail="User not found")
+
+    rel, abs_url = _best_avatar_urls(request, user)
+    return {"avatar_url": rel, "avatar_url_abs": abs_url}
+
+# convenience redirect (matches main.py’s /api/v1/avatar/default if you prefer to keep it here)
+@router.get("/default", include_in_schema=False)
+async def default_avatar_redirect():
+    return RedirectResponse(url=DEFAULT_AVATAR_REL, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 __all__ = ["router"]

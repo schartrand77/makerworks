@@ -1,18 +1,23 @@
+# app/routes/admin.py
+from __future__ import annotations
+
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_async_db
-from app.dependencies.auth import admin_required
+# ✅ Use the cycle-safe re-exports (avoids startup import loops)
+from app.dependencies import get_db, admin_required
+
 from app.models.models import ModelMetadata, User
+from app.schemas.admin import DiscordConfigOut, UploadOut, UserOut
 from app.services.auth_service import log_action
-from app.utils.logging import logger
-from app.schemas.admin import UserOut, UploadOut, DiscordConfigOut
+from app.utils.log_utils import logger
 
 router = APIRouter()
 
+# In-memory admin config (persist however you like later)
 discord_config = {
     "webhook_url": "",
     "channel_id": "",
@@ -22,7 +27,7 @@ discord_config = {
 
 @router.get("/users", response_model=List[UserOut])
 async def get_all_users(
-    db: AsyncSession = Depends(get_async_db), admin=Depends(admin_required)
+    db: AsyncSession = Depends(get_db), admin=Depends(admin_required)
 ):
     result = await db.execute(select(User))
     return result.scalars().all()
@@ -31,7 +36,7 @@ async def get_all_users(
 @router.post("/users/{user_id}/promote")
 async def promote_user(
     user_id: str,
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
     admin=Depends(admin_required),
 ):
     user = await db.get(User, user_id)
@@ -46,7 +51,7 @@ async def promote_user(
 @router.post("/users/{user_id}/demote")
 async def demote_user(
     user_id: str,
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
     admin=Depends(admin_required),
 ):
     user = await db.get(User, user_id)
@@ -61,7 +66,7 @@ async def demote_user(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: str,
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
     admin=Depends(admin_required),
 ):
     user = await db.get(User, user_id)
@@ -76,20 +81,18 @@ async def delete_user(
 @router.post("/users/{user_id}/reset-password")
 async def force_password_reset(
     user_id: str,
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
     admin=Depends(admin_required),
 ):
+    # Implement real reset flow later (email token, etc.)
     await log_action(admin.sub, "force_password_reset", user_id, db)
-    return {
-        "status": "noop",
-        "message": "Password reset flow to be handled by frontend.",
-    }
+    return {"status": "noop", "message": "Password reset flow handled by frontend."}
 
 
 @router.get("/users/{user_id}/uploads", response_model=List[UploadOut])
 async def view_user_uploads(
     user_id: str,
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
     admin=Depends(admin_required),
 ):
     result = await db.execute(
@@ -107,7 +110,7 @@ async def get_discord_config(admin=Depends(admin_required)):
 async def update_discord_config(
     request: Request,
     admin=Depends(admin_required),
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
 ):
     data = await request.json()
     discord_config.update(

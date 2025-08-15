@@ -9,14 +9,13 @@ FROM --platform=${TARGETPLATFORM:-linux/arm64} python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install Postgres client with fallback and required build tools
+# Install Postgres client (pg_isready) and build tools
 RUN apt-get update && \
     (apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
         libpq5 \
         gcc \
-        musl-dev \
         curl \
         git \
         libfreetype6-dev \
@@ -34,13 +33,13 @@ RUN command -v pg_isready || (echo "❌ pg_isready missing!" && exit 1)
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install Python deps
-COPY makerworks-backend/requirements.txt ./requirements.txt
+# Install Python deps (requirements.txt lives at build-context root)
+COPY requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip \
-    && pip install --no-cache-dir psycopg2-binary>=2.9 \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir gunicorn uvicorn
+ && pip install --no-cache-dir psycopg2-binary>=2.9 \
+ && pip install --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir gunicorn uvicorn
 
 ##############################################
 # ===== Builder Stage =====
@@ -49,38 +48,60 @@ ARG TARGETPLATFORM
 FROM --platform=${TARGETPLATFORM:-linux/arm64} base AS builder
 WORKDIR /app
 
-# Copy Alembic config and scripts
-COPY makerworks-backend/alembic.ini /app/alembic.ini
-COPY makerworks-backend/alembic /app/alembic
+# Copy Alembic config and scripts (paths are relative to build context)
+COPY alembic.ini /app/alembic.ini
+COPY alembic /app/alembic
 
 # Ensure alembic/versions directory exists even if empty
 RUN test -d /app/alembic/versions || mkdir -p /app/alembic/versions
 
-# Copy env example for local dev
-COPY makerworks-backend/.env.example /app/.env.dev
+# Copy env example for local dev (optional)
+COPY .env.example /app/.env.dev
+
+# Copy application code
+COPY app /app/app
 
 ##############################################
-# ===== Final Stage =====
+# ===== Final Stage (runtime) =====
 ##############################################
 ARG TARGETPLATFORM
-FROM --platform=${TARGETPLATFORM:-linux/arm64} base AS final
+FROM --platform=${TARGETPLATFORM:-linux/arm64} python:3.12-slim AS final
 WORKDIR /app
 
-ARG CACHE_BUST=1
+# Prefer OSMesa for headless rendering; code can switch to EGL if present
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYOPENGL_PLATFORM=osmesa
 
-# Copy installed packages and Alembic from builder
+# Runtime tools + headless GL stack for pyrender/trimesh offscreen rendering
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      postgresql-client \
+      curl \
+      libgl1-mesa-glx \
+      libgl1-mesa-dri \
+      libglu1-mesa \
+      libgles2 \
+      libegl1 \
+      libosmesa6 \
+      libosmesa6-dev \
+      libglfw3 \
+      libxext6 libx11-6 libxrender1 libxi6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bring in site-packages and binaries from builder
 COPY --from=builder /usr/local /usr/local
+
+# Copy app, Alembic, env
+COPY --from=builder /app/app /app/app
 COPY --from=builder /app/alembic /app/alembic
 COPY --from=builder /app/alembic.ini /app/alembic.ini
 COPY --from=builder /app/.env.dev /app/.env.dev
 
-# Copy backend application code and entrypoint
-COPY makerworks-backend/app /app/app
-COPY makerworks-backend/docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
-
-# Ensure entrypoint has LF line endings (avoids CRLF issues)
-RUN sed -i 's/\r$//' /app/docker-entrypoint.sh
+# Entrypoint script (from build context root)
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh \
+ && sed -i 's/\r$//' /app/docker-entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["./docker-entrypoint.sh"]

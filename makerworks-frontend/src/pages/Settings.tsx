@@ -40,7 +40,7 @@ export default function Settings() {
           <button
             onClick={() => setActiveTab('profile')}
             className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'profile' ? 'bg-brand-primary text-black' : 'bg-gray-200 dark:bg-gray-700'
+              activeTab === 'profile' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
             }`}
           >
             Profile
@@ -48,7 +48,7 @@ export default function Settings() {
           <button
             onClick={() => setActiveTab('account')}
             className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'account' ? 'bg-brand-primary text-black' : 'bg-gray-200 dark:bg-gray-700'
+              activeTab === 'account' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
             }`}
           >
             Account
@@ -56,7 +56,7 @@ export default function Settings() {
           <button
             onClick={() => setActiveTab('avatar')}
             className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'avatar' ? 'bg-brand-primary text-black' : 'bg-gray-200 dark:bg-gray-700'
+              activeTab === 'avatar' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
             }`}
           >
             Avatar
@@ -64,7 +64,7 @@ export default function Settings() {
           <button
             onClick={() => setActiveTab('theme')}
             className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'theme' ? 'bg-brand-primary text-black' : 'bg-gray-200 dark:bg-gray-700'
+              activeTab === 'theme' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
             }`}
           >
             Theme

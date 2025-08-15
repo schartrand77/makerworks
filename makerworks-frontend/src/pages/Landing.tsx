@@ -21,7 +21,7 @@ const Landing = () => {
   }, [hydrated, resolved, isAuthenticated, navigate])
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-white to-brand-red dark:from-brand-black dark:to-brand-red">
+    <div className="flex items-center justify-center min-h-screen bg-brand-white dark:bg-brand-black">
       <GlassCard>
         <div className="flex flex-col items-center justify-center text-center p-8">
           <h1 className="text-4xl font-bold mb-6">MakerW⚙️rks</h1>

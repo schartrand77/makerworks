@@ -132,11 +132,11 @@ const GlassNavbar = () => {
               to={item.path}
               className={`
                 text-sm px-3 py-1 rounded-full backdrop-blur
-                bg-brand-accent/40 dark:bg-brand-accent/20
-                text-brand-secondary dark:text-brand-accent
-                border border-brand-accent shadow transition
-                hover:bg-brand-accent/60 dark:hover:bg-brand-accent/30
-                ${isActive ? 'bg-brand-primary text-black' : ''}
+                bg-brand-white/40 dark:bg-brand-white/20
+                text-brand-black dark:text-brand-white
+                border border-brand-white shadow transition
+                hover:bg-brand-white/60 dark:hover:bg-brand-white/30
+                ${isActive ? 'bg-brand-red text-brand-black' : ''}
               `}
             >
               {item.label}
@@ -153,10 +153,10 @@ const GlassNavbar = () => {
             to="/auth/signin"
             className="
               text-sm px-3 py-1 rounded-full backdrop-blur
-              bg-brand-accent/40 dark:bg-brand-accent/20
-              text-brand-secondary dark:text-brand-accent
-              border border-brand-accent shadow transition
-              hover:bg-brand-accent/60 dark:hover:bg-brand-accent/30
+              bg-brand-white/40 dark:bg-brand-white/20
+              text-brand-black dark:text-brand-white
+              border border-brand-white shadow transition
+              hover:bg-brand-white/60 dark:hover:bg-brand-white/30
             "
           >
             Sign In

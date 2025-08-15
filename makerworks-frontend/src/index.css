@@ -9,15 +9,15 @@
   }
 
   body {
-    @apply transition-colors duration-500 text-brand-secondary;
-    background: linear-gradient(180deg, #FFFFFF 0%, #76B900 100%);
+    @apply transition-colors duration-500 text-brand-black;
+    background: linear-gradient(180deg, #FFFFFF 0%, #FF4F00 100%);
   }
 
   /* 🌙 Dark Theme Gradient */
   body.dark,
   .dark body {
-    @apply text-brand-accent;
-    background: linear-gradient(180deg, #000000 0%, #76B900 100%);
+    @apply text-brand-white;
+    background: linear-gradient(180deg, #000000 0%, #FF4F00 100%);
   }
 }
 
@@ -29,7 +29,7 @@
            placeholder-white/70 dark:placeholder-white/50
            backdrop-blur-md shadow-vision
            border-white/30 dark:border-white/30
-           focus:outline-none focus:ring-2 focus:ring-brand-highlight
+           focus:outline-none focus:ring-2 focus:ring-brand-blue
            transition-all duration-200;
   }
 

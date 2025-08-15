@@ -2,22 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 🌌 Global Gradient Backgrounds */
+/* 🌌 Global Background Colors */
 @layer base {
   html, body, #root {
     @apply min-h-screen;
   }
 
   body {
-    @apply transition-colors duration-500 text-brand-black;
-    background: linear-gradient(180deg, #FFFFFF 0%, #FF4F00 100%);
+    @apply transition-colors duration-500 text-brand-text;
+    background-color: #FFFFFF;
   }
 
-  /* 🌙 Dark Theme Gradient */
+  /* 🌙 Dark Theme */
   body.dark,
   .dark body {
     @apply text-brand-white;
-    background: linear-gradient(180deg, #000000 0%, #FF4F00 100%);
+    background-color: #000000;
   }
 }
 

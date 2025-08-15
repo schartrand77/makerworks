@@ -1,107 +1,184 @@
+x-buildkit-env: &buildkit-env
+  COMPOSE_BAKE: "true"
+  DOCKER_BUILDKIT: "1"
+  BUILDKIT_INLINE_CACHE: "1"
+
+services:
+  frontend:
+    build:
+      context: ./makerworks-frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: makerworks_frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+        required: true
+    environment:
+      VITE_API_URL: http://backend:8000/api/v1
+    networks:
+      - default
+    ports:
+      - "5173:5173"
+    restart: unless-stopped
+    volumes:
+      - ./makerworks-frontend:/app
+    working_dir: /app
+
   backend:
     build:
       context: ./makerworks-backend
       dockerfile: Dockerfile.macos
     container_name: makerworks_backend
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      set -e
-      mkdir -p /uploads /thumbnails /models
-      if [ -f .env.dev ]; then set -a; . ./.env.dev; set +a; fi
-      until pg_isready -h postgres -U makerworks >/dev/null 2>&1; do sleep 1; done
-      exec gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000
-    working_dir: /app
-    volumes:
-      - ./makerworks-backend:/app
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/uploads
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
-    environment:
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-      UPLOAD_DIR: /uploads
-      THUMBNAILS_DIR: /thumbnails
-      MODELS_DIR: /models
-      CORS_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173"
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
       redis:
         condition: service_healthy
+    environment:
+      <<: *buildkit-env
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+
+      # ---- Thumbnail defaults (side-on, facing right; soft, not shiny) ----
+      THUMBNAIL_AZIM_DEG: "90"
+      THUMBNAIL_ELEV_DEG: "0"
+      THUMBNAIL_SSAA: "4"
+      THUMBNAIL_FRAME_MARGIN: "0.06"
+      THUMBNAIL_MAX_RATIO: "0.85"     # was 0.5 — too tight
+      THUMBNAIL_CULL: "0"             # was 1 — killed every triangle
+      THUMBNAIL_BASE_RGB: "0.90,0.90,0.90"
+      THUMBNAIL_AMBIENT: "0.62"
+      THUMBNAIL_DIFFUSE: "0.38"
+      THUMBNAIL_GAMMA: "1.10"
+      THUMBNAIL_LIGHT_DIR: "0.30,0.20,1.0"
+      THUMBNAIL_FILL_DIR: "-0.60,-0.20,1.0"
+      THUMBNAIL_FILL_INT: "0.20"
+      THUMBNAIL_SPEC_K: "0.03"
+      THUMBNAIL_SPEC_P: "24"
+      THUMBNAIL_RIM_K: "0.03"
+      THUMBNAIL_FLATTEN_BG: "white"   # always write opaque PNGs
+
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); s.close(); sys.exit(0)\""]
-      interval: 10s
-      timeout: 3s
-      retries: 24
+      test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
       start_period: 90s
+    networks:
+      - default
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    volumes:
+      - ./makerworks-backend:/app
+      - ./uploads:/app/uploads        # persist uploads
+      - ./thumbnails:/thumbnails      # persist thumbnails
+    working_dir: /app
+
+  migrate:
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile.macos
+    command:
+      - echo
+      - "⏳ Waiting for PostgreSQL..."
+      - until
+      - PGPASSWORD=makerworks
+      - psql
+      - -h
+      - postgres
+      - -U
+      - makerworks
+      - -d
+      - makerworks
+      - -c
+      - \q
+    container_name: makerworks_migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+    environment:
+      <<: *buildkit-env
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+      RUN_MIGRATIONS: "true"
+    networks:
+      - default
+    restart: "no"
+    volumes:
+      - ./makerworks-backend:/app
+    working_dir: /app
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: makerworks_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: makerworks
+      POSTGRES_PASSWORD: makerworks
+      POSTGRES_DB: makerworks
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U makerworks"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: makerworks_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 3s
+      interval: 5s
+      retries: 10
 
   worker:
     build:
       context: ./makerworks-backend
       dockerfile: Dockerfile.macos
-      args: { WORKER_IMAGE: "true" }
+      args:
+        WORKER_IMAGE: "true"
+    command:
+      - celery
+      - -A
+      - app.celery_worker.celery_app
+      - worker
+      - --loglevel=INFO
+      - --concurrency=2
     container_name: makerworks_worker
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      set -e
-      mkdir -p /uploads /thumbnails /models
-      if [ -f .env.dev ]; then set -a; . ./.env.dev; set +a; fi
-      until pg_isready -h postgres -U makerworks >/dev/null 2>&1; do sleep 1; done
-      sleep 2
-      exec celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
-    working_dir: /app
-    volumes:
-      - ./makerworks-backend:/app
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/uploads
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
-    environment:
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-      UPLOAD_DIR: /uploads
-      THUMBNAILS_DIR: /thumbnails
-      MODELS_DIR: /models
-      C_FORCE_ROOT: "true"
     depends_on:
-      postgres:
+      backend:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-
-  frontend:
-    build:
-      context: ./makerworks-frontend
-      dockerfile: Dockerfile
-      target: dev
-    container_name: makerworks_frontend
-    restart: unless-stopped
-    ports: ["5173:5173"]
     environment:
-      VITE_API_BASE_URL: http://localhost:8000/api/v1
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  frontend-prod:
-    build:
-      context: ./makerworks-frontend
-      dockerfile: Dockerfile
-      target: production
-    container_name: makerworks_frontend_prod
+      <<: *buildkit-env
+      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - default
     restart: unless-stopped
-    ports: ["8080:80"]
-    depends_on:
-      backend:
-        condition: service_healthy
+    volumes:
+      - ./makerworks-backend:/app
+    working_dir: /app
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  default:
+    driver: bridge

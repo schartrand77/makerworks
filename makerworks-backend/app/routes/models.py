@@ -130,7 +130,7 @@ async def _render_thumbnail_subprocess(input_path: Path, output_path: Path, size
 router = APIRouter()
 
 
-@router.get("/models", status_code=status.HTTP_200_OK)
+@router.get("", status_code=status.HTTP_200_OK)
 async def list_models(
     limit: int = Query(24, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -171,7 +171,7 @@ async def list_models(
     return {"total": total, "items": items, "limit": limit, "offset": offset}
 
 
-@router.get("/models/{model_id}", status_code=status.HTTP_200_OK)
+@router.get("/{model_id}", status_code=status.HTTP_200_OK)
 async def get_model(model_id: str) -> Dict[str, Any]:
     async with async_engine.begin() as conn:
         row = (
@@ -195,7 +195,7 @@ async def get_model(model_id: str) -> Dict[str, Any]:
     return _row_to_model(row)
 
 
-@router.post("/models/{model_id}/rethumb", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{model_id}/rethumb", status_code=status.HTTP_202_ACCEPTED)
 async def rethumb_model(model_id: str) -> Dict[str, Any]:
     """
     Force re-generate the thumbnail file at THUMB_ROOT/<id>.png, and update the DB to

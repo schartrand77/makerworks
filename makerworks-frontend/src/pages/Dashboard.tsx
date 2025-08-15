@@ -65,7 +65,7 @@ const Dashboard: React.FC = () => {
                   <li key={model.id} className="truncate">
                     <a
                       href={`/models/${model.id}`}
-                      className="hover:underline text-brand-highlight"
+                      className="hover:underline text-brand-blue"
                     >
                       📄 {model.name}
                     </a>

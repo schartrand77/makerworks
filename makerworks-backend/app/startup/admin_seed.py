@@ -1,153 +1,204 @@
-# /app/startup/admin_seed.py
-import asyncio
-import datetime as dt
+# app/startup/admin_seed.py
+from __future__ import annotations
+
 import logging
 import os
+import secrets
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.models import User
-from app.utils.security import hash_password
-from app.config.settings import settings  # <- your Pydantic settings (loads .env.dev)
-from app.db.database import async_session_maker  # <- same session the app uses
 
-log = logging.getLogger(__name__)
+# session + models
+try:
+    from app.db.database import async_session_maker
+except Exception as e:
+    raise RuntimeError("async_session_maker not available") from e
 
-# Env-driven admin config (falls back to settings, then sane defaults)
-ADMIN_EMAIL: str = (
-    os.getenv("ADMIN_EMAIL")
-    or getattr(settings, "admin_email", None)
-    or "admin@example.com"
-)
-ADMIN_USERNAME: str = (
-    os.getenv("ADMIN_USERNAME")
-    or getattr(settings, "admin_username", None)
-    or "admin"
-)
-ADMIN_PASSWORD: str = (
-    os.getenv("ADMIN_PASSWORD")
-    or getattr(settings, "admin_password", None)
-    or "change-me-please"
-)
-# If true, we will update the existing admin's password & flags from env on startup.
-ADMIN_FORCE_UPDATE: bool = (
-    str(os.getenv("ADMIN_FORCE_UPDATE", "") or getattr(settings, "admin_force_update", "")).lower()
-    in {"1", "true", "yes", "on"}
-)
+from app.models.models import User  # uses 'role' string, hashed_password, etc.
 
-def _redact_dsn(dsn: Optional[str]) -> str:
-    if not dsn:
-        return "(unset)"
+log = logging.getLogger("admin_seed")
+
+
+# --- password hashing resolver ------------------------------------------------
+def _resolve_hasher():
+    """
+    Try to reuse the app's own password hasher; fall back to passlib bcrypt.
+    """
+    # Preferred: your auth service hasher
     try:
-        # postgresql+asyncpg://user:pass@host:5432/db
-        before_at, after_at = dsn.split("@", 1)
-        proto, user_and_pass = before_at.split("://", 1)
-        user = user_and_pass.split(":", 1)[0]
-        return f"{proto}://{user}:***@{after_at}"
+        from app.services.auth_service import get_password_hash as _hash  # type: ignore
+        return _hash
     except Exception:
-        return "(redacted)"
+        pass
+    # Alternate conventional location
+    try:
+        from app.core.security import get_password_hash as _hash  # type: ignore
+        return _hash
+    except Exception:
+        pass
+    # Fallback: passlib's bcrypt
+    try:
+        from passlib.hash import bcrypt as _bcrypt  # type: ignore
+        return lambda s: _bcrypt.hash(s)
+    except Exception as e:
+        raise RuntimeError(
+            "No password hasher available. Install passlib[bcrypt] or expose get_password_hash()."
+        ) from e
+
+
+# --- helpers ------------------------------------------------------------------
+def _bool_env(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _get_admin_count(session: AsyncSession) -> int:
+    q = select(func.count()).select_from(User).where(
+        func.lower(func.coalesce(User.role, "")) == "admin"
+    )
+    return int((await session.execute(q)).scalar_one())
+
+
+async def _get_user_by_email(session: AsyncSession, email: str) -> Optional[User]:
+    q = select(User).where(func.lower(User.email) == func.lower(email)).limit(1)
+    res = await session.execute(q)
+    return res.scalars().first()
+
+
+async def _username_taken(session: AsyncSession, username: str) -> bool:
+    q = select(func.count()).select_from(User).where(
+        func.lower(User.username) == func.lower(username)
+    )
+    return int((await session.execute(q)).scalar_one()) > 0
+
 
 async def ensure_admin_user() -> None:
     """
-    Ensure there is an admin user. If not present, create one from env/settings.
-    If ADMIN_FORCE_UPDATE=true, update password/flags on each startup.
-    Safe to run multiple times (idempotent).
+    Idempotently ensure there's at least one admin.
+    - If ADMIN_EMAIL exists:
+        - create it if missing;
+        - if present and ADMIN_FORCE_UPDATE=true, normalize role/flags and reset password if provided.
+    - If no ADMIN_EMAIL set and no admins exist: create a default admin user.
+    Writes the first-generated password to ADMIN_FIRST_PASSWORD_FILE (default: /app/.admin_first_password)
+    so first-run users can log in.
     """
-    # Helpful visibility in logs (no secrets)
-    dsn = getattr(settings, "database_url", None) or getattr(settings, "ASYNCPG_URL", None)
-    log.info(
-        "[admin_seed] Using DB=%s  admin_email=%s  force_update=%s",
-        _redact_dsn(dsn),
-        ADMIN_EMAIL,
-        ADMIN_FORCE_UPDATE,
-    )
+    hasher = _resolve_hasher()
+
+    # Config (env-first; reasonable defaults)
+    email = os.getenv("ADMIN_EMAIL", "admin@example.com").strip()
+    username = os.getenv("ADMIN_USERNAME", "admin").strip()
+    pwd_env = os.getenv("ADMIN_PASSWORD", "").strip()
+    force_update = _bool_env("ADMIN_FORCE_UPDATE", False)
+
+    first_pw_file = os.getenv("ADMIN_FIRST_PASSWORD_FILE", "/app/.admin_first_password")
+
+    generated_password = ""
+    if not pwd_env:
+        # generate a strong password for first run if none was supplied
+        generated_password = secrets.token_urlsafe(18)
+        password_to_set = generated_password
+    else:
+        password_to_set = pwd_env
 
     async with async_session_maker() as session:  # type: AsyncSession
-        # Wait for users table to exist (e.g., alembic migrations just ran)
-        exists = await session.execute(
-            text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'users')")
-        )
-        if not bool(exists.scalar()):
-            log.warning("[admin_seed] 'users' table not ready; skipping this cycle.")
+        # If any admin exists and we are NOT forcing an update, bail out early.
+        admin_count = await _get_admin_count(session)
+        target_user = await _get_user_by_email(session, email)
+
+        if target_user is None and admin_count > 0 and not force_update:
+            log.info("[admin_seed] Admins already present (%d). Nothing to do.", admin_count)
             return
 
-        # Try to find the admin by email first
-        res = await session.execute(select(User).where(User.email == ADMIN_EMAIL))
-        admin = res.scalar_one_or_none()
+        # Create or update the configured admin account
+        if target_user is None:
+            # ensure username uniqueness
+            base_username = username or "admin"
+            final_username = base_username
+            if await _username_taken(session, final_username):
+                final_username = f"{base_username}-{str(uuid.uuid4())[:6]}"
 
-        if admin:
-            # Optionally update existing admin with env settings
+            u = User(
+                id=uuid.uuid4(),
+                email=email,
+                username=final_username,
+                hashed_password=hasher(password_to_set),
+                role="admin",
+                is_verified=True,
+                is_active=True,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(u)
+            await session.commit()
+            log.warning(
+                "[admin_seed] Created admin user email=%s username=%s (force=%s)",
+                email, final_username, force_update,
+            )
+
+            # If we generated the password, persist it for the installer
+            if generated_password:
+                try:
+                    # avoid overwriting if already exists
+                    if not os.path.exists(first_pw_file):
+                        with open(first_pw_file, "w", encoding="utf-8") as fh:
+                            fh.write(f"{email}:{generated_password}\n")
+                    os.chmod(first_pw_file, 0o600)
+                    log.warning(
+                        "[admin_seed] First admin password written to %s. "
+                        "DELETE THIS FILE after first login.",
+                        first_pw_file,
+                    )
+                except Exception as e:
+                    log.error("[admin_seed] Failed to write first password file: %s", e)
+
+            return
+
+        # target_user exists
+        if force_update:
             changed = False
-            if ADMIN_FORCE_UPDATE:
-                admin.hashed_password = hash_password(ADMIN_PASSWORD)
-                changed = True
-            # Make sure role/flags are correct
-            if getattr(admin, "role", None) != "admin":
-                admin.role = "admin"
-                changed = True
-            if getattr(admin, "is_verified", False) is not True:
-                admin.is_verified = True
-                changed = True
-            if getattr(admin, "is_active", False) is not True:
-                admin.is_active = True
-                changed = True
-            if getattr(admin, "username", None) != ADMIN_USERNAME:
-                # keep unique constraint in mind; if collision, fall back to existing
-                admin.username = ADMIN_USERNAME
-                changed = True
+            # normalize role/flags
+            if (target_user.role or "").lower() != "admin":
+                target_user.role = "admin"; changed = True
+            if getattr(target_user, "is_verified", False) is False:
+                target_user.is_verified = True; changed = True
+            if getattr(target_user, "is_active", True) is False:
+                target_user.is_active = True; changed = True
+            # rotate password only if ADMIN_PASSWORD provided; we never overwrite an existing
+            # password with a *new* random one on force unless the caller explicitly set it.
+            if pwd_env:
+                target_user.hashed_password = hasher(password_to_set); changed = True
 
             if changed:
-                admin.updated_at = dt.datetime.utcnow()
                 await session.commit()
-                log.info("[admin_seed] ✅ Admin updated (env applied).")
+                log.warning(
+                    "[admin_seed] Force-updated admin user email=%s (role/flags%s).",
+                    email,
+                    " +password" if pwd_env else "",
+                )
             else:
-                log.info("[admin_seed] ✅ Admin already present; no changes.")
-            return
+                log.info("[admin_seed] No changes required for %s.", email)
+        else:
+            # Not forcing update and user exists: ensure it's admin (be safe)
+            if (target_user.role or "").lower() != "admin":
+                target_user.role = "admin"
+                target_user.is_verified = True
+                target_user.is_active = True
+                await session.commit()
+                log.warning("[admin_seed] Promoted existing %s to admin.", email)
 
-        # If no admin with that email, ensure there is no other admin we should respect
-        res2 = await session.execute(select(User).where(User.role == "admin"))
-        other_admin = res2.scalar_one_or_none()
-        if other_admin and not ADMIN_FORCE_UPDATE:
-            log.info(
-                "[admin_seed] ⚠️ Found existing admin '%s' (email=%s); leaving as-is. "
-                "Set ADMIN_FORCE_UPDATE=true to override with env.",
-                other_admin.username,
-                other_admin.email,
-            )
-            return
 
-        # Create the admin from env/settings
-        new_admin = User(
-            email=ADMIN_EMAIL,
-            username=ADMIN_USERNAME,
-            hashed_password=hash_password(ADMIN_PASSWORD),
-            role="admin",
-            is_verified=True,
-            is_active=True,
-            created_at=dt.datetime.utcnow(),
-            updated_at=dt.datetime.utcnow(),
-            last_login=dt.datetime.utcnow(),
-        )
-        session.add(new_admin)
-        await session.commit()
-        log.info("[admin_seed] 🎉 Created admin '%s' <%s>.", ADMIN_USERNAME, ADMIN_EMAIL)
-
-def schedule_admin_seed_on_startup(app):
+def schedule_admin_seed_on_startup(app) -> None:
     """
-    Call from FastAPI app factory to run the seeder on startup without blocking.
-    Example:
-      from app.startup.admin_seed import schedule_admin_seed_on_startup
-      app = FastAPI()
-      schedule_admin_seed_on_startup(app)
+    Optional: attach to FastAPI startup for apps not using lifespan to call ensure_admin_user().
+    Your main.py already calls this if available.
     """
     @app.on_event("startup")
-    async def _seed_event():
+    async def _seed():
         try:
             await ensure_admin_user()
         except Exception as e:
-            log.exception("[admin_seed] Failed: %s", e)
-
-if __name__ == "__main__":
-    # Handy for manual runs:  python -m app.startup.admin_seed
-    asyncio.run(ensure_admin_user())
+            log.error("Admin seed failed: %s", e)

@@ -19,9 +19,11 @@ from sqlalchemy import (
     event,
     JSON,
     Index,
+    func,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 
 # ── Settings (tolerate both module layouts) ────────────────────────────────────
 try:
@@ -64,6 +66,7 @@ class User(Base):
     language = Column(String, default="en")
     theme = Column(String, default="light")
 
+    # Admin is determined by this string. Default is plain user.
     role = Column(String, default="user")
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
@@ -75,6 +78,25 @@ class User(Base):
     estimates = relationship("Estimate", back_populates="user", cascade="all, delete-orphan")
     favorites = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")
     checkout_sessions = relationship("CheckoutSession", back_populates="user", cascade="all, delete-orphan")
+    printed_examples = relationship("PrintedExample", back_populates="user", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        # Helpful if you ever filter by role in queries
+        Index("ix_users_role", "role"),
+    )
+
+    @hybrid_property
+    def is_admin(self) -> bool:
+        """Python-side check."""
+        return (self.role or "").strip().lower() == "admin"
+
+    @is_admin.expression  # type: ignore
+    def is_admin(cls):
+        """SQL-side check: enables .filter(User.is_admin == True)."""
+        return func.lower(func.coalesce(cls.role, "")) == "admin"
+
+    def __repr__(self) -> str:
+        return f"<User {self.username} ({self.email}) role={self.role}>"
 
 
 # =========================
@@ -120,6 +142,14 @@ class ModelUpload(Base):
         lazy="selectin",
     )
 
+    # Real-world printed examples of this model
+    printed_examples = relationship(
+        "PrintedExample",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
     __table_args__ = (
         Index("ix_model_uploads_user_uploaded_at", "user_id", "uploaded_at"),
     )
@@ -151,6 +181,126 @@ def normalize_modelupload_paths(mapper, connection, target: ModelUpload):
     if target.turntable_path:
         target.turntable_path = normalize_path(target.turntable_path)
     # IMPORTANT: do NOT normalize file_url — it's already a URL rooted at /uploads or /models
+
+
+# =========================
+# Printed Examples (real-life prints of a model)
+# =========================
+class PrintedExample(Base):
+    """
+    Represents a real-world printed instance of a ModelUpload (with print settings & notes).
+    Has one-to-many photos in ExampleImage.
+    """
+    __tablename__ = "printed_examples"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model_id = Column(UUID(as_uuid=True), ForeignKey("model_uploads.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    title = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Basic print metadata (keep flexible and stringly-typed where needed)
+    printer_brand = Column(String, nullable=True)
+    printer_model = Column(String, nullable=True)
+    slicer = Column(String, nullable=True)
+
+    filament_material = Column(String, nullable=True)      # e.g., PLA, PETG
+    filament_brand = Column(String, nullable=True)
+    filament_color_name = Column(String, nullable=True)
+    filament_color_hex = Column(String, nullable=True)
+
+    nozzle_mm = Column(Float, nullable=True)               # 0.4, 0.6
+    layer_height_mm = Column(Float, nullable=True)
+    infill_percent = Column(Float, nullable=True)
+    wall_count = Column(Integer, nullable=True)
+    supports = Column(Boolean, nullable=True)
+    adhesion = Column(String, nullable=True)               # skirt/brim/raft/none
+
+    nozzle_temp_c = Column(Integer, nullable=True)
+    bed_temp_c = Column(Integer, nullable=True)
+    speed_mm_s = Column(Float, nullable=True)
+
+    scale_percent = Column(Float, nullable=True)           # 100 = original
+    orientation = Column(JSON, nullable=True)              # {"yaw":..,"pitch":..,"roll":..}
+
+    print_time_sec = Column(Integer, nullable=True)
+    filament_used_g = Column(Float, nullable=True)
+    cost_estimated = Column(Float, nullable=True)
+
+    visibility = Column(String, default="public")          # public | unlisted | private
+    license = Column(String, nullable=True)                # e.g., CC-BY, All Rights Reserved
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    model = relationship("ModelUpload", back_populates="printed_examples")
+    user = relationship("User", back_populates="printed_examples")
+    images = relationship("ExampleImage", back_populates="example", cascade="all, delete-orphan", lazy="selectin")
+
+    __table_args__ = (
+        Index("ix_printed_examples_model_created_at", "model_id", "created_at"),
+        Index("ix_printed_examples_user_created_at", "user_id", "created_at"),
+    )
+
+
+class ExampleImage(Base):
+    """
+    A photo of a PrintedExample (multiple per example).
+    Stores filesystem paths (relative to uploads root) and a served URL.
+    """
+    __tablename__ = "example_images"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    example_id = Column(UUID(as_uuid=True), ForeignKey("printed_examples.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    file_path = Column(Text, nullable=False)      # FS path (normalize to relative)
+    file_url = Column(Text, nullable=True)        # served URL (/uploads/.. or CDN)
+    thumbnail_path = Column(Text, nullable=True)  # FS path (normalize to relative)
+
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    exif = Column(JSON, nullable=True)
+
+    sha256 = Column(String(64), nullable=True, index=True)
+    blurhash = Column(String, nullable=True)
+
+    order_index = Column(Integer, default=0, nullable=False)
+    is_primary = Column(Boolean, default=False, nullable=False)
+    status = Column(String, default="active", nullable=False)  # active|hidden|removed
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    example = relationship("PrintedExample", back_populates="images")
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("ix_example_images_example_order", "example_id", "order_index"),
+    )
+
+
+@event.listens_for(ExampleImage, "before_insert")
+@event.listens_for(ExampleImage, "before_update")
+def normalize_exampleimage_paths(mapper, connection, target: ExampleImage):
+    def normalize_path(value: str) -> str:
+        if not value:
+            return value
+        p = Path(value)
+        if not p.is_absolute():
+            p = uploads_root / p
+        try:
+            return p.relative_to(uploads_root).as_posix()
+        except Exception:
+            logging.warning("⚠️ Path outside uploads root: %s (keeping as-is)", p)
+            return value
+
+    if target.file_path:
+        target.file_path = normalize_path(target.file_path)
+    if target.thumbnail_path:
+        target.thumbnail_path = normalize_path(target.thumbnail_path)
+    # do not touch file_url (it's a URL)
 
 
 # =========================

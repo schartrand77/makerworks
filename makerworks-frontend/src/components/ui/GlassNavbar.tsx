@@ -40,6 +40,12 @@ const GlassNavbar = () => {
   const location = useLocation();
   const gearRef = useRef<HTMLSpanElement>(null);
 
+  // Detect PWA standalone mode (iOS and others)
+  const isStandalone =
+    typeof window !== 'undefined' &&
+    (window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone);
+
   // Local state for live avatar updates
   const [avatarUrl, setAvatarUrl] = useState<string>(() => buildAvatarUrl(user));
 
@@ -109,13 +115,14 @@ const GlassNavbar = () => {
 
   return (
     <nav
-      className="
-        fixed top-4 left-1/2 transform -translate-x-1/2
+      className={`
+        fixed ${isStandalone ? 'bottom-4' : 'top-4'} left-1/2 transform -translate-x-1/2
         flex justify-between items-center gap-6
         px-6 py-2 rounded-full
         bg-white/30 dark:bg-black/30
         backdrop-blur-md shadow-md z-50
-      "
+      `}
+      style={isStandalone ? { paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
     >
       <div className="flex items-center gap-2">
         <Link to="/" className="text-lg font-bold text-gray-800 dark:text-white">

@@ -49,21 +49,39 @@ const UserDropdown = ({ user }: Props) => {
     setTheme(isDark ? 'light' : 'dark')
   }
 
-
+  // Normalize + fallbacks for display
   const resolvedUser: UserProfile = {
     username: user.username || 'Guest',
     email: user.email || 'guest@example.com',
-    avatar_url: user.avatar_url || user.thumbnail_url || '/default-avatar.png',
-    role: user.role || 'user'
+    avatar_url: user.avatar_url || (user as any).thumbnail_url || '/default-avatar.png',
+    role: user.role || 'user',
   }
 
   const avatarSrc = useMemo(() => {
     return (
       getAbsoluteUrl(resolvedUser.avatar_url) ||
-      getAbsoluteUrl(resolvedUser.thumbnail_url) ||
+      // @ts-ignore: some backends use thumbnail_url
+      getAbsoluteUrl((resolvedUser as any).thumbnail_url) ||
       '/default-avatar.png'
     )
-  }, [resolvedUser.avatar_url, resolvedUser.thumbnail_url])
+  }, [resolvedUser.avatar_url])
+
+  // 🔐 Robust admin detection
+  const isAdmin = useMemo(() => {
+    const roleStr = String((user as any)?.role ?? '').toLowerCase()
+    const roles = Array.isArray((user as any)?.roles)
+      ? (user as any).roles.map((r: any) => String(r).toLowerCase())
+      : []
+    const perms = Array.isArray((user as any)?.permissions)
+      ? (user as any).permissions.map((p: any) => String(p).toLowerCase())
+      : []
+    return (
+      (user as any)?.is_admin === true ||
+      roleStr === 'admin' ||
+      roles.includes('admin') ||
+      perms.includes('admin')
+    )
+  }, [user])
 
   return (
     <div className="relative">
@@ -107,7 +125,7 @@ const UserDropdown = ({ user }: Props) => {
               <span
                 className="w-5 h-5 rounded-full bg-white shadow transform transition-transform duration-300"
                 style={{
-                  transform: isDark ? 'translateX(24px)' : 'translateX(0)'
+                  transform: isDark ? 'translateX(24px)' : 'translateX(0)',
                 }}
               />
             </button>
@@ -121,7 +139,7 @@ const UserDropdown = ({ user }: Props) => {
             Settings
           </button>
 
-          {resolvedUser.role === 'admin' && (
+          {isAdmin && (
             <button
               onClick={() => handleGoTo('/admin')}
               className="w-full text-center py-2 px-4 text-sm rounded-full backdrop-blur bg-red-500/20 dark:bg-red-700/30 border border-red-500/30 dark:border-red-700/40 text-red-800 dark:text-red-200 shadow hover:bg-red-500/30 dark:hover:bg-red-700/50 hover:shadow-md transition"

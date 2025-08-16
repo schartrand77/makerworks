@@ -112,7 +112,17 @@ try:
         health_router = None  # type: ignore
 
     from app.services.cache.redis_service import verify_redis_connection
-    from app.startup.admin_seed import ensure_admin_user
+
+    # 👑 Admin seeder: prefer scheduler if available; fall back to ensure_admin_user
+    try:
+        from app.startup.admin_seed import schedule_admin_seed_on_startup  # type: ignore
+    except Exception:
+        schedule_admin_seed_on_startup = None  # type: ignore
+    try:
+        from app.startup.admin_seed import ensure_admin_user  # type: ignore
+    except Exception:
+        ensure_admin_user = None  # type: ignore
+
     from app.utils.boot_messages import random_boot_message
     from app.utils.system_info import get_system_status_snapshot
 
@@ -247,10 +257,47 @@ def resolve_allowed_origins() -> list[str]:
     return norm
 
 # ──────────────────────────────────────────────────────────────────────────────
-# App
+# Admin/log helpers
 # ──────────────────────────────────────────────────────────────────────────────
+def _redact_dsn(dsn: Optional[str]) -> str:
+    if not dsn:
+        return "(unset)"
+    try:
+        # e.g. postgresql+asyncpg://user:pass@host:5432/db
+        before_at, after_at = dsn.split("@", 1)
+        proto, user_and_pass = before_at.split("://", 1)
+        user = user_and_pass.split(":", 1)[0]
+        return f"{proto}://{user}:***@{after_at}"
+    except Exception:
+        return "(redacted)"
+
+def _active_db_dsn() -> Optional[str]:
+    # Prefer settings if present, else env fallbacks
+    for key in ("database_url", "ASYNCPG_URL", "DATABASE_URL"):
+        try:
+            val = getattr(settings, key) if hasattr(settings, key) else os.getenv(key)
+            if val:
+                return str(val)
+        except Exception:
+            continue
+    return None
+
+# ──────────────────────────────────────────────────────────────────────────────
+# App
+# ──────────────────────────────────────────────────────────────
 app = FastAPI(title="MakerWorks API", version="1.0.0", description="MakerWorks backend API")
 app.router.redirect_slashes = True
+
+# If available, schedule admin seeding on the FastAPI startup hook.
+# We keep a flag to avoid double-running (since lifespan also calls ensure_admin_user()).
+_ADMIN_SEED_SCHEDULED = False
+if 'schedule_admin_seed_on_startup' in globals() and callable(schedule_admin_seed_on_startup):  # type: ignore[name-defined]
+    try:
+        schedule_admin_seed_on_startup(app)  # type: ignore[misc]
+        _ADMIN_SEED_SCHEDULED = True
+        logger.info("👑 Admin seeder scheduled via app.startup.admin_seed")
+    except Exception as _e:
+        logger.warning(f"⚠️ Failed to schedule admin seeder: {_e}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CORS FIRST (no regex when using credentials)
@@ -455,6 +502,16 @@ async def lifespan(_: _FastAPI):
         logger.info(f"🔐 SESSION_SECRET present: {bool(os.getenv('SESSION_SECRET'))}")
         logger.info(f"🔐 SECRET_KEY present: {bool(os.getenv('SECRET_KEY'))}")
 
+        # Admin seed visibility (no secrets)
+        try:
+            admin_email = os.getenv("ADMIN_EMAIL") or getattr(settings, "admin_email", None) or "(unset)"
+            force_update_raw = os.getenv("ADMIN_FORCE_UPDATE") or getattr(settings, "admin_force_update", "")
+            force_update = str(force_update_raw).lower() in {"1", "true", "yes", "on"}
+            logger.info("👑 Admin config: email=%s force_update=%s dsn=%s",
+                        admin_email, force_update, _redact_dsn(_active_db_dsn()))
+        except Exception as _e:
+            logger.warning(f"⚠️ Admin config log failed: {_e}")
+
         try:
             run_alembic_upgrade()
             logger.info("✅ Alembic migrations applied at startup")
@@ -474,10 +531,12 @@ async def lifespan(_: _FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ init_db failed/skipped: {e}")
 
-        try:
-            await ensure_admin_user()
-        except Exception as e:
-            logger.warning(f"⚠️ ensure_admin_user failed/skipped: {e}")
+        # Prefer scheduled startup hook; else fall back to direct call.
+        if not _ADMIN_SEED_SCHEDULED and ensure_admin_user is not None:
+            try:
+                await ensure_admin_user()  # type: ignore[misc]
+            except Exception as e:
+                logger.warning(f"⚠️ ensure_admin_user failed/skipped: {e}")
 
         # Celery worker ping (non-fatal)
         try:
@@ -638,9 +697,9 @@ app.mount("/static", StaticFiles(directory=str(static_path), html=False, check_d
 # Minimal Celery-backed API for thumbnails (debug/ops)
 # ──────────────────────────────────────────────────────────────────────────────
 class ThumbnailJob(BaseModel):
-    model_path: str = Field(..., description="Absolute path to STL/3MF on the server filesystem")
-    model_id: str = Field(..., description="Model ID")
-    user_id: str = Field(..., description="User ID")
+  model_path: str = Field(..., description="Absolute path to STL/3MF on the server filesystem")
+  model_id: str = Field(..., description="Model ID")
+  user_id: str = Field(..., description="User ID")
 
 @app.post("/api/v1/thumbnail", include_in_schema=False)
 async def enqueue_thumbnail(job: ThumbnailJob):

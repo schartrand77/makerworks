@@ -16,6 +16,8 @@ interface Model {
   thumbnail_url: string | null;
   file_url: string | null;
   uploader_username: string | null;
+  /** Added so we can pass the exact STL to ModelPage */
+  stl_url?: string | null;
 }
 
 type SourceKey = 'local' | 'makerworld' | 'thingiverse' | 'printables' | 'thangs';
@@ -76,7 +78,7 @@ const Browse: React.FC = () => {
       fetchModels(1, limit);
       if (user?.id) fetchFavorites();
     } else {
-      redirectToExternal(source);
+      redirectToExternal(source as Exclude<SourceKey, 'local'>);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source]);
@@ -104,31 +106,33 @@ const Browse: React.FC = () => {
       const res = await axios.get<ListResponse>(url, {
         params: { offset, limit: limitParam },
       });
-      // debug: verify shape { total, items, ... }
       console.debug('[Browse] /models ->', res.status, res.data);
 
       const fetched: Model[] = (res.data.items || []).map((m) => {
         const defaultThumb = m?.id ? `/thumbnails/${m.id}.png` : null;
         const rawThumb = m.thumbnail_url || m.thumbnail_path || defaultThumb;
 
+        // pick up either 'stl_url' or 'file_url' from API
+        const rawFile = m.stl_url || m.file_url || null;
+        const fileAbs = resolveMediaUrl(rawFile);
+
         return {
           id: m.id,
           name: m.name ?? null,
           description: m.description ?? null,
           thumbnail_url: resolveMediaUrl(rawThumb),
-          file_url: m.file_url || null,
+          file_url: fileAbs,     // keep for older consumers
+          stl_url: fileAbs,      // use this when navigating to ModelPage
           uploader_username: m.uploader_username || null,
         } as Model;
       });
 
       setModels((prev) => (pageParam === 1 ? fetched : [...prev, ...fetched]));
 
-      // hasMore if we haven't reached total yet
       const nextCount = (pageParam - 1) * limitParam + fetched.length;
       setHasMore(nextCount < (res.data.total ?? nextCount));
-
     } catch (err) {
-      console.error('[Browse] Failed to load models:', err);
+      console.error('[Browse] Failed to load models]:', err);
       toast.error('⚠️ Failed to load models. Please try again.');
       setError('Failed to load models');
       setHasMore(false);
@@ -145,7 +149,6 @@ const Browse: React.FC = () => {
       setFavorites(new Set(res.data || []));
     } catch (err) {
       console.error('[Browse] Failed to load favorites:', err);
-      // not fatal
     }
   };
 
@@ -164,13 +167,14 @@ const Browse: React.FC = () => {
         await axios.post(`${base}/users/${user.id}/favorites`, { modelId: id });
       }
     } catch (err) {
-      console.error('[Browse] Failed to update favorite:', err);
+      console.error('[Browse] Failed to update favorite]:', err);
       const revert = new Set(favorites);
       setFavorites(revert);
       toast.error('⚠️ Failed to update favorite. Please try again.');
     }
   };
 
+  // Open external sources in a new tab and reset the select back to "local".
   const redirectToExternal = (platform: Exclude<SourceKey, 'local'>) => {
     const urls: Record<Exclude<SourceKey, 'local'>, string> = {
       makerworld: 'https://makerworld.com',
@@ -178,7 +182,12 @@ const Browse: React.FC = () => {
       printables: 'https://www.printables.com',
       thangs: 'https://thangs.com',
     };
-    window.location.href = urls[platform];
+    const url = urls[platform];
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!win) {
+      toast.info('Popup blocked. Allow popups to open external sources in a new tab.');
+    }
+    setSource('local');
   };
 
   const filteredModels = useMemo(() => {
@@ -192,9 +201,21 @@ const Browse: React.FC = () => {
 
   const isLoading = loadingInitial;
 
-  const handleViewModel = (id?: string) => {
-    if (!id) return;
-    navigate(`/models/${id}`);
+  const navigateToModel = (m: Model) => {
+    if (!m?.id) return;
+    navigate(`/models/${m.id}`, {
+      state: {
+        preloaded: {
+          id: m.id,
+          name: m.name,
+          description: m.description,
+          thumbnail_url: m.thumbnail_url,
+          stl_url: m.stl_url ?? m.file_url ?? null,
+          uploader_username: m.uploader_username,
+        },
+        from: 'browse',
+      },
+    });
   };
 
   return (
@@ -210,7 +231,15 @@ const Browse: React.FC = () => {
           placeholder="Search models…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full sm:w-1/2 rounded-full px-4 py-2 glass-card border text-sm shadow placeholder:text-zinc-400 focus:outline-none"
+          className="
+            w-full sm:w-1/2 rounded-full px-4 py-2
+            glass-card
+            ring-1 ring-black/5 dark:ring-white/20
+            text-sm text-zinc-800 dark:text-zinc-100
+            placeholder:text-zinc-400
+            focus:outline-none focus-visible:ring-black/10 dark:focus-visible:ring-white/20
+            transition
+          "
         />
 
         {/* VisionOS-style pill dropdown */}
@@ -227,11 +256,11 @@ const Browse: React.FC = () => {
               text-sm
               bg-white/60 dark:bg-white/10
               backdrop-blur-xl
-              ring-1 ring-black/10 dark:ring-white/10
+              ring-1 ring-black/5 dark:ring-white/20
               shadow-[inset_0_-1px_0_rgba(255,255,255,0.6),0_4px_12px_rgba(0,0,0,0.12)]
               text-zinc-800 dark:text-zinc-100
               hover:bg-white/70 dark:hover:bg-white/15
-              focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40
+              focus:outline-none focus-visible:ring-black/10 dark:focus-visible:ring-white/20
               transition
             "
           >
@@ -261,7 +290,10 @@ const Browse: React.FC = () => {
           <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6">
             {isLoading &&
               Array.from({ length: 6 }).map((_, idx) => (
-                <GlassCard key={`skeleton-${idx}`} className="animate-pulse">
+                <GlassCard
+                  key={`skeleton-${idx}`}
+                  className="animate-pulse ring-1 ring-black/5 dark:ring-white/20"
+                >
                   <div className="space-y-3">
                     <div className="w-full h-40 bg-zinc-300/20 dark:bg-zinc-600/20 rounded-md animate-pulse" />
                     <div className="h-4 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-3/4 animate-pulse" />
@@ -286,8 +318,12 @@ const Browse: React.FC = () => {
                 return (
                   <GlassCard
                     key={`model-${modelKey}`}
-                    className="relative cursor-pointer hover:scale-[1.02] transition-transform"
-                    onClick={() => handleViewModel(model.id)}
+                    className="
+                      relative cursor-pointer hover:scale-[1.02] transition-transform
+                      ring-1 ring-black/5 dark:ring-white/20
+                      hover:ring-black/10 dark:hover:ring-white/20
+                    "
+                    onClick={() => navigateToModel(model)}
                   >
                     <button
                       onClick={(e) => {
@@ -337,9 +373,18 @@ const Browse: React.FC = () => {
                       </p>
                     )}
 
-                    <p className="mt-2 w-full py-1.5 rounded-full bg-brand-red text-center text-black text-sm shadow">
+                    {/* Actual clickable pill that passes the STL + navigates */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateToModel(model);
+                      }}
+                      className="mt-2 w-full py-1.5 rounded-full bg-brand-red text-center text-black text-sm shadow hover:bg-brand-blue transition"
+                      aria-label="View details"
+                    >
                       View Details →
-                    </p>
+                    </button>
                   </GlassCard>
                 );
               })}

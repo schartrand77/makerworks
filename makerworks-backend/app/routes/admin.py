@@ -6,14 +6,15 @@ from uuid import UUID
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, HttpUrl
 
 # ✅ Use the cycle-safe re-exports (avoids startup import loops)
 from app.dependencies import get_db, admin_required
 
-from app.models.models import ModelMetadata, User
+from app.models.models import ModelMetadata, ModelUpload, User
 from app.schemas.admin import DiscordConfigOut, UploadOut, UserOut
 from app.services.auth_service import log_action
 from app.utils.log_utils import logger
@@ -30,11 +31,27 @@ discord_config = {
 # ──────────────────────────────────────────────────────────────────────────────
 # Schemas (inputs)
 # ──────────────────────────────────────────────────────────────────────────────
-
 class DiscordConfigIn(BaseModel):
     webhook_url: Optional[HttpUrl] = None
     channel_id: Optional[str] = None
     feed_enabled: Optional[bool] = None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
+async def _count_admins(db: AsyncSession) -> int:
+    q = select(func.count()).select_from(User).where(
+        func.lower(func.coalesce(User.role, "")) == "admin"
+    )
+    return int((await db.execute(q)).scalar_one())
+
+
+def _parse_uuid_maybe(value) -> Optional[UUID]:
+    try:
+        return UUID(str(value))
+    except Exception:
+        return None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -46,7 +63,8 @@ async def admin_me(db: AsyncSession = Depends(get_db), admin=Depends(admin_requi
     Minimal endpoint so the frontend can quickly confirm admin status.
     Returns email & id from DB for the authenticated admin.
     """
-    user = await db.get(User, UUID(str(admin.sub)))
+    uid = _parse_uuid_maybe(admin.sub)
+    user = await db.get(User, uid) if uid else None
     return {
         "is_admin": True,
         "user_id": str(admin.sub),
@@ -75,7 +93,6 @@ async def get_all_users(
     if search:
         like = f"%{search}%"
         stmt = stmt.where((User.email.ilike(like)) | (User.username.ilike(like)))
-    # Prefer newest first when possible
     try:
         stmt = stmt.order_by(User.created_at.desc())
     except Exception:
@@ -95,7 +112,7 @@ async def promote_user(
 ):
     """
     Promote a user to admin and normalize flags (active/verified).
-    Protects against self-promotion (pointless) and 404s cleanly.
+    Protects against self-promotion (pointless), no-ops if already admin.
     """
     if str(admin.sub) == str(user_id):
         raise HTTPException(400, "You’re already an admin.")
@@ -103,8 +120,10 @@ async def promote_user(
     if not user:
         raise HTTPException(404, "User not found")
 
+    if (user.role or "").lower() == "admin":
+        return {"status": "ok", "message": f"User {user_id} is already admin."}
+
     user.role = "admin"
-    # Normalize flags so promoted user is usable immediately
     if hasattr(user, "is_verified"):
         user.is_verified = True
     if hasattr(user, "is_active"):
@@ -122,13 +141,17 @@ async def demote_user(
     admin=Depends(admin_required),
 ):
     """
-    Demote an admin back to user. Blocks self-demotion to avoid lockout foot-guns.
+    Demote an admin back to user. Blocks self-demotion and prevents removing the last admin.
     """
     if str(admin.sub) == str(user_id):
         raise HTTPException(400, "You can’t demote yourself.")
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")
+
+    if (user.role or "").lower() == "admin":
+        if await _count_admins(db) <= 1:
+            raise HTTPException(400, "Cannot demote the last remaining admin.")
 
     user.role = "user"
     await log_action(admin.sub, "demote_user", str(user_id), db)
@@ -143,7 +166,7 @@ async def delete_user(
     admin=Depends(admin_required),
 ):
     """
-    Delete a user. Blocks self-delete to avoid accidental lockout.
+    Delete a user. Blocks self-delete and prevents deleting the last admin.
     """
     if str(admin.sub) == str(user_id):
         raise HTTPException(400, "Deleting yourself would be… suboptimal.")
@@ -151,25 +174,14 @@ async def delete_user(
     if not user:
         raise HTTPException(404, "User not found")
 
+    if (user.role or "").lower() == "admin":
+        if await _count_admins(db) <= 1:
+            raise HTTPException(400, "Cannot delete the last remaining admin.")
+
     await db.delete(user)
     await log_action(admin.sub, "delete_user", str(user_id), db)
     await db.commit()
     return {"status": "ok", "message": f"User {user_id} deleted."}
-
-
-@router.post("/users/{user_id}/reset-password")
-async def force_password_reset(
-    user_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(admin_required),
-):
-    """
-    Placeholder for a real reset flow (email token, expiry, etc).
-    Logging wired for audit; actual token/email handled by the auth service.
-    """
-    # TODO: integrate with your auth/email service to issue a reset token
-    await log_action(admin.sub, "force_password_reset", str(user_id), db)
-    return {"status": "noop", "message": "Password reset flow handled by frontend/auth service."}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -184,22 +196,21 @@ async def view_user_uploads(
     offset: int = Query(0, ge=0),
 ):
     """
-    Paginated list of a user's model uploads/metadata.
+    Paginated list of a user's model uploads with metadata preloaded.
+    NOTE: ModelMetadata has no user_id; filter by ModelUpload.user_id.
     """
     stmt = (
-        select(ModelMetadata)
-        .where(ModelMetadata.user_id == user_id)
+        select(ModelUpload)
+        .where(ModelUpload.user_id == user_id)
+        .options(selectinload(ModelUpload.metadata_entries))
+        .order_by(ModelUpload.uploaded_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    # Prefer newest first if column exists
-    try:
-        stmt = stmt.order_by(ModelMetadata.created_at.desc())
-    except Exception:
-        pass
-
     result = await db.execute(stmt)
-    return result.scalars().all()
+    # unique() avoids duplicates when using eager loaders
+    uploads = result.scalars().unique().all()
+    return uploads
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -220,16 +231,20 @@ async def update_discord_config(
     Validate & update the in-memory Discord config.
     For production, persist to DB and cache (this keeps current behavior).
     """
-    # Validate webhook host is Discord
+    # Validate webhook host is Discord and enforce https
     if payload.webhook_url is not None:
-        parsed = urlparse(str(payload.webhook_url))
+        url_str = str(payload.webhook_url).strip()
+        parsed = urlparse(url_str)
         host = (parsed.hostname or "").lower()
+        scheme = (parsed.scheme or "").lower()
+        if scheme != "https":
+            raise HTTPException(status_code=422, detail="webhook_url must use https")
         if not (host.endswith("discord.com") or host.endswith("discordapp.com")):
             raise HTTPException(status_code=422, detail="webhook_url must be a Discord URL")
-        discord_config["webhook_url"] = str(payload.webhook_url)
+        discord_config["webhook_url"] = url_str
 
     if payload.channel_id is not None:
-        discord_config["channel_id"] = payload.channel_id
+        discord_config["channel_id"] = payload.channel_id.strip()
 
     if payload.feed_enabled is not None:
         discord_config["feed_enabled"] = bool(payload.feed_enabled)

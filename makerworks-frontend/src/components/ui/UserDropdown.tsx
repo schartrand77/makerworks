@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+// src/components/nav/UserDropdown.tsx
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useTheme } from '@/hooks/useTheme'
@@ -16,15 +17,28 @@ const UserDropdown = ({ user }: Props) => {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
-  const { logout } = useAuthStore()
   const { theme, setTheme } = useTheme()
   const isDark = theme === 'dark'
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+
+  // ✅ Trust the auth store as source of truth
+  const { user: storeUser, fetchUser, resolved, logout, isAdmin: isAdminStore } = useAuthStore() as any
+
+  // On first mount, ensure we have /auth/me loaded (cookie sessions may have no token)
+  useEffect(() => {
+    if (!resolved) {
+      fetchUser().catch(() => {
+        /* swallow; UI will show guest */
+      })
+    }
+  }, [resolved, fetchUser])
 
   const handleSignOut = async () => {
     if (loading) return
     setLoading(true)
     try {
-      const res = await axiosInstance.post('/auth/signout')
+      // FIX: correct API prefix; axios is already withCredentials=true
+      const res = await axiosInstance.post('/api/v1/auth/signout')
       if (res.status === 200) {
         toast.success('✅ Signed out successfully')
       } else {
@@ -45,53 +59,78 @@ const UserDropdown = ({ user }: Props) => {
     setOpen(false)
   }
 
-  const toggleTheme = () => {
-    setTheme(isDark ? 'light' : 'dark')
-  }
+  const toggleTheme = () => setTheme(isDark ? 'light' : 'dark')
 
-  // Normalize + fallbacks for display
-  const resolvedUser: UserProfile = {
-    username: user.username || 'Guest',
-    email: user.email || 'guest@example.com',
-    avatar_url: user.avatar_url || (user as any).thumbnail_url || '/default-avatar.png',
-    role: user.role || 'user',
-  }
+  // 🧹 Only use localStorage for display niceties (never for auth/roles)
+  const localUser = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('mw_user')
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  }, [])
+
+  // Merge candidates for display (store > prop > local) — purely cosmetic
+  const displayUser: UserProfile = useMemo(() => {
+    const u = (storeUser as any) ?? (user as any) ?? localUser ?? {}
+    return {
+      username: u.username || 'Guest',
+      email: u.email || 'guest@example.com',
+      avatar_url: u.avatar_url || u.thumbnail_url || '/default-avatar.png',
+      role: u.role || 'user',
+    }
+  }, [storeUser, user, localUser])
 
   const avatarSrc = useMemo(() => {
     return (
-      getAbsoluteUrl(resolvedUser.avatar_url) ||
+      getAbsoluteUrl(displayUser.avatar_url) ||
       // @ts-ignore: some backends use thumbnail_url
-      getAbsoluteUrl((resolvedUser as any).thumbnail_url) ||
+      getAbsoluteUrl((displayUser as any).thumbnail_url) ||
       '/default-avatar.png'
     )
-  }, [resolvedUser.avatar_url])
+  }, [displayUser.avatar_url])
 
-  // 🔐 Robust admin detection
+  // 🔒 Single source of truth for admin: the store (which reads /auth/me)
   const isAdmin = useMemo(() => {
-    const roleStr = String((user as any)?.role ?? '').toLowerCase()
-    const roles = Array.isArray((user as any)?.roles)
-      ? (user as any).roles.map((r: any) => String(r).toLowerCase())
-      : []
-    const perms = Array.isArray((user as any)?.permissions)
-      ? (user as any).permissions.map((p: any) => String(p).toLowerCase())
-      : []
-    return (
-      (user as any)?.is_admin === true ||
-      roleStr === 'admin' ||
-      roles.includes('admin') ||
-      perms.includes('admin')
-    )
-  }, [user])
+    try {
+      return Boolean(isAdminStore && isAdminStore())
+    } catch {
+      return false
+    }
+  }, [isAdminStore, storeUser])
+
+  // close popover on outside click / ESC
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!open) return
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
 
   return (
-    <div className="relative">
+    <div className="relative" ref={popoverRef}>
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
         className="rounded-full overflow-hidden border border-white/20 w-10 h-10 bg-white/10 backdrop-blur shadow"
+        title={isAdmin ? 'Admin' : 'User'}
       >
         <img
           src={avatarSrc}
-          alt={resolvedUser.username}
+          alt={displayUser.username}
           className="w-full h-full object-cover"
           onError={(e) => {
             if (e.currentTarget.src !== '/default-avatar.png') {
@@ -103,14 +142,17 @@ const UserDropdown = ({ user }: Props) => {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-56 bg-white/80 dark:bg-black/80 backdrop-blur-md rounded-lg shadow-lg z-50 p-2 space-y-2">
+        <div
+          role="menu"
+          className="absolute right-0 mt-2 w-56 bg-white/80 dark:bg-black/80 backdrop-blur-md rounded-lg shadow-lg z-50 p-2 space-y-2"
+        >
           <div className="px-4 py-2 text-sm text-gray-800 dark:text-gray-200">
-            <div className="font-medium">{resolvedUser.username}</div>
+            <div className="font-medium">{displayUser.username}</div>
             <div
               className="text-xs text-gray-500 truncate max-w-[12rem]"
-              title={resolvedUser.email}
+              title={displayUser.email}
             >
-              {resolvedUser.email}
+              {displayUser.email}
             </div>
           </div>
 
@@ -121,6 +163,7 @@ const UserDropdown = ({ user }: Props) => {
             <button
               onClick={toggleTheme}
               className="w-12 h-6 rounded-full p-0.5 flex items-center"
+              aria-label="Toggle theme"
             >
               <span
                 className="w-5 h-5 rounded-full bg-white shadow transform transition-transform duration-300"
@@ -142,6 +185,7 @@ const UserDropdown = ({ user }: Props) => {
           {isAdmin && (
             <button
               onClick={() => handleGoTo('/admin')}
+              data-testid="admin-link"
               className="w-full text-center py-2 px-4 text-sm rounded-full backdrop-blur bg-red-500/20 dark:bg-red-700/30 border border-red-500/30 dark:border-red-700/40 text-red-800 dark:text-red-200 shadow hover:bg-red-500/30 dark:hover:bg-red-700/50 hover:shadow-md transition"
             >
               Admin Panel

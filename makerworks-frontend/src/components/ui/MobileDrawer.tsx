@@ -10,6 +10,18 @@ interface MobileDrawerProps {
 export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
   const { user, isAdmin } = useUser()
 
+  // Be tolerant of different role shapes to avoid "I'm admin but UI says no"
+  const isAdminUser = React.useMemo(() => {
+    const role = (user as any)?.role
+    const roleStr = typeof role === 'string' ? role.toLowerCase() : String(role ?? '').toLowerCase()
+    return (
+      isAdmin === true ||
+      roleStr === 'admin' ||
+      (user as any)?.is_admin === true ||
+      (user as any)?.role_id === 1
+    )
+  }, [user, isAdmin])
+
   if (!open) return null
 
   const handleAuthClick = () => {
@@ -17,7 +29,6 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
       console.info('[MobileDrawer] Signing out...')
       useAuthStore.getState().logout()
       window.location.href = '/'
-      // no onClose — page is reloading
     } else {
       console.info('[MobileDrawer] Navigating to Sign In...')
       onClose()
@@ -32,12 +43,12 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
     >
       <div
         className="
-          backdrop-blur-xl 
-          bg-white/20 
-          dark:bg-zinc-900/20 
-          shadow-xl 
-          w-72 max-w-full p-4 
-          rounded-full 
+          backdrop-blur-xl
+          bg-white/20
+          dark:bg-zinc-900/20
+          shadow-xl
+          w-72 max-w-full p-4
+          rounded-full
           flex flex-col items-center space-y-3
           border border-white/20 dark:border-zinc-700/30
         "
@@ -60,9 +71,10 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
           Account Settings
         </a>
 
-        {isAdmin && (
+        {isAdminUser && (
           <a
             href="/admin"
+            data-testid="admin-link"
             className="
               w-full text-center py-2 px-4 text-sm rounded-full
               backdrop-blur
@@ -82,7 +94,7 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
         {user && (
           <div
             className="
-              mt-2 text-xs text-center text-gray-700 dark:text-zinc-300 
+              mt-2 text-xs text-center text-gray-700 dark:text-zinc-300
               truncate max-w-[180px] px-2
             "
             title={user.email}

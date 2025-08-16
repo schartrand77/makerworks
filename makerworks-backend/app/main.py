@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import sys
 import traceback
+import inspect
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Sequence
@@ -23,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 # ──────────────────────────────────────────────────────────────────────────────
 # stderr helper (avoid crashing on early logging)
@@ -98,7 +99,8 @@ try:
     try:
         from app.db.database import init_db
     except Exception:
-        init_db = lambda: None  # type: ignore
+        def init_db():  # type: ignore
+            return None
 
     # Routers: import modules, not router objects, so we can mount later
     from app.routes import (
@@ -113,11 +115,7 @@ try:
 
     from app.services.cache.redis_service import verify_redis_connection
 
-    # 👑 Admin seeder: prefer scheduler if available; fall back to ensure_admin_user
-    try:
-        from app.startup.admin_seed import schedule_admin_seed_on_startup  # type: ignore
-    except Exception:
-        schedule_admin_seed_on_startup = None  # type: ignore
+    # 👑 Admin seeder: import direct ensure_admin_user
     try:
         from app.startup.admin_seed import ensure_admin_user  # type: ignore
     except Exception:
@@ -149,6 +147,21 @@ except Exception:
     raise
 
 logger = logging.getLogger("uvicorn")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Small helper: call a fn whether it's sync or async
+# ──────────────────────────────────────────────────────────────────────────────
+async def _run_maybe_async(fn, *args, **kwargs):
+    try:
+        res = fn(*args, **kwargs)
+        if inspect.isawaitable(res):
+            return await res
+        return res
+    except TypeError:
+        # fn might already be a coroutine function
+        if inspect.iscoroutinefunction(fn):
+            return await fn(*args, **kwargs)  # type: ignore
+        raise
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CORS helpers (robust parsing, credential-safe)
@@ -284,20 +297,9 @@ def _active_db_dsn() -> Optional[str]:
 
 # ──────────────────────────────────────────────────────────────────────────────
 # App
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="MakerWorks API", version="1.0.0", description="MakerWorks backend API")
 app.router.redirect_slashes = True
-
-# If available, schedule admin seeding on the FastAPI startup hook.
-# We keep a flag to avoid double-running (since lifespan also calls ensure_admin_user()).
-_ADMIN_SEED_SCHEDULED = False
-if 'schedule_admin_seed_on_startup' in globals() and callable(schedule_admin_seed_on_startup):  # type: ignore[name-defined]
-    try:
-        schedule_admin_seed_on_startup(app)  # type: ignore[misc]
-        _ADMIN_SEED_SCHEDULED = True
-        logger.info("👑 Admin seeder scheduled via app.startup.admin_seed")
-    except Exception as _e:
-        logger.warning(f"⚠️ Failed to schedule admin seeder: {_e}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CORS FIRST (no regex when using credentials)
@@ -425,8 +427,63 @@ async def any_options(full_path: str, request: Request) -> Response:
     return Response(status_code=204, headers=headers)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Alembic helpers
+# Alembic + bootstrap helpers
 # ──────────────────────────────────────────────────────────────────────────────
+async def wait_for_db(timeout_sec: int = 45) -> bool:
+    """
+    Poll the DB until it's reachable or timeout. Returns True if reachable.
+    """
+    if not async_engine:
+        logger.warning("⚠️ Async engine not available; skipping DB wait.")
+        return False
+    deadline = time.monotonic() + timeout_sec
+    last_err: Optional[Exception] = None
+    while time.monotonic() < deadline:
+        try:
+            async with async_engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info("[bootstrap] DB is reachable.")
+            return True
+        except Exception as e:
+            last_err = e
+            await asyncio.sleep(1.0)
+    logger.warning("[bootstrap] DB not reachable after %ss: %s", timeout_sec, last_err)
+    return False
+
+def run_alembic_upgrade() -> bool:
+    """
+    Try to apply Alembic migrations. Returns True on success.
+    """
+    try:
+        cfg_path = Path(os.getenv("ALEMBIC_INI", "/app/alembic.ini"))
+        alembic_cfg = AlembicConfig(str(cfg_path))
+        if not alembic_cfg.get_main_option("script_location"):
+            alembic_cfg.set_main_option("script_location", "app/migrations")
+        alembic_command.upgrade(alembic_cfg, "head")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to apply Alembic migrations: {e}")
+        return False
+
+async def create_all_fallback() -> None:
+    """
+    Fallback: create tables directly from ORM metadata.
+    This keeps first-time installers unblocked if Alembic isn't configured.
+    """
+    try:
+        try:
+            from app.db.base import Base  # newer layout
+        except Exception:
+            from app.db.base_class import Base  # legacy layout
+        if not async_engine:
+            logger.warning("⚠️ No async engine; cannot run create_all fallback.")
+            return
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("[bootstrap] Base.metadata.create_all completed.")
+    except Exception as e2:
+        logger.exception("[bootstrap] Fallback create_all() failed: %s", e2)
+
 async def verify_alembic_revision() -> None:
     if not async_engine:
         logger.warning("⚠️ Async engine not available; skipping Alembic revision check.")
@@ -441,17 +498,6 @@ async def verify_alembic_revision() -> None:
                 logger.warning("⚠️ No Alembic revision found in DB.")
     except Exception as e:
         logger.warning(f"⚠️ Alembic revision check failed: {e}")
-
-def run_alembic_upgrade() -> None:
-    try:
-        cfg_path = Path(os.getenv("ALEMBIC_INI", "/app/alembic.ini"))
-        alembic_cfg = AlembicConfig(str(cfg_path))
-        if not alembic_cfg.get_main_option("script_location"):
-            alembic_cfg.set_main_option("script_location", "app/migrations")
-        alembic_command.upgrade(alembic_cfg, "head")
-    except Exception as e:
-        logger.error(f"❌ Failed to apply Alembic migrations: {e}")
-        raise
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Celery helpers (optional)
@@ -512,33 +558,46 @@ async def lifespan(_: _FastAPI):
         except Exception as _e:
             logger.warning(f"⚠️ Admin config log failed: {_e}")
 
-        try:
-            run_alembic_upgrade()
-            logger.info("✅ Alembic migrations applied at startup")
-        except Exception as e:
-            logger.warning(f"⚠️ Alembic migrations failed (continuing): {e}")
+        # 1) Ensure DB reachable (handles container startup races)
+        await wait_for_db()
 
+        # 2) Apply migrations; if that fails, fallback to create_all
+        upgraded = run_alembic_upgrade()
+        if upgraded:
+            logger.info("✅ Alembic migrations applied at startup")
+        else:
+            logger.warning("⚠️ Alembic failed — falling back to ORM create_all()")
+            await create_all_fallback()
+
+        # 3) Log current revision (best-effort)
         await verify_alembic_revision()
 
+        # 4) Verify Redis (non-fatal)
         try:
             await verify_redis_connection()
             logger.info("✅ Redis connection OK")
         except Exception as e:
             logger.error(f"❌ Redis connection failed: {e}")
 
+        # 5) Run any app-specific DB initialization
         try:
-            await init_db()
+            # works whether init_db is sync or async
+            await _run_maybe_async(init_db)
         except Exception as e:
             logger.warning(f"⚠️ init_db failed/skipped: {e}")
 
-        # Prefer scheduled startup hook; else fall back to direct call.
-        if not _ADMIN_SEED_SCHEDULED and ensure_admin_user is not None:
-            try:
-                await ensure_admin_user()  # type: ignore[misc]
-            except Exception as e:
-                logger.warning(f"⚠️ ensure_admin_user failed/skipped: {e}")
+        # 6) Ensure admin user exists (or rotate if forced) — ALWAYS call directly here.
+        try:
+            if ensure_admin_user is None:
+                logger.warning("⚠️ ensure_admin_user not available; skipping admin seed.")
+            else:
+                logger.info("[admin_seed] ensure_admin_user() starting…")
+                await ensure_admin_user()
+                logger.info("[admin_seed] ensure_admin_user() finished.")
+        except Exception as e:
+            logger.exception("[admin_seed] ensure_admin_user crashed: %s", e)
 
-        # Celery worker ping (non-fatal)
+        # 7) Celery worker ping (non-fatal)
         try:
             await verify_celery_workers()
         except Exception as e:
@@ -696,6 +755,8 @@ app.mount("/static", StaticFiles(directory=str(static_path), html=False, check_d
 # ──────────────────────────────────────────────────────────────────────────────
 # Minimal Celery-backed API for thumbnails (debug/ops)
 # ──────────────────────────────────────────────────────────────────────────────
+from pydantic import BaseModel, Field
+
 class ThumbnailJob(BaseModel):
   model_path: str = Field(..., description="Absolute path to STL/3MF on the server filesystem")
   model_id: str = Field(..., description="Model ID")

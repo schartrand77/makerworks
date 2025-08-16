@@ -48,3 +48,4 @@ createRoot(rootElement).render(
 );
 
 console.debug('[MakerWorks] ✅ App render initialized.');
+

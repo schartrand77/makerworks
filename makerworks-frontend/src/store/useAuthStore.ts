@@ -10,6 +10,8 @@ interface AuthState {
   token: string | null
   loading: boolean
   resolved: boolean
+  hadUser: boolean
+  lastAuthStatus: number | null
 
   setUser: (user: UserOut | null) => void
   setToken: (token: string | null) => void
@@ -22,16 +24,20 @@ interface AuthState {
   isAdmin: () => boolean
 }
 
-// NOTE: our axios instance should already have baseURL='/api/v1' and withCredentials enabled.
-// So we use **relative** paths here to avoid '/api/v1/api/v1/...'
-const API_ME = '/users/me'
-const API_SIGNOUT = '/auth/signout'
+// Real API (no trailing slashes)
+const API_ME = 'api/v1/auth/me'
+const API_SIGNOUT = 'api/v1/auth/signout'
 
-const initialState = (): Pick<AuthState, 'user' | 'token' | 'loading' | 'resolved'> => ({
+const initialState = (): Pick<
+  AuthState,
+  'user' | 'token' | 'loading' | 'resolved' | 'hadUser' | 'lastAuthStatus'
+> => ({
   user: null,
   token: null,
   loading: false,
   resolved: false,
+  hadUser: false,
+  lastAuthStatus: null,
 })
 
 export const useAuthStore = create<AuthState>()(
@@ -40,36 +46,39 @@ export const useAuthStore = create<AuthState>()(
       ...initialState(),
 
       setUser: (user) => {
+        // sticky avatar for components that read from localStorage
         if (user?.avatar_url) {
           localStorage.setItem('avatar_url', user.avatar_url)
         } else {
           localStorage.removeItem('avatar_url')
         }
-        set({ user })
+        set({
+          user,
+          hadUser: get().hadUser || Boolean(user),
+        })
       },
 
       setToken: (token) => {
-        if (token) {
-          localStorage.setItem('token', token)
-        } else {
-          localStorage.removeItem('token')
-        }
+        if (token) localStorage.setItem('token', token)
+        else localStorage.removeItem('token')
         set({ token })
       },
 
-      // token is optional because cookie-session backends won't return one
+      // token is optional (cookie sessions)
       setAuth: ({ user, token = null }) => {
-        if (token) {
-          localStorage.setItem('token', token)
-        } else {
-          localStorage.removeItem('token')
-        }
-        if (user?.avatar_url) {
-          localStorage.setItem('avatar_url', user.avatar_url)
-        } else {
-          localStorage.removeItem('avatar_url')
-        }
-        set({ user, token, resolved: true })
+        if (token) localStorage.setItem('token', token)
+        else localStorage.removeItem('token')
+
+        if (user?.avatar_url) localStorage.setItem('avatar_url', user.avatar_url)
+        else localStorage.removeItem('avatar_url')
+
+        set({
+          user,
+          token,
+          resolved: true,
+          hadUser: true,
+          lastAuthStatus: 200,
+        })
       },
 
       setResolved: (val) => set({ resolved: val }),
@@ -77,14 +86,13 @@ export const useAuthStore = create<AuthState>()(
       logout: async () => {
         set({ loading: true })
         try {
-          // Cookie session or bearer — axios instance sends credentials
-          await axios.post(API_SIGNOUT, {})
-          toast.info('👋 Signed out successfully.')
-        } catch (err) {
-          // not fatal; still clear local state
-          // eslint-disable-next-line no-console
-          console.error('[useAuthStore] signout error:', err)
-          toast.warning('⚠️ Could not fully sign out on server.')
+          // Best-effort; never throw. Treat common codes as "already signed out".
+          const res = await axios.post(API_SIGNOUT, null, {
+            validateStatus: (s) => (s >= 200 && s < 300) || (s >= 400 && s < 500),
+          })
+          set({ lastAuthStatus: res.status ?? 200 })
+        } catch {
+          // network? fine — we still clear client state
         } finally {
           set({
             user: null,
@@ -101,6 +109,7 @@ export const useAuthStore = create<AuthState>()(
             // eslint-disable-next-line no-console
             console.warn('[useAuthStore] Failed to clear storage:', err)
           }
+          toast.info('👋 Signed out.')
         }
       },
 
@@ -110,34 +119,66 @@ export const useAuthStore = create<AuthState>()(
 
         set({ loading: true })
         try {
-          // axios instance should already be withCredentials:true, but be explicit
-          const res = await axios.get<UserOut>(API_ME, { withCredentials: true })
-          const fetchedUser = res.data
+          const res = await axios.get<UserOut>(API_ME, {
+            withCredentials: true,
+            validateStatus: (s) =>
+              (s >= 200 && s < 300) || (s >= 400 && s < 500),
+          })
 
-          const savedAvatar = localStorage.getItem('avatar_url')
-          if (!fetchedUser.avatar_url && savedAvatar) {
-            fetchedUser.avatar_url = savedAvatar
-          } else if (fetchedUser.avatar_url) {
-            localStorage.setItem('avatar_url', fetchedUser.avatar_url)
+          set({ lastAuthStatus: res.status })
+
+          if (res.status === 200) {
+            const fetched = res.data
+            // Preserve cached avatar_url if backend omitted it
+            const savedAvatar = localStorage.getItem('avatar_url')
+            if (!fetched.avatar_url && savedAvatar) {
+              fetched.avatar_url = savedAvatar
+            } else if (fetched.avatar_url) {
+              localStorage.setItem('avatar_url', fetched.avatar_url)
+            }
+
+            set({
+              user: fetched,
+              loading: false,
+              resolved: true,
+              hadUser: true,
+            })
+            return fetched
           }
 
-          set({ user: fetchedUser, loading: false, resolved: true })
-          return fetchedUser
+          // Soft failures: 401/403/404/405/422 — do NOT nuke user unless forced
+          if ([401, 403, 404, 405, 422].includes(res.status)) {
+            if (force || !get().user) {
+              set({
+                user: null,
+                token: null,
+                loading: false,
+                resolved: true,
+              })
+            } else {
+              set({ loading: false, resolved: true })
+            }
+            return null
+          }
+
+          // Unexpected status: treat as error
+          throw new Error((res as any)?.data?.detail || 'Failed to fetch user')
         } catch (err: any) {
+          const code = err?.response?.status ?? -1
           // eslint-disable-next-line no-console
-          console.warn('[useAuthStore] Failed to fetch user:', err?.response?.status)
+          console.warn('[useAuthStore] Failed to fetch user:', code)
           set({
-            user: null,
-            token: null,
+            lastAuthStatus: code,
+            user: force ? null : get().user,
+            token: force ? null : get().token,
             loading: false,
-            resolved: true, // we *did* check — prevents redirect loops during load
+            resolved: true,
           })
           return null
         }
       },
 
       // Cookie sessions mean `user` can be truthy even if token is null.
-      // Don’t gate "authenticated" strictly on token presence.
       isAuthenticated: () => {
         const { token, user, resolved } = get()
         if (!resolved) return false
@@ -189,6 +230,7 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         user: state.user,
         token: state.token,
+        hadUser: state.hadUser,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {

@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+set -eux
+python3 .githooks/bump_version.py

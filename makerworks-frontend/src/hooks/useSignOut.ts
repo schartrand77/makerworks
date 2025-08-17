@@ -1,57 +1,46 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '@/store/useAuthStore';
-import axiosInstance from '@/api/axios';
-import { toast } from 'sonner';
+// src/hooks/useSignOut.ts
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuthStore } from '@/store/useAuthStore'
+import axiosInstance from '@/api/axios'
+import { toast } from 'sonner'
 
-/**
- * Handles user sign-out process:
- * - Invalidates backend session
- * - Clears local auth state
- * - Redirects to landing page
- * - Handles disabled state for button UX
- */
-export const useSignOut = () => {
-  const [disabled, setDisabled] = useState(false);
-  const logout = useAuthStore((s) => s.logout);
-  const navigate = useNavigate();
-
-  const signOut = async () => {
-    if (disabled) {
-      console.warn('[useSignOut] Sign-out already in progress — ignoring.');
-      return;
-    }
-
-    setDisabled(true);
-    console.info('[useSignOut] 🔒 Signing out...');
-
+/** Best-effort backend sign-out + local store cleanup. Never throws. */
+export async function signOut(): Promise<void> {
+  try {
+    await axiosInstance.post('api/v1/auth/signout', null, {
+      validateStatus: (s) => (s >= 200 && s < 300) || (s >= 400 && s < 500),
+      withCredentials: true,
+    })
+  } catch {
+    // network error? fine — still clear client state below
+  } finally {
     try {
-      await axiosInstance.post('/auth/signout').catch((err) => {
-        console.warn(
-          '[useSignOut] Backend sign-out failed (continuing anyway):',
-          err?.response?.data || err.message
-        );
-      });
-
-      try {
-        logout();
-        console.info('[useSignOut] ✅ Local session cleared.');
-        toast.success('Signed out successfully.');
-      } catch (logoutErr) {
-        console.error('[useSignOut] Failed to clear local session:', logoutErr);
-        toast.error('⚠️ Local sign-out issue. Please reload.');
-      }
-    } catch (err) {
-      console.error('[useSignOut] Unexpected sign-out error:', err);
-      toast.error('❌ Sign-out failed.');
-    } finally {
-      setDisabled(false);
-      navigate('/'); // Always return to home
+      await useAuthStore.getState().logout()
+    } catch {
+      // ignore
     }
-  };
+  }
+}
 
-  return {
-    disabled,
-    signOut,
-  };
-};
+/** Hook wrapper with disabled state + navigation. */
+export function useSignOut() {
+  const [disabled, setDisabled] = useState(false)
+  const navigate = useNavigate()
+
+  const doSignOut = async () => {
+    if (disabled) return
+    setDisabled(true)
+    try {
+      await signOut() // never throws
+      toast.success('Signed out.')
+    } finally {
+      setDisabled(false)
+      navigate('/auth/signin?signedout=1', { replace: true })
+    }
+  }
+
+  return { disabled, signOut: doSignOut }
+}
+
+export default useSignOut

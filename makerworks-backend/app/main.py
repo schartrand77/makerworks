@@ -102,7 +102,7 @@ try:
         def init_db():  # type: ignore
             return None
 
-    # Routers: import modules, not router objects, so we can mount later
+    # Routers: import modules (NOT aggregated router here)
     from app.routes import (
         admin, auth, avatar, cart, checkout, filaments, models,
         metrics, system, upload, users
@@ -797,19 +797,73 @@ def mount(router_module, prefix: str, tags: list[str]) -> None:
 if health_router:
     app.include_router(health_router)
 
-mount(auth, "/api/v1/auth", ["auth"])
-mount(users, "/api/v1/users", ["users"])
-mount(avatar, "/api/v1/avatar", ["avatar"])
-mount(system, "/api/v1/system", ["system"])
-mount(upload, "/api/v1", ["upload"])
-mount(filaments, "/api/v1/filaments", ["filaments"])
-mount(admin, "/api/v1/admin", ["admin"])
-mount(cart, "/api/v1/cart", ["cart"])
+# ⚠️ IMPORTANT: Mount specific prefixes BEFORE any broad “/api/v1” catch-all to avoid shadowing.
+# The upload router was previously mounted at "/api/v1" which could capture "/api/v1/filaments".
+# Reorder so specific routes win, then mount upload LAST (and isolate it under /api/v1/upload).
+
+mount(auth,     "/api/v1/auth",     ["auth"])
+mount(users,    "/api/v1/users",    ["users"])
+mount(avatar,   "/api/v1/avatar",   ["avatar"])
+mount(system,   "/api/v1/system",   ["system"])
+mount(filaments,"/api/v1/filaments",["filaments"])
+mount(admin,    "/api/v1/admin",    ["admin"])
+mount(cart,     "/api/v1/cart",     ["cart"])
 
 if getattr(settings, "stripe_secret_key", ""):
     mount(checkout, "/api/v1/checkout", ["checkout"])
 else:
     logger.warning("⚠️ STRIPE_SECRET_KEY is not set. Checkout routes not mounted.")
 
-mount(models, "/api/v1/models", ["models"])
-mount(metrics, "/metrics", ["metrics"])
+mount(models,   "/api/v1/models",   ["models"])
+mount(metrics,  "/metrics",         ["metrics"])
+
+# ⬇️ Mount upload LAST and isolate it so it can't shadow other /api/v1/* routes.
+UPLOAD_PREFIX = os.getenv("UPLOAD_API_PREFIX") or "/api/v1/upload"
+if UPLOAD_PREFIX.rstrip("/") == "/api/v1":
+    logger.warning("⚠️ UPLOAD_API_PREFIX is '/api/v1' which can shadow other routes; switching to '/api/v1/upload'.")
+    UPLOAD_PREFIX = "/api/v1/upload"
+mount(upload, UPLOAD_PREFIX, ["upload"])
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Route inventory & duplicate detector (dev aid)
+# ──────────────────────────────────────────────────────────────────────────────
+def _dump_routes_inventory() -> None:
+    from collections import defaultdict
+    seen = defaultdict(list)
+    for r in app.routes:
+        path = getattr(r, "path", None)
+        methods = sorted(list(getattr(r, "methods", set()) or []))
+        name = getattr(r, "name", "")
+        for m in (methods or ["_"]):
+            seen[(m, path)].append(name)
+
+    dups = []
+    for (m, p), names in seen.items():
+        if p and m != "HEAD" and len(names) > 1:
+            dups.append((m, p, names))
+
+    logger.info("🧭 Route count: %d", len(app.routes))
+    if dups:
+        logger.warning("🚨 Detected %d potentially duplicate method/path combos:", len(dups))
+        for m, p, names in dups[:50]:
+            logger.warning("   %s %s  ->  %s", m, p, ", ".join(names))
+    else:
+        logger.info("✅ No duplicate method/path combos detected.")
+
+# Log inventory at startup (non-fatal)
+try:
+    _dump_routes_inventory()
+except Exception as e:
+    logger.debug("route inventory failed: %s", e)
+
+# Optional endpoint to view routes in dev
+@app.get("/api/v1/_routes", include_in_schema=False)
+async def routes_debug():
+    items = []
+    for r in app.routes:
+        items.append({
+            "path": getattr(r, "path", None),
+            "name": getattr(r, "name", None),
+            "methods": sorted(list(getattr(r, "methods", set()) or [])),
+        })
+    return {"count": len(items), "routes": items}

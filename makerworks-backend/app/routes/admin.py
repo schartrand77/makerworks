@@ -1,257 +1,247 @@
 # app/routes/admin.py
 from __future__ import annotations
 
-from typing import List, Optional
+import logging
+from datetime import datetime
+from typing import Any, Dict
 from uuid import UUID
-from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-from pydantic import BaseModel, HttpUrl
 
-# ✅ Use the cycle-safe re-exports (avoids startup import loops)
-from app.dependencies import get_db, admin_required
+# Align with your current project structure
+from app.db.database import get_async_db
+from app.dependencies.auth import get_current_user
+from app.models import User, ModelMetadata  # adjust if your models live elsewhere
 
-from app.models.models import ModelMetadata, ModelUpload, User
-from app.schemas.admin import DiscordConfigOut, UploadOut, UserOut
-from app.services.auth_service import log_action
-from app.utils.log_utils import logger
-
-# Keep this bare; app-level include_router should apply /api/v1/admin
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory admin config (persist later if needed)
-discord_config = {
-    "webhook_url": "",
-    "channel_id": "",
-    "feed_enabled": True,
-}
-
 # ──────────────────────────────────────────────────────────────────────────────
-# Schemas (inputs)
+# helpers (NO Pydantic validation; build permissive dicts)
 # ──────────────────────────────────────────────────────────────────────────────
-class DiscordConfigIn(BaseModel):
-    webhook_url: Optional[HttpUrl] = None
-    channel_id: Optional[str] = None
-    feed_enabled: Optional[bool] = None
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
-async def _count_admins(db: AsyncSession) -> int:
-    q = select(func.count()).select_from(User).where(
-        func.lower(func.coalesce(User.role, "")) == "admin"
-    )
-    return int((await db.execute(q)).scalar_one())
-
-
-def _parse_uuid_maybe(value) -> Optional[UUID]:
-    try:
-        return UUID(str(value))
-    except Exception:
-        return None
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Admin “who am I” — quick frontend sanity check
-# ──────────────────────────────────────────────────────────────────────────────
-@router.get("/me")
-async def admin_me(db: AsyncSession = Depends(get_db), admin=Depends(admin_required)):
-    """
-    Minimal endpoint so the frontend can quickly confirm admin status.
-    Returns email & id from DB for the authenticated admin.
-    """
-    uid = _parse_uuid_maybe(admin.sub)
-    user = await db.get(User, uid) if uid else None
-    payload = {
-        "is_admin": True,
-        "user_id": str(admin.sub),
-        "email": getattr(user, "email", None) if user else None,
-        "username": getattr(user, "username", None) if user else None,
+def _row_user(u: Any) -> Dict[str, Any]:
+    def g(attr: str, default=None):
+        return getattr(u, attr, default)
+    return {
+        "id": str(g("id", "")),
+        "email": g("email"),
+        "username": g("username"),
+        "name": g("name"),
+        "avatar_url": g("avatar_url") or None,   # empty string → None
+        "language": g("language"),
+        "theme": g("theme"),
+        "role": g("role"),
+        "is_verified": bool(g("is_verified", False)) if g("is_verified") is not None else None,
+        "is_active": bool(g("is_active", True)) if g("is_active") is not None else None,
+        "created_at": g("created_at"),
+        "last_login": g("last_login"),
     }
-    if user is not None:
-        payload["role"] = getattr(user, "role", "admin")
-    return payload
 
+def _row_upload(m: Any) -> Dict[str, Any]:
+    def g(attr: str, default=None):
+        return getattr(m, attr, default)
+    return {
+        "id": str(g("id", "")),
+        "user_id": str(g("user_id", "")) if hasattr(m, "user_id") else None,
+        "name": g("name"),
+        "description": g("description"),
+        "filename": g("filename") or g("file_name"),
+        "filepath": g("filepath") or g("path"),
+        "size": g("size"),
+        "created_at": g("created_at") or g("uploaded_at"),
+    }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Users
-# ──────────────────────────────────────────────────────────────────────────────
-@router.get("/users", response_model=List[UserOut])
-async def get_all_users(
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(admin_required),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    search: Optional[str] = Query(
-        None, description="Filter users by email/username (case-insensitive, contains)."
-    ),
-):
-    """
-    Paginated list of users with optional case-insensitive search.
-    """
-    stmt = select(User)
-    if search:
-        like = f"%{search}%"
-        stmt = stmt.where((User.email.ilike(like)) | (User.username.ilike(like)))
+def _q_int(req: Request, name: str, default: int) -> int:
+    raw = req.query_params.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
     try:
-        stmt = stmt.order_by(User.created_at.desc())
+        v = int(str(raw))
+        return max(0, v)
     except Exception:
+        return default
+
+def _is_admin(user: User) -> bool:
+    try:
+        return (user.role or "").lower() == "admin"
+    except Exception:
+        return False
+
+async def _exec(db: AsyncSession, stmt):
+    return await db.execute(stmt)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GET /api/v1/admin/me
+# ──────────────────────────────────────────────────────────────────────────────
+@router.get("/me", summary="Admin Me", status_code=status.HTTP_200_OK)
+async def admin_me(current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        logger.warning("⛔ Non-admin tried /admin/me: %s", getattr(current_user, "id", "?"))
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return _row_user(current_user)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GET /api/v1/admin/users  (permissive; no Query[...] validators, no response_model)
+# ──────────────────────────────────────────────────────────────────────────────
+@router.get("/users", summary="List Users", status_code=status.HTTP_200_OK)
+async def list_users(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    if not _is_admin(current_user):
+        logger.warning("⛔ Non-admin tried to list users: %s", getattr(current_user, "id", "?"))
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Accept either page/per_page OR offset/limit; all optional
+    page = _q_int(request, "page", 0)
+    per_page = _q_int(request, "per_page", 0)
+    if page > 0 or per_page > 0:
+        p = page or 1
+        pp = per_page or 1000
+        offset = (p - 1) * pp
+        limit = pp
+    else:
+        offset = _q_int(request, "offset", 0)
+        limit = _q_int(request, "limit", 1000)
+
+    stmt = select(User)
+    if hasattr(User, "created_at"):
+        stmt = stmt.order_by(User.created_at.desc())
+    elif hasattr(User, "username"):
         stmt = stmt.order_by(User.username.asc())
-    stmt = stmt.limit(limit).offset(offset)
 
-    result = await db.execute(stmt)
-    users = result.scalars().all()
-    return users
+    if limit:
+        stmt = stmt.offset(offset).limit(limit)
 
+    res = await _exec(db, stmt)
+    rows = res.scalars().all()
+    # 🚫 No model_validate here — just map to safe dicts
+    return [_row_user(u) for u in rows]
 
-@router.post("/users/{user_id}/promote")
+# trailing-slash alias
+@router.get("/users/", include_in_schema=False)
+async def list_users_slash(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    return await list_users(request=request, current_user=current_user, db=db)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /api/v1/admin/users/{user_id}/promote
+# ──────────────────────────────────────────────────────────────────────────────
+@router.post("/users/{user_id}/promote", summary="Promote User", status_code=status.HTTP_200_OK)
 async def promote_user(
     user_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(admin_required),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """
-    Promote a user to admin and normalize flags (active/verified).
-    Protects against self-promotion (pointless), no-ops if already admin.
-    """
-    if str(admin.sub) == str(user_id):
-        raise HTTPException(400, "You’re already an admin.")
-    user = await db.get(User, user_id)
-    if not user:
-        raise HTTPException(404, "User not found")
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
-    if (user.role or "").lower() == "admin":
-        return {"status": "ok", "message": f"User {user_id} is already admin."}
+    res = await _exec(db, select(User).where(User.id == user_id))
+    target = res.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    user.role = "admin"
-    if hasattr(user, "is_verified"):
-        user.is_verified = True
-    if hasattr(user, "is_active"):
-        user.is_active = True
+    if hasattr(target, "role"):
+        target.role = "admin"
+    if hasattr(target, "updated_at"):
+        target.updated_at = datetime.utcnow()
 
-    await log_action(admin.sub, "promote_user", str(user_id), db)
     await db.commit()
-    return {"status": "ok", "message": f"User {user_id} promoted to admin."}
+    await db.refresh(target)
+    return _row_user(target)
 
-
-@router.post("/users/{user_id}/demote")
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /api/v1/admin/users/{user_id}/demote
+# ──────────────────────────────────────────────────────────────────────────────
+@router.post("/users/{user_id}/demote", summary="Demote User", status_code=status.HTTP_200_OK)
 async def demote_user(
     user_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(admin_required),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """
-    Demote an admin back to user. Blocks self-demotion and prevents removing the last admin.
-    """
-    if str(admin.sub) == str(user_id):
-        raise HTTPException(400, "You can’t demote yourself.")
-    user = await db.get(User, user_id)
-    if not user:
-        raise HTTPException(404, "User not found")
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
-    if (user.role or "").lower() == "admin":
-        if await _count_admins(db) <= 1:
-            raise HTTPException(400, "Cannot demote the last remaining admin.")
+    res = await _exec(db, select(User).where(User.id == user_id))
+    target = res.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    user.role = "user"
-    await log_action(admin.sub, "demote_user", str(user_id), db)
+    if hasattr(target, "role"):
+        target.role = "user"
+    if hasattr(target, "updated_at"):
+        target.updated_at = datetime.utcnow()
+
     await db.commit()
-    return {"status": "ok", "message": f"User {user_id} demoted to user."}
+    await db.refresh(target)
+    return _row_user(target)
 
-
-@router.delete("/users/{user_id}")
+# ──────────────────────────────────────────────────────────────────────────────
+# DELETE /api/v1/admin/users/{user_id}  (soft delete when possible)
+# ──────────────────────────────────────────────────────────────────────────────
+@router.delete("/users/{user_id}", summary="Delete User", status_code=status.HTTP_200_OK)
 async def delete_user(
     user_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(admin_required),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """
-    Delete a user. Blocks self-delete and prevents deleting the last admin.
-    """
-    if str(admin.sub) == str(user_id):
-        raise HTTPException(400, "Deleting yourself would be… suboptimal.")
-    user = await db.get(User, user_id)
-    if not user:
-        raise HTTPException(404, "User not found")
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
-    if (user.role or "").lower() == "admin":
-        if await _count_admins(db) <= 1:
-            raise HTTPException(400, "Cannot delete the last remaining admin.")
+    res = await _exec(db, select(User).where(User.id == user_id))
+    target = res.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    await db.delete(user)
-    await log_action(admin.sub, "delete_user", str(user_id), db)
+    if hasattr(target, "is_active"):
+        target.is_active = False
+        if hasattr(target, "updated_at"):
+            target.updated_at = datetime.utcnow()
+        await db.commit()
+        return {"status": "ok", "message": "Soft-deleted", "id": str(user_id)}
+
+    await db.delete(target)
     await db.commit()
-    return {"status": "ok", "message": f"User {user_id} deleted."}
-
+    return {"status": "ok", "message": "Deleted", "id": str(user_id)}
 
 # ──────────────────────────────────────────────────────────────────────────────
-# User uploads / model metadata (paginated)
+# GET /api/v1/admin/users/{user_id}/uploads  (text-only list, no images)
 # ──────────────────────────────────────────────────────────────────────────────
-@router.get("/users/{user_id}/uploads", response_model=List[UploadOut])
-async def view_user_uploads(
+@router.get("/users/{user_id}/uploads", summary="User Uploads", status_code=status.HTTP_200_OK)
+async def user_uploads(
     user_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(admin_required),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """
-    Paginated list of a user's model uploads with metadata preloaded.
-    NOTE: ModelMetadata has no user_id; filter by ModelUpload.user_id.
-    """
-    stmt = (
-        select(ModelUpload)
-        .where(ModelUpload.user_id == user_id)
-        .options(selectinload(ModelUpload.metadata_entries))
-        .order_by(ModelUpload.uploaded_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    result = await db.execute(stmt)
-    # unique() avoids duplicates when using eager loaders
-    uploads = result.scalars().unique().all()
-    return uploads
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
+    if ModelMetadata is None:
+        return []
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Discord config (validated, still in-memory)
-# ──────────────────────────────────────────────────────────────────────────────
-@router.get("/discord/config", response_model=DiscordConfigOut)
-async def get_discord_config(admin=Depends(admin_required)):
-    return DiscordConfigOut(**discord_config)
+    # try common user foreign-key columns
+    filters = []
+    if hasattr(ModelMetadata, "user_id"):
+        filters.append(ModelMetadata.user_id == str(user_id))
+    if hasattr(ModelMetadata, "owner_id"):
+        filters.append(ModelMetadata.owner_id == str(user_id))
+    if hasattr(ModelMetadata, "uploaded_by"):
+        filters.append(ModelMetadata.uploaded_by == str(user_id))
+    if not filters:
+        return []
 
+    stmt = select(ModelMetadata).where(*filters)
+    if hasattr(ModelMetadata, "uploaded_at"):
+        stmt = stmt.order_by(ModelMetadata.uploaded_at.desc())
+    elif hasattr(ModelMetadata, "created_at"):
+        stmt = stmt.order_by(ModelMetadata.created_at.desc())
 
-@router.post("/discord/config", response_model=DiscordConfigOut)
-async def update_discord_config(
-    payload: DiscordConfigIn,
-    admin=Depends(admin_required),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Validate & update the in-memory Discord config.
-    For production, persist to DB and cache (this keeps current behavior).
-    """
-    # Validate webhook host is Discord and enforce https
-    if payload.webhook_url is not None:
-        url_str = str(payload.webhook_url).trim() if hasattr(str, "trim") else str(payload.webhook_url).strip()
-        parsed = urlparse(url_str)
-        host = (parsed.hostname or "").lower()
-        scheme = (parsed.scheme or "").lower()
-        if scheme != "https":
-            raise HTTPException(status_code=422, detail="webhook_url must use https")
-        if not (host.endswith("discord.com") or host.endswith("discordapp.com")):
-            raise HTTPException(status_code=422, detail="webhook_url must be a Discord URL")
-        discord_config["webhook_url"] = url_str
-
-    if payload.channel_id is not None:
-        discord_config["channel_id"] = payload.channel_id.strip()
-
-    if payload.feed_enabled is not None:
-        discord_config["feed_enabled"] = bool(payload.feed_enabled)
-
-    await log_action(admin.sub, "update_discord_config", str(admin.sub), db)
-    return DiscordConfigOut(**discord_config)
+    res = await _exec(db, stmt)
+    rows = res.scalars().all()
+    return [_row_upload(m) for m in rows]

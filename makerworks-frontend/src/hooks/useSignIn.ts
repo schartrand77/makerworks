@@ -5,6 +5,14 @@ import { toast } from 'sonner'
 import axios from '@/api/axios'
 import { useAuthStore } from '@/store/useAuthStore'
 
+/**
+ * The backend supports cookie-based auth and (optionally) token+user.
+ * Keep this hook compatible with both, and try the payload shape the API expects:
+ *   { username_or_email, password }
+ * We still gracefully fall back to older shapes (identifier/email/username or OAuth2 form)
+ * so we don’t break existing users.
+ */
+
 interface SignInResponse {
   token?: string
   user?: {
@@ -35,7 +43,7 @@ function stringifyError(err: any): string {
   if (typeof d?.detail === 'string') return d.detail
   const fields = parse422Fields(err)
   if (fields.length) return `Invalid or missing field: ${fields[0]}`
-  if (r?.status === 401) return 'Invalid credentials'
+  if (r?.status === 401) return 'Invalid email/username or password.'
   return err?.message ? String(err.message) : 'Sign-in failed'
 }
 
@@ -45,74 +53,111 @@ export const useSignIn = () => {
 
   const signIn = async (emailOrUsername: string, password: string) => {
     setLoading(true)
-    const ident = emailOrUsername.trim()
+    const ident = (emailOrUsername ?? '').trim()
+    const pass = (password ?? '').trim()
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ident)
 
-    // We’ll adapt based on server feedback; keep track to avoid loops
+    if (!ident || !pass) {
+      toast.error('Provide email/username and password.')
+      setLoading(false)
+      return
+    }
+
+    // Track attempts to avoid loops
     const tried = new Set<string>()
 
     try {
       const { setAuth, fetchUser } = useAuthStore.getState()
 
-      // Helper do-post
+      // Helpers
       const doJson = (body: Record<string, string>) =>
-        axios.post<SignInResponse>('/auth/signin', body, { withCredentials: true })
+        axios.post<SignInResponse>('/auth/signin', body, {
+          withCredentials: true,
+        })
+
       const doForm = (params: URLSearchParams) =>
         axios.post<SignInResponse>('/auth/signin', params, {
           withCredentials: true,
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         })
 
-      // 1) First attempt: JSON { email, password } (most common)
-      let res
-      try {
-        tried.add('email')
-        res = await doJson({ email: ident, password })
-      } catch (e: any) {
-        if (e?.response?.status !== 422) throw e
-        // 2) Read which field(s) the backend actually wants
-        const fields = parse422Fields(e)
+      let res:
+        | {
+            status: number
+            data: SignInResponse
+          }
+        | undefined
 
-        // Prefer exact hint
-        if (fields.includes('identifier') && !tried.has('identifier')) {
+      // 🔑 1) Preferred: { username_or_email, password } (admin & normal users)
+      try {
+        tried.add('username_or_email')
+        res = await doJson({ username_or_email: ident, password: pass })
+      } catch (e1: any) {
+        // If payload shape was wrong, we’ll adapt; otherwise rethrow
+        if (e1?.response?.status !== 422) throw e1
+
+        // 2) Inspect 422 to see what the API wants
+        const fields = parse422Fields(e1)
+
+        // Try { identifier, password }
+        if (!res && fields.includes('identifier') && !tried.has('identifier')) {
           tried.add('identifier')
           try {
-            res = await doJson({ identifier: ident, password })
+            res = await doJson({ identifier: ident, password: pass })
           } catch (e2: any) {
             if (e2?.response?.status !== 422) throw e2
-            // fallthrough to next
           }
         }
 
+        // Try { email_or_username, password } (alternate naming we’ve seen)
         if (!res && fields.includes('email_or_username') && !tried.has('email_or_username')) {
           tried.add('email_or_username')
           try {
-            res = await doJson({ email_or_username: ident, password })
+            res = await doJson({ email_or_username: ident, password: pass })
           } catch (e3: any) {
             if (e3?.response?.status !== 422) throw e3
           }
         }
 
-        // If still no luck or hint says "username", try OAuth2 form
-        if (!res && (fields.includes('username') || fields.length === 0) && !tried.has('form')) {
-          tried.add('form')
+        // Try classic shapes explicitly if hints weren’t helpful
+        if (!res && isEmail && !tried.has('email')) {
+          tried.add('email')
           try {
-            const form = new URLSearchParams({
-              username: ident,
-              password,
-              grant_type: 'password', // some deps expect this present
-              scope: '',
-            })
-            res = await doForm(form)
+            res = await doJson({ email: ident, password: pass })
           } catch (e4: any) {
             if (e4?.response?.status !== 422) throw e4
           }
         }
 
-        // If they typed a username (not an email), try identifier-path proactively
-        if (!res && !isEmail && !tried.has('identifier2')) {
+        if (!res && !isEmail && !tried.has('username')) {
+          tried.add('username')
+          try {
+            res = await doJson({ username: ident, password: pass })
+          } catch (e5: any) {
+            if (e5?.response?.status !== 422) throw e5
+          }
+        }
+
+        // 3) OAuth2 style form (some FastAPI templates support this)
+        if (!res && !tried.has('form')) {
+          tried.add('form')
+          try {
+            const form = new URLSearchParams({
+              username: ident,
+              password: pass,
+              grant_type: 'password',
+              scope: '',
+            })
+            res = await doForm(form)
+          } catch (e6: any) {
+            if (e6?.response?.status !== 422) throw e6
+          }
+        }
+
+        // 4) Last-ditch: try identifier again (covers username paths)
+        if (!res && !tried.has('identifier2')) {
           tried.add('identifier2')
-          res = await doJson({ identifier: ident, password })
+          res = await doJson({ identifier: ident, password: pass })
         }
       }
 
@@ -122,25 +167,25 @@ export const useSignIn = () => {
 
       const { token, user } = res.data || {}
 
-      // JWT-style
+      // JWT-style response
       if (token && user) {
         setAuth({ token, user })
       } else {
         // Cookie-session style: hydrate profile
         try {
-          await fetchUser(true)
+          await fetchUser(true) // force
         } catch {
           /* ignore */
         }
       }
 
-      // Navigate after slight delay to let store settle
       toast.success(`Welcome back, ${user?.username ?? ident}!`)
+      // Let state settle before routing
       await new Promise((r) => setTimeout(r, 50))
       navigate('/dashboard', { replace: true })
     } catch (err: any) {
       console.error('[useSignIn] Login failed:', err)
-      toast.error(stringifyError(err)) // always a string
+      toast.error(stringifyError(err))
     } finally {
       setLoading(false)
     }
@@ -148,3 +193,6 @@ export const useSignIn = () => {
 
   return { signIn, loading }
 }
+
+// Keep default export to avoid breaking imports that expect it.
+export default useSignIn

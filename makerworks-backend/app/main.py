@@ -758,9 +758,9 @@ app.mount("/static", StaticFiles(directory=str(static_path), html=False, check_d
 from pydantic import BaseModel, Field
 
 class ThumbnailJob(BaseModel):
-  model_path: str = Field(..., description="Absolute path to STL/3MF on the server filesystem")
-  model_id: str = Field(..., description="Model ID")
-  user_id: str = Field(..., description="User ID")
+    model_path: str = Field(..., description="Absolute path to STL/3MF on the server filesystem")
+    model_id: str = Field(..., description="Model ID")
+    user_id: str = Field(..., description="User ID")
 
 @app.post("/api/v1/thumbnail", include_in_schema=False)
 async def enqueue_thumbnail(job: ThumbnailJob):

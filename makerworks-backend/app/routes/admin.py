@@ -19,6 +19,7 @@ from app.schemas.admin import DiscordConfigOut, UploadOut, UserOut
 from app.services.auth_service import log_action
 from app.utils.log_utils import logger
 
+# Keep this bare; app-level include_router should apply /api/v1/admin
 router = APIRouter()
 
 # In-memory admin config (persist later if needed)
@@ -65,12 +66,15 @@ async def admin_me(db: AsyncSession = Depends(get_db), admin=Depends(admin_requi
     """
     uid = _parse_uuid_maybe(admin.sub)
     user = await db.get(User, uid) if uid else None
-    return {
+    payload = {
         "is_admin": True,
         "user_id": str(admin.sub),
         "email": getattr(user, "email", None) if user else None,
         "username": getattr(user, "username", None) if user else None,
     }
+    if user is not None:
+        payload["role"] = getattr(user, "role", "admin")
+    return payload
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -233,7 +237,7 @@ async def update_discord_config(
     """
     # Validate webhook host is Discord and enforce https
     if payload.webhook_url is not None:
-        url_str = str(payload.webhook_url).strip()
+        url_str = str(payload.webhook_url).trim() if hasattr(str, "trim") else str(payload.webhook_url).strip()
         parsed = urlparse(url_str)
         host = (parsed.hostname or "").lower()
         scheme = (parsed.scheme or "").lower()

@@ -13,6 +13,22 @@ type Props = {
   user: UserProfile
 }
 
+/** Ensure the avatar resolves correctly:
+ *  - absolute http(s) URL -> as-is
+ *  - '/uploads', '/avatar', '/api' -> backend origin via getAbsoluteUrl
+ *  - '/default-avatar.png' or anything else -> serve from frontend origin
+ */
+function resolveAvatarUrl(path?: string | null): string {
+  const p = (path || '').trim()
+  if (!p) return '/default-avatar.png'
+  if (/^https?:\/\//i.test(p)) return p
+  if (p === '/default-avatar.png' || /\/default-avatar\.png$/i.test(p)) return '/default-avatar.png'
+  if (p.startsWith('/uploads') || p.startsWith('/avatar') || p.startsWith('/api/')) {
+    return getAbsoluteUrl(p)
+  }
+  return p.startsWith('/') ? p : `/${p}`
+}
+
 const UserDropdown = ({ user }: Props) => {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -22,7 +38,13 @@ const UserDropdown = ({ user }: Props) => {
   const popoverRef = useRef<HTMLDivElement | null>(null)
 
   // ✅ Trust the auth store as source of truth
-  const { user: storeUser, fetchUser, resolved, logout, isAdmin: isAdminStore } = useAuthStore() as any
+  const {
+    user: storeUser,
+    fetchUser,
+    resolved,
+    logout,
+    isAdmin: isAdminStore,
+  } = useAuthStore() as any
 
   // On first mount, ensure we have /auth/me loaded (cookie sessions may have no token)
   useEffect(() => {
@@ -36,27 +58,31 @@ const UserDropdown = ({ user }: Props) => {
   const handleSignOut = async () => {
     if (loading) return
     setLoading(true)
+    setOpen(false)
     try {
-      // FIX: correct API prefix; axios is already withCredentials=true
-      const res = await axiosInstance.post('/api/v1/auth/signout')
-      if (res.status === 200) {
-        toast.success('✅ Signed out successfully')
+      // Best-effort signout; server may return 200 or a benign 401/405 etc.
+      const res = await axiosInstance.post('api/v1/auth/signout', null, {
+        validateStatus: (s) => (s >= 200 && s < 300) || (s >= 400 && s < 500),
+      })
+      if (res.status === 200 || res.status === 204) {
+        toast.success('Signed out.')
+      } else if ([401, 403, 404, 405, 422].includes(res.status)) {
+        // Treat as already signed out
       } else {
-        toast.warning(`⚠️ Signout: unexpected status ${res.status}`)
+        toast.message(`Signout: status ${res.status}`)
       }
-    } catch (err) {
-      console.error('[UserDropdown] signout error', err)
-      toast.error('⚠️ Signout failed on server. Cleared locally.')
+    } catch {
+      // Network? fine — we’ll still clear local state
     } finally {
-      logout()
+      await logout()
       setLoading(false)
-      navigate('/')
+      navigate('/auth/signin?signedout=1', { replace: true })
     }
   }
 
   const handleGoTo = (path: string) => {
-    navigate(path)
     setOpen(false)
+    navigate(path)
   }
 
   const toggleTheme = () => setTheme(isDark ? 'light' : 'dark')
@@ -82,14 +108,14 @@ const UserDropdown = ({ user }: Props) => {
     }
   }, [storeUser, user, localUser])
 
-  const avatarSrc = useMemo(() => {
-    return (
-      getAbsoluteUrl(displayUser.avatar_url) ||
+  const avatarSrc = useMemo(
+    () =>
+      resolveAvatarUrl(displayUser.avatar_url) ||
       // @ts-ignore: some backends use thumbnail_url
-      getAbsoluteUrl((displayUser as any).thumbnail_url) ||
-      '/default-avatar.png'
-    )
-  }, [displayUser.avatar_url])
+      resolveAvatarUrl((displayUser as any).thumbnail_url) ||
+      '/default-avatar.png',
+    [displayUser.avatar_url]
+  )
 
   // 🔒 Single source of truth for admin: the store (which reads /auth/me)
   const isAdmin = useMemo(() => {
@@ -133,7 +159,8 @@ const UserDropdown = ({ user }: Props) => {
           alt={displayUser.username}
           className="w-full h-full object-cover"
           onError={(e) => {
-            if (e.currentTarget.src !== '/default-avatar.png') {
+            // Final safety: never re-route default avatar through API
+            if (!e.currentTarget.src.endsWith('/default-avatar.png')) {
               e.currentTarget.onerror = null
               e.currentTarget.src = '/default-avatar.png'
             }

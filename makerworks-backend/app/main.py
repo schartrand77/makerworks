@@ -113,7 +113,7 @@ try:
     except Exception:
         health_router = None  # type: ignore
 
-    from app.services.cache.redis_service import verify_redis_connection
+    from app.services.redis_service import redis_lifespan
 
     # 👑 Admin seeder: import direct ensure_admin_user
     try:
@@ -572,12 +572,12 @@ async def lifespan(_: _FastAPI):
         # 3) Log current revision (best-effort)
         await verify_alembic_revision()
 
-        # 4) Verify Redis (non-fatal)
+        # 4) Redis startup tasks (non-fatal)
         try:
-            await verify_redis_connection()
-            logger.info("✅ Redis connection OK")
+            async for _ in redis_lifespan():
+                logger.info("✅ Redis startup tasks complete")
         except Exception as e:
-            logger.error(f"❌ Redis connection failed: {e}")
+            logger.error(f"❌ Redis startup tasks failed: {e}")
 
         # 5) Run any app-specific DB initialization
         try:

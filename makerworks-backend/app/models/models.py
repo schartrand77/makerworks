@@ -421,6 +421,14 @@ class ModelMetadata(Base):
 # Audit Log
 # =========================
 class AuditLog(Base):
+    """Generic audit trail entry.
+
+    We intentionally track the acting user's ID rather than a dedicated
+    admin identifier so the table can record both administrative and
+    non‑administrative events.  The helper in ``auth_service`` expects
+    these column names (``user_id`` and ``created_at``).
+    """
+
     __tablename__ = "audit_logs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

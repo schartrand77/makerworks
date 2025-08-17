@@ -167,12 +167,11 @@ def normalize_modelupload_paths(mapper, connection, target: ModelUpload):
         if not p.is_absolute():
             p = uploads_root / p
         try:
-            # store relative-to-root path (portable across hosts)
-            rel = p.relative_to(uploads_root).as_posix()
+            # Resolve to eliminate ".." and symlinks, then ensure within root
+            rel = p.resolve().relative_to(uploads_root).as_posix()
             return rel
-        except Exception:
-            logging.warning("⚠️ Path outside uploads root: %s (keeping as-is)", p)
-            return value
+        except Exception as exc:
+            raise ValueError(f"Path outside uploads root: {p}") from exc
 
     if target.file_path:
         target.file_path = normalize_path(target.file_path)

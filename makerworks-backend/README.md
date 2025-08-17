@@ -13,7 +13,9 @@ This is the FastAPI + Celery + PostgreSQL backend powering the MakerWorks 3D pri
 
 The repository ships with a `.env.example` file containing all the
 environment variables required to run the application. Copy it to `.env`
-and update the values for your environment.
+and update the values for your environment. For production deployments,
+**`SECRET_KEY`** and **`SESSION_SECRET`** must be set to non-default values or
+the application will raise an error on startup.
 
 Additional guidance on contributing new routes and features can be found in
 [docs/FUTURE_API_GUIDELINES.md](docs/FUTURE_API_GUIDELINES.md).

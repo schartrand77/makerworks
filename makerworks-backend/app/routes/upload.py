@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List  # ← added List
 
 from fastapi import (
     APIRouter,
@@ -54,12 +54,13 @@ def _ensure_dir_writable(path: Path):
 _ensure_dir_writable(UPLOAD_ROOT)
 _ensure_dir_writable(THUMB_ROOT)
 
-# Make paths visible to any subprocess/library
-os.environ.setdefault("UPLOAD_DIR", str(UPLOAD_ROOT))
-os.environ.setdefault("THUMBNAILS_DIR", str(THUMB_ROOT))
-
+# Model file policy
 ALLOWED_EXTS = {".stl", ".3mf"}
 MAX_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
+
+# PHOTOS: image policy
+ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}  # keep it sane
+MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB per image
 
 THUMBNAIL_SIZE    = int(os.getenv("THUMBNAIL_SIZE", "1024"))
 THUMBNAIL_BACKEND = os.getenv("THUMBNAIL_BACKEND", "auto")  # auto|pyrender|plotly
@@ -90,7 +91,6 @@ async def _make_thumbnail(model_path: Path, model_id: str) -> Path:
     ]
     log.info("[thumbnail] render: %s", " ".join(cmd))
 
-    # Run in a thread to avoid blocking the loop
     def _run():
         return subprocess.run(cmd, capture_output=True, text=True)
     proc = await run_in_threadpool(_run)
@@ -103,14 +103,13 @@ async def _make_thumbnail(model_path: Path, model_id: str) -> Path:
             return out_path
         raise HTTPException(status_code=500, detail="Thumbnail renderer failed.")
 
-    # Validate PNG signature + not tiny + Pillow verify
     try:
         with out_path.open("rb") as f:
             sig = f.read(8)
         if sig != _PNG_MAGIC:
             raise RuntimeError("bad PNG signature")
         size_bytes = out_path.stat().st_size
-        if size_bytes < 2048:  # a real thumb should be larger than our fallback
+        if size_bytes < 2048:
             raise RuntimeError(f"suspiciously small PNG ({size_bytes} bytes)")
         Image.open(out_path).verify()
     except Exception as e:
@@ -118,7 +117,6 @@ async def _make_thumbnail(model_path: Path, model_id: str) -> Path:
         if ALLOW_THUMB_FALLBACK:
             out_path.write_bytes(_PNG_1x1)
             return out_path
-        # ensure we don't leave a bogus file lying around
         with contextlib.suppress(Exception):
             out_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Invalid thumbnail produced.")
@@ -139,13 +137,11 @@ def _safe_ext(filename: str) -> str:
     return ext
 
 def _sanitize_segment(s: str) -> str:
-    # filesystem-safe path segment
     s = (s or "").strip().replace("\\", "_").replace("/", "_")
     s = re.sub(r"[^a-zA-Z0-9._-]", "_", s).strip("._")
     return s[:128] or "user"
 
 def _safe_join(root: Path, *parts: str) -> Path:
-    """Join under root and reject traversal (guaranteed within root)."""
     p = root
     for part in parts:
         p = p / _sanitize_segment(part)
@@ -158,10 +154,6 @@ def _safe_join(root: Path, *parts: str) -> Path:
     return p_res
 
 def _extract_user_id(current_user: Any) -> str:
-    """
-    Pull a UUID string from whatever object your get_current_user returns.
-    Accepts attr or dict access for 'id' / 'user_id'.
-    """
     candidate: Optional[str] = None
     for key in ("id", "user_id"):
         if hasattr(current_user, key):
@@ -175,13 +167,39 @@ def _extract_user_id(current_user: Any) -> str:
     try:
         return str(uuid.UUID(candidate))
     except Exception:
-        # if your user IDs are non-UUID, enforce/transform here.
         raise HTTPException(status_code=400, detail="User id is not a valid UUID.")
 
 @lru_cache(maxsize=1)
 def _model_uploads_columns() -> Dict[str, bool]:
     """Cache column nullability. Returns {column_name: is_nullable_bool}"""
     return {}
+
+# PHOTOS: resolve a model’s base directory & owner from DB
+async def _resolve_model_dir(model_id: str) -> tuple[Path, str]:
+    async with async_engine.begin() as conn:
+        row = await conn.execute(
+            text(
+                """
+                SELECT user_id, file_path
+                FROM public.model_uploads
+                WHERE id = :id
+                """
+            ),
+            {"id": model_id},
+        )
+        rec = row.first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    owner_id = str(rec[0])
+    file_path = Path(str(rec[1])).resolve()
+    # parent directory where model.<ext> lives
+    model_dir = file_path.parent
+    # Safety: keep it under UPLOAD_ROOT
+    try:
+        model_dir.resolve().relative_to(UPLOAD_ROOT.resolve())
+    except Exception:
+        raise HTTPException(status_code=500, detail="Model path is invalid.")
+    return model_dir, owner_id
 
 # ── Route (auth REQUIRED via get_current_user) ─────────────────────────────
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
@@ -197,7 +215,6 @@ async def upload_model(
     ext = _safe_ext(file.filename)
     owner_id = _extract_user_id(current_user)
 
-    # Layout: /uploads/users/<owner_id>/models/<model_idhex>/model.<ext>
     model_uuid = uuid.uuid4()
     model_id = str(model_uuid)
     model_dir_id = model_uuid.hex
@@ -208,7 +225,6 @@ async def upload_model(
 
     log.info("[upload] owner=%s model_id=%s -> %s", owner_id, model_id, str(dest_path))
 
-    # Stream write with size cap
     total = 0
     try:
         with dest_path.open("wb") as out:
@@ -233,11 +249,9 @@ async def upload_model(
             dest_path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty upload.")
 
-    # Public URL (guaranteed inside root)
     rel_to_uploads = dest_path.resolve().relative_to(UPLOAD_ROOT.resolve())
     file_url = f"/uploads/{rel_to_uploads.as_posix()}"
 
-    # Thumbnail (now using CLI renderer + validation)
     thumb_fs_path = await _make_thumbnail(dest_path, model_id)
     try:
         rel_to_thumbs = thumb_fs_path.resolve().relative_to(THUMB_ROOT.resolve())
@@ -247,7 +261,6 @@ async def upload_model(
 
     uploaded_at = _now()
 
-    # Prepare DB record
     base_record: Dict[str, Any] = {
         "id": model_id,
         "user_id": owner_id,
@@ -267,7 +280,6 @@ async def upload_model(
         "is_duplicate": False,
     }
 
-    # Cache schema the first time
     cols_cache = _model_uploads_columns()
     if not cols_cache:
         async with async_engine.begin() as conn:
@@ -281,7 +293,6 @@ async def upload_model(
             rows = cols_res.fetchall()
             if not rows:
                 raise HTTPException(status_code=500, detail="Model uploads table is missing. Run migrations.")
-            # fill cache
             _model_uploads_columns.cache_clear()
             @lru_cache(maxsize=1)
             def _filled() -> Dict[str, bool]:
@@ -318,3 +329,119 @@ async def upload_model(
         "message": "uploaded",
     }
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=payload)
+
+# ───────────────────────────────────────────────────────────────────────────
+# PHOTOS: real-world print images per model
+# Directory: <UPLOAD_ROOT>/users/<user_id>/models/<model_dir>/thumnails/
+# (spelling matches request)
+# ───────────────────────────────────────────────────────────────────────────
+
+def _ensure_image(f: Path):
+    """Basic sanity: verify with Pillow; reject oversized."""
+    if f.stat().st_size > MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (max 25MB).")
+    try:
+        with Image.open(f) as im:
+            im.verify()  # cheap structural check
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image.")
+
+def _sanitize_file_name(name: str) -> str:
+    stem = _sanitize_segment(Path(name).stem) or "image"
+    ext = Path(name).suffix.lower()
+    if ext not in ALLOWED_IMAGE_EXTS:
+        raise HTTPException(status_code=400, detail="Only png, jpg, jpeg, webp allowed.")
+    return f"{stem}{ext}"
+
+@router.post("/models/{model_id}/photos", status_code=status.HTTP_201_CREATED)
+async def upload_model_photos(
+    model_id: str,
+    files: List[UploadFile] = File(..., description="Up to N image files"),
+    current_user: Any = Depends(get_current_user),
+):
+    # Resolve model dir + owner
+    model_dir, owner_id = await _resolve_model_dir(model_id)
+
+    # Optional: only owner (or admin) can upload — tweak to your auth model
+    requester_id = _extract_user_id(current_user)
+    if requester_id != owner_id and not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Not allowed to add photos to this model.")
+
+    images_dir = model_dir / "thumnails"  # ← yes, thum-nails
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    written: List[Dict[str, Any]] = []
+
+    for up in files:
+        if not up.filename:
+            continue
+        safe_name = _sanitize_file_name(up.filename)
+        # make name unique
+        unique = f"{Path(safe_name).stem}-{uuid.uuid4().hex[:8]}{Path(safe_name).suffix}"
+        dest = images_dir / unique
+
+        # stream write with cap
+        size = 0
+        try:
+            with dest.open("wb") as out:
+                while True:
+                    chunk = await up.read(2 * 1024 * 1024)  # 2 MiB
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > MAX_IMAGE_SIZE_BYTES:
+                        raise HTTPException(status_code=413, detail="Image too large (max 25MB).")
+                    out.write(chunk)
+        finally:
+            with contextlib.suppress(Exception):
+                await up.close()
+
+        if size == 0:
+            with contextlib.suppress(Exception):
+                dest.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail="Empty image upload.")
+
+        # sanity check
+        _ensure_image(dest)
+
+        rel_url = f"/uploads/{dest.resolve().relative_to(UPLOAD_ROOT.resolve()).as_posix()}"
+        written.append(
+            {
+                "id": uuid.uuid4().hex,
+                "url": rel_url,
+                "thumbnail_url": rel_url,  # same for now
+                "caption": None,
+                "created_at": _now().isoformat(),
+            }
+        )
+
+    if not written:
+        raise HTTPException(status_code=400, detail="No images uploaded.")
+
+    return {"items": written, "count": len(written), "message": "photos uploaded"}
+
+@router.get("/models/{model_id}/photos")
+async def list_model_photos(model_id: str):
+    model_dir, _owner_id = await _resolve_model_dir(model_id)
+    images_dir = model_dir / "thumnails"
+    if not images_dir.exists():
+        return {"items": []}
+
+    items: List[Dict[str, Any]] = []
+    for p in sorted(images_dir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True):
+        if p.suffix.lower() not in ALLOWED_IMAGE_EXTS:
+            continue
+        try:
+            rel_url = f"/uploads/{p.resolve().relative_to(UPLOAD_ROOT.resolve()).as_posix()}"
+        except Exception:
+            continue
+        items.append(
+            {
+                "id": uuid.uuid4().hex,
+                "url": rel_url,
+                "thumbnail_url": rel_url,
+                "caption": None,
+                "created_at": datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat(),
+            }
+        )
+    return {"items": items}

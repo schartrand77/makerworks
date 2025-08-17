@@ -3,17 +3,19 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 # Align with your current project structure
 from app.db.database import get_async_db
 from app.dependencies.auth import get_current_user
 from app.models import User, ModelMetadata  # adjust if your models live elsewhere
+from app.services.auth_service import log_action
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -71,6 +73,34 @@ def _is_admin(user: User) -> bool:
 
 async def _exec(db: AsyncSession, stmt):
     return await db.execute(stmt)
+
+
+class LogRequest(BaseModel):
+    action: str
+    details: Optional[str] = None
+
+
+@router.post("/logs", summary="Log Admin Action", status_code=status.HTTP_201_CREATED)
+async def create_log(
+    payload: LogRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    await log_action(
+        db=db,
+        user_id=str(current_user.id),
+        action=payload.action,
+        details=payload.details,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+    return {"status": "ok"}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # GET /api/v1/admin/me

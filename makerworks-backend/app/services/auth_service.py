@@ -1,6 +1,7 @@
 # app/services/auth_service.py
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
+import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from passlib.context import CryptContext
@@ -47,20 +48,30 @@ async def create_user(db: AsyncSession, user_in: SignupRequest) -> User:
 
 async def log_action(
     db: AsyncSession,
-    admin_id: str,
+    user_id: Optional[Union[str, uuid.UUID]],
     action: str,
-    target_id: Optional[str] = None,
-    details: Optional[str] = None
+    details: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    created_at: Optional[datetime] = None,
 ):
+    """Insert an ``AuditLog`` row.
+
+    Parameters mirror the ``AuditLog`` schema (``user_id`` and
+    ``created_at`` in particular) so callers can rely on consistent
+    naming.
     """
-    Logs admin actions to the AuditLog table.
-    """
+    uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+
     audit = AuditLog(
-        admin_id=admin_id,
+        user_id=uid,
         action=action,
-        target_id=target_id,
         details=details,
-        timestamp=datetime.utcnow()
+        ip_address=ip_address,
+        user_agent=user_agent,
+        created_at=created_at or datetime.utcnow(),
     )
     db.add(audit)
     await db.commit()
+    await db.refresh(audit)
+    return audit

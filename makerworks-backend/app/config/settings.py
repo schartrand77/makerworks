@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -31,6 +31,9 @@ def _preload_env() -> None:
 _preload_env()
 
 
+DEFAULT_SECRET = "dev-secret-change-me"
+
+
 def _default_if_blank(value: Optional[str], default: str) -> str:
     if value is None:
         return default
@@ -45,8 +48,8 @@ class Settings(BaseSettings):
     ENV: str = Field(default="development", env="ENV")
 
     # ── Secrets / auth ────────────────────────────────────────────────────────
-    SECRET_KEY: str = Field(default="dev-secret-change-me", env="SECRET_KEY")
-    SESSION_SECRET: str = Field(default="dev-secret-change-me", env="SESSION_SECRET")
+    SECRET_KEY: str = Field(default=DEFAULT_SECRET, env="SECRET_KEY")
+    SESSION_SECRET: str = Field(default=DEFAULT_SECRET, env="SESSION_SECRET")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24 * 8, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # 8 days
 
     # ── URLs ─────────────────────────────────────────────────────────────────
@@ -117,6 +120,19 @@ class Settings(BaseSettings):
         if not s.startswith(("http://", "https://")):
             s = "http://" + s
         return s.rstrip("/")
+
+    @model_validator(mode="after")
+    def _require_production_secrets(self):
+        if self.ENV == "production":
+            missing: list[str] = []
+            if self.SECRET_KEY == DEFAULT_SECRET:
+                missing.append("SECRET_KEY")
+            if self.SESSION_SECRET == DEFAULT_SECRET:
+                missing.append("SESSION_SECRET")
+            if missing:
+                joined = " and ".join(missing)
+                raise ValueError(f"{joined} must be set to non-default values in production")
+        return self
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

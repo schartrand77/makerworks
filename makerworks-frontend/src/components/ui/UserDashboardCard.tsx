@@ -64,7 +64,10 @@ const UserDashboardCard = () => {
     navigate('/');
   };
 
-  const showImg = avatarSrc && !avatarSrc.endsWith('/default-avatar.png') && !avatarSrc.includes('/default-avatar.png');
+  const showImg =
+    avatarSrc &&
+    !avatarSrc.endsWith('/default-avatar.png') &&
+    !avatarSrc.includes('/default-avatar.png');
 
   return (
     <GlassCard className="w-full max-w-md p-6 text-center flex flex-col items-center gap-4 shadow-[0_8px_20px_rgba(128,128,128,0.15)]">
@@ -98,14 +101,23 @@ const UserDashboardCard = () => {
 
       <div className="mt-4 flex gap-3 justify-center">
         <button
+          type="button"
           onClick={() => navigate('/settings')}
-          className="px-4 py-1.5 rounded-full bg-brand-red/90 text-zinc-900 dark:text-white shadow-sm hover:bg-brand-red transition text-sm font-medium"
+          className="px-4 py-1.5 rounded-full bg-brand-red/90 text-zinc-900 dark:text-white shadow-sm hover:bg-brand-red transition text-sm font-medium ring-1 ring-black/5 dark:ring-white/10"
         >
           Edit Profile
         </button>
         <button
+          type="button"
           onClick={handleSignOut}
-          className="px-4 py-1.5 rounded-full bg-brand-destructive/90 text-white shadow-sm hover:bg-brand-destructive transition text-sm font-medium"
+          className="
+            px-4 py-1.5 rounded-full
+            bg-brand-destructive
+            text-zinc-900 dark:text-white
+            hover:bg-brand-destructive/90
+            shadow-sm transition text-sm font-medium
+            ring-1 ring-black/10 dark:ring-white/10
+          "
         >
           Log Out
         </button>

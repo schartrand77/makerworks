@@ -78,17 +78,52 @@ export interface Model {
 /**
  * HELPERS
  */
-function ok<S = any>(res: { status: number; data: S }) {
-  if (res.status >= 200 && res.status < 300) return res.data
-  const detail =
-    (res as any)?.data?.detail ??
-    (Array.isArray((res as any)?.data?.detail) ? (res as any).data.detail[0]?.msg : undefined)
-  throw new Error(detail || `Admin API error (${res.status})`)
+function ok<S = any>(res: { status: number; statusText?: string; data: unknown }): S {
+  const { status, statusText, data } = res as any
+
+  if (status >= 200 && status < 300) return data as S
+
+  // Try to surface FastAPI-style error details
+  const d = data as any
+  let msg: string | undefined
+
+  if (d?.detail) {
+    if (Array.isArray(d.detail)) {
+      // FastAPI 422: [{loc, msg, type}, ...]
+      msg = d.detail
+        .map((e: any) => (typeof e?.msg === 'string' ? e.msg : JSON.stringify(e)))
+        .join('; ')
+    } else if (typeof d.detail === 'string') {
+      msg = d.detail
+    }
+  }
+
+  if (!msg) {
+    try {
+      msg = typeof d === 'string' ? d : JSON.stringify(d)
+    } catch {
+      msg = 'Request failed'
+    }
+  }
+
+  throw new Error(`${status} ${statusText || ''}${msg ? ' – ' + msg : ''}`.trim())
 }
 
 const tolerant = {
-  // allow 4xx so we can surface backend messages if needed
+  // Allow 4xx so ok() can parse server error bodies
   status: (s: number) => (s >= 200 && s < 300) || (s >= 400 && s < 500),
+}
+
+// Scrub query params so we never send "", null, undefined, or NaN
+function sanitizeParams<T extends Record<string, unknown> | undefined>(params: T): T {
+  if (!params) return params
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(params)) {
+    if (v === '' || v === null || v === undefined) continue
+    if (typeof v === 'number' && !Number.isFinite(v)) continue
+    out[k] = v
+  }
+  return out as T
 }
 
 /**
@@ -106,11 +141,12 @@ export async function getAdminMe(): Promise<AdminMe> {
  * USERS
  */
 export async function fetchAllUsers(
-  params?: Record<string, any>
+  params?: { limit?: number; offset?: number }
 ): Promise<AdminUser[]> {
   try {
+    const clean = sanitizeParams(params)
     const res = await axios.get<AdminUser[]>('/admin/users', {
-      params,
+      params: clean,
       withCredentials: true,
       validateStatus: tolerant.status,
     })
@@ -121,8 +157,7 @@ export async function fetchAllUsers(
   }
 }
 
-// Alias name kept (calls demote per server API)
-export async function banUser(userId: string): Promise<void> {
+export async function demoteUser(userId: string): Promise<void> {
   try {
     const res = await axios.post(`/admin/users/${userId}/demote`, null, {
       withCredentials: true,
@@ -130,10 +165,13 @@ export async function banUser(userId: string): Promise<void> {
     })
     ok(res)
   } catch (err) {
-    console.error(`[Admin] Failed to ban user ${userId}:`, err)
+    console.error(`[Admin] Failed to demote user ${userId}:`, err)
     throw err
   }
 }
+
+// keep banUser as an alias to demote to avoid breaking imports
+export const banUser = demoteUser
 
 export async function promoteUser(userId: string): Promise<void> {
   try {
@@ -268,7 +306,8 @@ const adminApi = {
   getAdminMe,
   // users
   fetchAllUsers,
-  banUser,
+  demoteUser,
+  banUser, // alias
   promoteUser,
   deleteUser,
   resetPassword,

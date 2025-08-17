@@ -1,43 +1,30 @@
 // src/pages/ModelPage.tsx
-import { useParams, useLocation } from 'react-router-dom'
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useParams, Link, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
 import axios from '@/api/axios'
-import GlassCard from '@/components/ui/GlassCard'
 import ModelViewer from '@/components/ui/ModelViewer'
 import getAbsoluteUrl from '@/lib/getAbsoluteUrl'
-import { useAuthStore } from '@/store/useAuthStore'
+import GlassCard from '@/components/ui/GlassCard'
 
-interface Dimensions {
-  x: number
-  y: number
-  z: number
-}
-
+interface Dimensions { x: number; y: number; z: number }
 interface Model {
   id: string
-  name?: string
-  description?: string
-  uploader_username?: string
+  name?: string | null
+  description?: string | null
+  uploader_username?: string | null
   stl_url?: string | null
   file_url?: string | null
   thumbnail_url?: string | null
   webm_url?: string | null
-  created_at?: string
-  updated_at?: string
-
-  // (We still keep these around in case you show them somewhere else later)
-  volume_mm3?: number
-  surface_area_mm2?: number
-  dimensions?: Dimensions
-  triangle_count?: number
-  vertex_count?: number
-  unit?: string
-  tags?: string[]
-}
-
-type LocationState = {
-  preloaded?: Partial<Model>
-  from?: string
+  created_at?: string | null
+  updated_at?: string | null
+  volume_mm3?: number | null
+  surface_area_mm2?: number | null
+  dimensions?: Dimensions | null
+  triangle_count?: number | null
+  vertex_count?: number | null
+  unit?: string | null
+  tags?: string[] | null
 }
 
 interface Photo {
@@ -45,9 +32,7 @@ interface Photo {
   url: string | null
   thumbnail_url?: string | null
   caption?: string | null
-  uploaded_by?: string | null
   created_at?: string | null
-  is_featured?: boolean
 }
 
 function abs(url?: string | null) {
@@ -55,241 +40,285 @@ function abs(url?: string | null) {
   return getAbsoluteUrl(url) || url
 }
 
-/** Small legend under the viewer that adapts to input type (touch vs mouse). */
-function ControlsLegend() {
-  const [isCoarse, setIsCoarse] = useState(false) // true == touch-like pointer
+/** Compact, adaptive controls hint (styled to match Estimate page) */
+function ControlsHint() {
+  const [coarse, setCoarse] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('matchMedia' in window)) return
     const mq = window.matchMedia('(pointer: coarse)')
-    const update = () => setIsCoarse(!!mq.matches)
+    const update = () => setCoarse(!!mq.matches)
     update()
     if ('addEventListener' in mq) {
       mq.addEventListener('change', update)
       return () => mq.removeEventListener('change', update)
     } else {
-      // @ts-ignore legacy Safari
+      // @ts-ignore Safari
       mq.addListener(update)
       return () => {
-        // @ts-ignore legacy Safari
+        // @ts-ignore Safari
         mq.removeListener(update)
       }
     }
   }, [])
 
+  const items = coarse
+    ? [
+        ['One-finger drag', 'rotate'],
+        ['Two-finger drag', 'pan'],
+        ['Pinch', 'zoom'],
+      ]
+    : [
+        ['Left-drag', 'rotate'],
+        ['Right-drag', 'pan'],
+        ['Scroll / pinch', 'zoom'],
+      ]
+
   return (
-    <div className="mt-3 text-xs sm:text-sm text-zinc-600 dark:text-zinc-400">
-      {isCoarse ? (
-        <ul className="list-disc pl-5 space-y-1">
-          <li><span className="font-medium">One-finger drag:</span> rotate</li>
-          <li><span className="font-medium">Two-finger drag:</span> pan</li>
-          <li><span className="font-medium">Pinch:</span> zoom</li>
-        </ul>
-      ) : (
-        <ul className="list-disc pl-5 space-y-1">
-          <li><span className="font-medium">Left-click + drag:</span> rotate</li>
-          <li><span className="font-medium">Right-click + drag:</span> pan</li>
-          <li><span className="font-medium">Scroll wheel / pinch (trackpad):</span> zoom</li>
-        </ul>
-      )}
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] sm:text-xs select-none text-zinc-700 dark:text-zinc-300">
+      {items.map(([a, b]) => (
+        <div
+          key={a}
+          className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15 text-zinc-900 dark:text-white"
+        >
+          <span className="font-medium">{a}</span>
+          <span className="opacity-70"> · {b}</span>
+        </div>
+      ))}
     </div>
   )
 }
 
+/** VisionOS-y pill, emerald ring only (no glow) */
+const ledClasses = (active: boolean) =>
+  [
+    // pill + layout
+    'relative inline-flex h-10 items-center justify-center rounded-full px-4 text-sm font-medium transition',
+    // glass base
+    'backdrop-blur-xl bg-white/70 dark:bg-white/10',
+    // readable text
+    'text-emerald-950 dark:text-emerald-200',
+    // crisp emerald ring
+    'border border-emerald-500/40 dark:border-emerald-400/35',
+    // subtle inner highlight only (no external bloom)
+    'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+    // interactive ring emphasis, still glow-free
+    'hover:border-emerald-500/60 dark:hover:border-emerald-400/60',
+    // states
+    active ? 'cursor-pointer' : 'opacity-55 cursor-not-allowed',
+  ].join(' ')
+
 const ModelPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
-  const location = useLocation()
-  const { preloaded } = (location.state || {}) as LocationState
-  const { user } = useAuthStore()
-  const isAdmin =
-    (user as any)?.is_admin === true ||
-    (user as any)?.role === 'admin' ||
-    Array.isArray((user as any)?.permissions) && (user as any).permissions.includes('admin')
-
-  // Seed with preloaded to render instantly; hydrate from API next
-  const [model, setModel] = useState<Model | null>(() => {
-    if (!preloaded && !id) return null
-    return {
-      id: (preloaded?.id as string) || (id as string),
-      name: preloaded?.name,
-      description: preloaded?.description,
-      uploader_username: preloaded?.uploader_username,
-      thumbnail_url: abs(preloaded?.thumbnail_url ?? null),
-      stl_url: abs(preloaded?.stl_url ?? preloaded?.file_url ?? null),
-      file_url: abs(preloaded?.file_url ?? null),
-      webm_url: abs(preloaded?.webm_url ?? null),
-      volume_mm3: preloaded?.volume_mm3,
-      surface_area_mm2: preloaded?.surface_area_mm2,
-      dimensions: preloaded?.dimensions,
-      triangle_count: (preloaded as any)?.triangle_count,
-      vertex_count: (preloaded as any)?.vertex_count,
-      unit: (preloaded as any)?.unit,
-      tags: preloaded?.tags,
-    }
-  })
-
+  const [model, setModel] = useState<Model | null>(null)
   const [photos, setPhotos] = useState<Photo[]>([])
-  const [loadingPhotos, setLoadingPhotos] = useState(false)
-  const [uploading, setUploading] = useState(false)
+  const [loadingPhotos, setLoadingPhotos] = useState<boolean>(false)
 
-  const fetchPhotos = useCallback(async () => {
-    if (!id) return
-    setLoadingPhotos(true)
-    try {
-      // Expecting { items: Photo[] } or Photo[]
-      const res = await axios.get<{ items?: Photo[] } | Photo[]>(`/models/${id}/photos`)
-      const items = Array.isArray(res.data) ? res.data : (res.data.items || [])
-      setPhotos(
-        (items || []).map((p: Photo) => ({
-          ...p,
-          url: abs(p.url),
-          thumbnail_url: abs(p.thumbnail_url ?? p.url),
-        }))
-      )
-    } catch (e) {
-      console.error('[ModelPage] Failed to fetch photos:', e)
-      setPhotos([])
-    } finally {
-      setLoadingPhotos(false)
+  // --- smart back behaviour ---
+  const location = useLocation() as any
+  const navigate = useNavigate()
+  const backFromState: string | undefined = location?.state?.from
+  const backHref = backFromState || '/browse'
+  const handleBack = (e: React.MouseEvent) => {
+    e.preventDefault()
+    // 1) explicit state from Browse
+    if (backFromState) {
+      navigate(backFromState)
+      return
     }
-  }, [id])
-
-  const handleUpload = async (files: FileList | null) => {
-    if (!files || !isAdmin || !id) return
-    setUploading(true)
+    // 2) in-app history
     try {
-      const arr = Array.from(files)
-      for (const f of arr) {
-        const form = new FormData()
-        form.append('file', f)
-        // Optionally include caption, featured, etc.
-        await axios.post(`/models/${id}/photos`, form, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        })
+      const ref = document.referrer
+      if (ref && new URL(ref).origin === window.location.origin) {
+        navigate(-1)
+        return
       }
-      await fetchPhotos()
-    } catch (e) {
-      console.error('[ModelPage] Photo upload failed:', e)
-    } finally {
-      setUploading(false)
-    }
+    } catch { /* noop */ }
+    // 3) safe fallback
+    navigate('/browse')
   }
 
   useEffect(() => {
     let cancelled = false
-    const fetchModel = async () => {
+    const run = async () => {
       if (!id) return
       try {
         const res = await axios.get<Model>(`/models/${id}`)
         if (cancelled) return
-        const data = res.data || {}
-        setModel((prev) => ({
+        const d = res.data || {}
+        setModel({
           id,
-          name: data.name ?? prev?.name,
-          description: data.description ?? prev?.description,
-          uploader_username: data.uploader_username ?? prev?.uploader_username,
-          thumbnail_url: abs(data.thumbnail_url ?? prev?.thumbnail_url ?? null),
-          stl_url: abs((data as any).stl_url ?? (data as any).file_url ?? prev?.stl_url ?? null),
-          file_url: abs((data as any).file_url ?? prev?.file_url ?? null),
-          webm_url: abs((data as any).webm_url ?? prev?.webm_url ?? null),
-          created_at: data.created_at ?? prev?.created_at,
-          updated_at: data.updated_at ?? prev?.updated_at,
-          volume_mm3: data.volume_mm3 ?? prev?.volume_mm3,
-          surface_area_mm2: (data as any).surface_area_mm2 ?? prev?.surface_area_mm2,
-          dimensions: data.dimensions ?? prev?.dimensions,
-          triangle_count: (data as any).triangle_count ?? prev?.triangle_count,
-          vertex_count: (data as any).vertex_count ?? prev?.vertex_count,
-          unit: (data as any).unit ?? prev?.unit,
-          tags: data.tags ?? prev?.tags,
-        }))
-
-        // Optional: dedicated metadata endpoint (kept for future, but we don't show it here)
-        try {
-          await axios.get<Partial<Model>>(`/models/${id}/metadata`)
-          // If you want to merge extra fields later, do it here.
-        } catch {
-          /* ignore */
-        }
-      } catch (err) {
-        console.error('[ModelPage] Failed to fetch model:', err)
+          name: d.name ?? null,
+          description: d.description ?? null,
+          uploader_username: d.uploader_username ?? null,
+          thumbnail_url: abs(d.thumbnail_url) ?? null,
+          stl_url: abs((d as any).stl_url ?? (d as any).file_url ?? null),
+          file_url: abs((d as any).file_url) ?? null,
+          webm_url: abs((d as any).webm_url) ?? null,
+          created_at: d.created_at ?? null,
+          updated_at: d.updated_at ?? null,
+          volume_mm3: d.volume_mm3 ?? null,
+          surface_area_mm2: (d as any).surface_area_mm2 ?? null,
+          dimensions: d.dimensions ?? null,
+          triangle_count: (d as any).triangle_count ?? null,
+          vertex_count: (d as any).vertex_count ?? null,
+          unit: (d as any).unit ?? null,
+          tags: d.tags ?? null,
+        })
+      } catch (e) {
+        console.error('[ModelPage] fetch failed', e)
       }
     }
-    fetchModel()
-    fetchPhotos()
-    return () => {
-      cancelled = true
-    }
-  }, [id, fetchPhotos])
+    run()
+    return () => { cancelled = true }
+  }, [id])
 
-  const src = useMemo(() => model?.stl_url ?? model?.file_url ?? null, [model?.stl_url, model?.file_url])
+  // Browser tab title mirrors Browse’s fallback
+  useEffect(() => {
+    const prev = document.title
+    const name = model?.name || 'Untitled'
+    document.title = `MakerWorks — ${name}`
+    return () => { document.title = prev }
+  }, [model?.name])
+
+  // Fetch up to 3 real-world print photos
+  useEffect(() => {
+    let cancelled = false
+    const loadPhotos = async () => {
+      if (!id) return
+      setLoadingPhotos(true)
+      try {
+        const res = await axios.get<{ items?: Photo[] } | Photo[]>(`/models/${id}/photos`)
+        if (cancelled) return
+        const arr = Array.isArray(res.data) ? res.data : res.data.items || []
+        const mapped = (arr || [])
+          .map((p) => ({
+            ...p,
+            url: abs(p.url),
+            thumbnail_url: abs(p.thumbnail_url ?? p.url),
+          }))
+          .filter((p) => p.thumbnail_url)
+          .sort((a, b) => {
+            const ta = a.created_at ? Date.parse(a.created_at) : 0
+            const tb = b.created_at ? Date.parse(b.created_at) : 0
+            return tb - ta
+          })
+          .slice(0, 3)
+        setPhotos(mapped)
+      } catch (e) {
+        console.error('[ModelPage] photos fetch failed', e)
+        setPhotos([])
+      } finally {
+        setLoadingPhotos(false)
+      }
+    }
+    loadPhotos()
+    return () => { cancelled = true }
+  }, [id])
+
+  const src = useMemo(
+    () => model?.stl_url ?? model?.file_url ?? null,
+    [model?.stl_url, model?.file_url]
+  )
+
+  // --- Get estimate button handler (passes model to /estimate) ---
+  const handleEstimate = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!id) return
+    const payload = {
+      id,
+      name: model?.name ?? null,
+      description: model?.description ?? null,
+      src, // stl/file url
+      thumbnail_url: model?.thumbnail_url ?? null,
+    }
+    navigate('/estimate', { state: { fromModel: payload, from: `/models/${id}` } })
+  }
 
   if (!id) {
     return (
-      <main className="flex justify-center items-center h-[60vh] text-zinc-500 text-lg">
+      <main className="flex justify-center items-center h-[60svh] text-zinc-500 text-lg">
         Invalid model.
       </main>
     )
   }
 
+  const canEstimate = !!id
+
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-      {/* Title + description */}
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold">{model?.name || 'Model'}</h1>
-        {model?.description && (
-          <p className="text-zinc-600 dark:text-zinc-400">{model.description}</p>
-        )}
+    <main
+      className={[
+        // closer to navbar
+        'relative min-h-[100svh] pt-3 pb-8 px-4',
+        // bg
+        'bg-[radial-gradient(60%_40%_at_20%_0%,rgba(99,102,241,0.15),transparent_60%),',
+        'radial-gradient(50%_50%_at_100%_20%,rgba(16,185,129,0.12),transparent_60%),',
+        'linear-gradient(180deg,rgba(0,0,0,0.035),rgba(0,0,0,0.035))]',
+      ].join(' ')}
+    >
+      {/* Top bar */}
+      <div className="mx-auto max-w-7xl mb-2 flex items-center justify-between gap-3">
+        {/* Back: prefer state.from, then history, then /browse */}
+        <Link
+          to={backHref}
+          onClick={handleBack}
+          className="rounded-full backdrop-blur-xl bg-white/70 dark:bg-white/10 border border-black/10 dark:border-white/20 text-zinc-900 dark:text-white px-3 py-1.5 text-sm hover:bg-white/80 dark:hover:bg-white/15 transition"
+          title="Back"
+        >
+          ← Back
+        </Link>
+
+        {/* Right side: Get estimate pill (emerald ring style) */}
+        <button
+          onClick={handleEstimate}
+          disabled={!canEstimate}
+          title={canEstimate ? 'Send this model to the estimator' : 'Model not ready yet'}
+          className={ledClasses(!!canEstimate)}
+        >
+          Get estimate →
+        </button>
       </div>
 
-      {/* Viewer + Photos SIDE BY SIDE */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* BIG viewer */}
-        <GlassCard className="glass p-3 sm:p-4 ring-1 ring-black/5 dark:ring-white/20 lg:col-span-8">
-          <div className="relative w-full h-[58vh] sm:h-[64vh] lg:h-[72vh]">
-            <ModelViewer
-              key={src || 'no-src'}
-              src={src || undefined}
-              color="#9a9a9a"
-              className="absolute inset-0 w-full h-full rounded-xl overflow-hidden bg-transparent"
-            />
-          </div>
-          <ControlsLegend />
-        </GlassCard>
+      {/* Title (match Browse: same fallbacks & classes) */}
+      <header className="mx-auto max-w-7xl mb-3">
+        <h1 className="text-lg sm:text-xl font-semibold mb-1 text-zinc-900 dark:text-zinc-100">
+          {model?.name || 'Untitled'}
+        </h1>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-3xl">
+          {model?.description || 'No description provided.'}
+        </p>
+      </header>
 
-        {/* Real-life Prints (admin-focused) */}
-        <GlassCard className="glass p-4 ring-1 ring-black/5 dark:ring-white/20 lg:col-span-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">Real-life Prints</h2>
-            {isAdmin && (
-              <label className="inline-flex items-center gap-2 text-xs sm:text-sm px-3 py-1.5 rounded-full bg-white/70 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/20 cursor-pointer">
-                {uploading ? 'Uploading…' : 'Upload'}
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => handleUpload(e.target.files)}
-                  disabled={uploading}
-                />
-              </label>
-            )}
-          </div>
+      {/* Card 1: Viewer (match Estimate viewer layout & sizing) */}
+      <GlassCard className="mx-auto max-w-7xl p-4 rounded-3xl backdrop-blur-2xl ring-1 ring-white/15 shadow-[0_10px_50px_-15px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.4)]">
+        <div className="relative w-full">
+          <ModelViewer
+            key={src || 'no-src'}
+            src={src || undefined}
+            color="#9a9a9a"
+            fitMargin={1.6}
+            className="h-[36vh] sm:h-[42vh] lg:h-[46vh] rounded-2xl"
+          />
+        </div>
+        <ControlsHint />
+      </GlassCard>
 
+      {/* Card 2: 3 thumbnails (¼ the viewer height) */}
+      <GlassCard className="mx-auto max-w-7xl mt-3 p-3 sm:p-4 rounded-3xl backdrop-blur-2xl ring-1 ring-white/15 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.35)] overflow-hidden">
+        <div className="w-full h-[9vh] sm:h-[10.5vh] lg:h-[11.5vh]">
           {loadingPhotos ? (
-            <div className="grid grid-cols-2 gap-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="aspect-square rounded-lg bg-zinc-300/30 dark:bg-zinc-700/30 animate-pulse" />
+            <div className="grid grid-cols-3 gap-3 h-full">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-full rounded-2xl bg-white/10 animate-pulse"
+                />
               ))}
             </div>
-          ) : photos.length === 0 ? (
-            <div className="text-sm text-zinc-600 dark:text-zinc-400">
-              No photos yet.
-              {isAdmin && ' Be a hero and upload a glamour shot or two.'}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
+          ) : photos.length > 0 ? (
+            <div className="grid grid-cols-3 gap-3 h-full">
               {photos.map((p) => {
-                const full = p.url ? p.url : undefined
+                const full = p.url || undefined
                 const thumb = p.thumbnail_url || p.url || ''
                 return (
                   <a
@@ -297,36 +326,39 @@ const ModelPage: React.FC = () => {
                     href={full}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group block"
+                    className="block h-full group"
                     title={p.caption || 'Open full image'}
                   >
-                    <div className="aspect-square overflow-hidden rounded-lg ring-1 ring-black/5 dark:ring-white/20">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={thumb || undefined}
-                        alt={p.caption || 'Printed model photo'}
-                        className="w-full h-full object-cover transition-transform group-hover:scale-[1.03]"
-                        onError={(e) => {
-                          // graceful fallback to full image if thumb 404s
-                          if (full && e.currentTarget.src !== full) {
-                            e.currentTarget.src = full
-                          }
-                        }}
-                        draggable={false}
-                      />
-                    </div>
-                    {p.caption && (
-                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400 line-clamp-2">
-                        {p.caption}
-                      </div>
-                    )}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={thumb || undefined}
+                      alt={p.caption || 'Printed model photo'}
+                      className="w-full h-full object-cover rounded-2xl ring-1 ring-white/15 transition-transform group-hover:scale-[1.02]"
+                      onError={(e) => {
+                        if (full && e.currentTarget.src !== full) {
+                          e.currentTarget.src = full
+                        }
+                      }}
+                      draggable={false}
+                    />
                   </a>
                 )
               })}
+              {photos.length < 3 &&
+                Array.from({ length: 3 - photos.length }).map((_, i) => (
+                  <div
+                    key={`blank-${i}`}
+                    className="h-full rounded-2xl ring-1 ring-white/10 bg-white/5"
+                  />
+                ))}
+            </div>
+          ) : (
+            <div className="h-full flex items-center justify-center text-sm text-white/80 rounded-2xl bg-white/5 ring-1 ring-white/10">
+              No photos yet.
             </div>
           )}
-        </GlassCard>
-      </div>
+        </div>
+      </GlassCard>
     </main>
   )
 }

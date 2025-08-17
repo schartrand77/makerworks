@@ -1,6 +1,6 @@
 // src/pages/Browse.tsx
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import axios from '@/api/axios';
 import GlassCard from '@/components/ui/GlassCard';
 import PageHeader from '@/components/ui/PageHeader';
@@ -51,6 +51,25 @@ function resolveMediaUrl(raw: string | null | undefined): string | null {
   return s.startsWith('/') ? s : `/${s}`;
 }
 
+/** VisionOS-y pill, emerald ring only (no glow) — reused for the Estimate button */
+const ledClasses = (active: boolean = true) =>
+  [
+    // pill + layout
+    'inline-flex h-10 w-full items-center justify-center rounded-full px-4 text-sm font-medium transition',
+    // glass base
+    'backdrop-blur-xl bg-white/70 dark:bg-white/10',
+    // readable text
+    'text-emerald-950 dark:text-emerald-200',
+    // crisp emerald ring
+    'border border-emerald-500/40 dark:border-emerald-400/35',
+    // subtle inner highlight only (no external bloom)
+    'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+    // interactive ring emphasis, still glow-free
+    'hover:border-emerald-500/60 dark:hover:border-emerald-400/60',
+    // states
+    active ? 'cursor-pointer' : 'opacity-55 cursor-not-allowed',
+  ].join(' ');
+
 const Browse: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
   const [page, setPage] = useState(1);
@@ -65,6 +84,7 @@ const Browse: React.FC = () => {
 
   const { user } = useAuthStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
 
   const limit = 6;
@@ -203,6 +223,8 @@ const Browse: React.FC = () => {
 
   const navigateToModel = (m: Model) => {
     if (!m?.id) return;
+    // record EXACT return location (page, filters, etc.)
+    const from = `${location.pathname}${location.search}`;
     navigate(`/models/${m.id}`, {
       state: {
         preloaded: {
@@ -213,9 +235,22 @@ const Browse: React.FC = () => {
           stl_url: m.stl_url ?? m.file_url ?? null,
           uploader_username: m.uploader_username,
         },
-        from: 'browse',
+        from, // used by ModelPage's Back button
       },
     });
+  };
+
+  // Green estimate button action (same payload shape as ModelPage)
+  const navigateToEstimate = (m: Model) => {
+    if (!m?.id) return;
+    const payload = {
+      id: m.id,
+      name: m.name ?? null,
+      description: m.description ?? null,
+      src: m.stl_url ?? m.file_url ?? null,
+      thumbnail_url: m.thumbnail_url ?? null,
+    };
+    navigate('/estimate', { state: { fromModel: payload, from: `${location.pathname}${location.search}` } });
   };
 
   return (
@@ -243,7 +278,7 @@ const Browse: React.FC = () => {
         />
 
         {/* VisionOS-style pill dropdown */}
-        <div className="relative inline-flex w-full sm:w-auto">
+        <div className="relative inline-flex items-center w-full sm:w-auto">
           <select
             aria-label="Source"
             value={source}
@@ -251,16 +286,18 @@ const Browse: React.FC = () => {
             className="
               appearance-none
               w-full sm:w-[220px]
-              px-4 pr-10 py-2
+              px-4 pr-10 py-2 h-10
               rounded-full
               text-sm
               bg-white/60 dark:bg-white/10
               backdrop-blur-xl
               ring-1 ring-black/5 dark:ring-white/20
+              border border-black/10 dark:border-white/15
               shadow-[inset_0_-1px_0_rgba(255,255,255,0.6),0_4px_12px_rgba(0,0,0,0.12)]
               text-zinc-800 dark:text-zinc-100
               hover:bg-white/70 dark:hover:bg-white/15
-              focus:outline-none focus-visible:ring-black/10 dark:focus-visible:ring-white/20
+              focus:outline-none
+              focus-visible:ring-2 focus-visible:ring-emerald-400/30
               transition
             "
           >
@@ -373,18 +410,38 @@ const Browse: React.FC = () => {
                       </p>
                     )}
 
-                    {/* Actual clickable pill that passes the STL + navigates */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigateToModel(model);
-                      }}
-                      className="mt-2 w-full py-1.5 rounded-full bg-brand-red text-center text-black text-sm shadow hover:bg-brand-blue transition"
-                      aria-label="View details"
-                    >
-                      View Details →
-                    </button>
+                    {/* Actions: perfectly symmetric buttons */}
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigateToEstimate(model);
+                        }}
+                        className={ledClasses(true)}
+                        aria-label="Get estimate"
+                        title="Send this model to the estimator"
+                      >
+                        Get estimate →
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigateToModel(model);
+                        }}
+                        className={[
+                          'inline-flex h-10 w-full items-center justify-center rounded-full px-4',
+                          'text-sm font-medium text-center transition',
+                          'bg-brand-red text-black shadow hover:bg-brand-blue',
+                        ].join(' ')}
+                        aria-label="View details"
+                        title="View model details"
+                      >
+                        View Details →
+                      </button>
+                    </div>
                   </GlassCard>
                 );
               })}

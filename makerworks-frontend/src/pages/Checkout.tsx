@@ -8,6 +8,7 @@ import { loadStripe } from '@stripe/stripe-js';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShoppingCart } from 'lucide-react';
+import GlassButton from '@/components/ui/GlassButton';
 
 const stripePromise = loadStripe(
   import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? ''
@@ -185,15 +186,18 @@ export default function Checkout() {
                   <div className="text-right text-sm text-zinc-700 dark:text-zinc-300 mb-2">
                     <span className="font-semibold">Total:</span> ${total}
                   </div>
-                  <motion.button
+                  <GlassButton
+                    as={motion.button}
                     whileTap={{ scale: 0.95 }}
                     onClick={handleCheckout}
                     disabled={loading}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    variant="success"
+                    size="md"
+                    className="px-5 rounded-md"
                     aria-busy={loading}
                   >
                     {loading ? 'Processing…' : 'Confirm & Pay'}
-                  </motion.button>
+                  </GlassButton>
                 </GlassCard>
               </>
             )}

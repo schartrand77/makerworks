@@ -3,10 +3,17 @@ import clsx from 'clsx';
 
 interface GlassButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   children: React.ReactNode;
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'uploadBlue';
+  variant?:
+    | 'primary'
+    | 'secondary'
+    | 'ghost'
+    | 'danger'
+    | 'uploadBlue'
+    | 'brand'
+    | 'success';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
-  as?: keyof JSX.IntrinsicElements;
+  as?: React.ElementType;
   className?: string;
 }
 
@@ -21,6 +28,10 @@ const variants = {
     'bg-transparent text-red-600 dark:text-red-400 ring-1 ring-red-500/60 dark:ring-red-600/60 hover:ring-red-500/80 dark:hover:ring-red-600/80 focus:ring-red-500/80 dark:focus:ring-red-600/80',
   uploadBlue:
     'bg-transparent text-blue-700 dark:text-blue-300 ring-1 ring-blue-300/60 dark:ring-blue-400/60 backdrop-blur hover:ring-blue-300/80 dark:hover:ring-blue-400/80 focus:ring-blue-300/80 dark:focus:ring-blue-400/80',
+  brand:
+    'bg-transparent text-brand-black ring-1 ring-brand-red/60 hover:text-brand-blue hover:ring-brand-blue focus:ring-brand-blue active:ring-brand-blue',
+  success:
+    'bg-transparent text-white ring-1 ring-emerald-600 hover:ring-emerald-700 active:ring-emerald-800 focus:ring-emerald-700',
 };
 
 const sizes = {

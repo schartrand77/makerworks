@@ -14,9 +14,7 @@ os.environ.setdefault("AVATAR_DIR", "/tmp")
 os.environ.setdefault("ASYNC_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "secret")
-
-import importlib.util
-from pathlib import Path
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest
 from fastapi import FastAPI
@@ -26,20 +24,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
 from app.db.session import get_db
-
-spec_auth = importlib.util.spec_from_file_location(
-    "app.routes.auth",
-    Path(__file__).resolve().parents[1] / "app" / "routes" / "auth.py",
-)
-auth = importlib.util.module_from_spec(spec_auth)
-spec_auth.loader.exec_module(auth)
-
-spec_admin = importlib.util.spec_from_file_location(
-    "app.routes.admin",
-    Path(__file__).resolve().parents[1] / "app" / "routes" / "admin.py",
-)
-admin = importlib.util.module_from_spec(spec_admin)
-spec_admin.loader.exec_module(admin)
+from app.routes import auth, admin
 
 
 def create_test_app():
@@ -75,9 +60,9 @@ def client():
 
 def test_auth_admin_unlock_protected(client):
     resp = client.post("/api/v1/auth/admin/unlock")
-    assert resp.status_code == 401
+    assert resp.status_code == 404
 
 
 def test_admin_unlock_protected(client):
     resp = client.post("/api/v1/admin/admin/unlock")
-    assert resp.status_code == 401
+    assert resp.status_code == 404

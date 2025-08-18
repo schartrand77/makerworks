@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware'
 import axios from '@/api/axios'
 import { toast } from 'sonner'
 import type { UserOut } from '@/types/auth'
+import { isAxiosError } from 'axios'
 
 interface AuthState {
   user: UserOut | null
@@ -142,9 +143,10 @@ export const useAuthStore = create<AuthState>()(
           }
 
           // Unexpected status: treat as error
-          throw new Error((res as any)?.data?.detail || 'Failed to fetch user')
-        } catch (err: any) {
-          const code = err?.response?.status ?? -1
+          const detail = (res.data as { detail?: string })?.detail
+          throw new Error(detail || 'Failed to fetch user')
+        } catch (err: unknown) {
+          const code = isAxiosError(err) ? err.response?.status ?? -1 : -1
           // eslint-disable-next-line no-console
           console.warn('[useAuthStore] Failed to fetch user:', code)
           set({
@@ -164,30 +166,42 @@ export const useAuthStore = create<AuthState>()(
       },
 
       hasRole: (role: string) => {
-        const u = get().user as any
+        const u = get().user
         if (!u) return false
         const target = role.toLowerCase()
-        if (Array.isArray(u.role)) {
-          return u.role.some((r: string) => String(r).toLowerCase() === target)
+        const primary = u.role
+        if (Array.isArray(primary)) {
+          return primary.some((r) => {
+            const name = typeof r === 'string' ? r : r?.name ?? ''
+            return name.toLowerCase() === target
+          })
         }
-        return String(u.role ?? '').toLowerCase() === target
+        const name = typeof primary === 'string' ? primary : primary?.name ?? ''
+        return name.toLowerCase() === target
       },
 
       // Tolerant admin detection to match varied backend shapes.
       isAdmin: () => {
-        const u: any = get().user
+        const u = get().user
         if (!u) return false
 
-        const roleStr = String((u.role && (u.role.name || u.role)) ?? '')
-          .trim()
-          .toLowerCase()
+        const roleVal = u.role
+        const roleStr = Array.isArray(roleVal)
+          ? ''
+          : typeof roleVal === 'string'
+          ? roleVal
+          : roleVal?.name ?? ''
 
         const rolesArr = Array.isArray(u.roles)
-          ? u.roles.map((r: any) => String(r && (r.name || r)).trim().toLowerCase())
+          ? u.roles.map((r) =>
+              (typeof r === 'string' ? r : r?.name ?? '')
+                .trim()
+                .toLowerCase()
+            )
           : []
 
         const permsArr = Array.isArray(u.permissions)
-          ? u.permissions.map((p: any) => String(p).trim().toLowerCase())
+          ? u.permissions.map((p) => p.trim().toLowerCase())
           : []
 
         const scope = typeof u.scope === 'string' ? u.scope.toLowerCase() : ''
@@ -196,7 +210,7 @@ export const useAuthStore = create<AuthState>()(
           u.is_admin === true ||
           u.isAdmin === true ||
           u.role_id === 1 ||
-          roleStr === 'admin' ||
+          roleStr.trim().toLowerCase() === 'admin' ||
           rolesArr.includes('admin') ||
           permsArr.includes('admin') ||
           scope.includes('admin')

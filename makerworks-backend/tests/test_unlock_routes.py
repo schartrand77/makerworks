@@ -14,6 +14,7 @@ os.environ.setdefault("AVATAR_DIR", "/tmp")
 os.environ.setdefault("ASYNC_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "secret")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import importlib.util
 from pathlib import Path

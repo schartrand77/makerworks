@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-vi.mock('@/api/axios', () => ({ default: { post: vi.fn() } }))
+vi.mock('@/api/client', () => ({ default: { post: vi.fn() } }))
 
 function createLocalStorageMock() {
   let store: Record<string, string> = {}

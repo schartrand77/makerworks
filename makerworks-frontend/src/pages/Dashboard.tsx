@@ -6,7 +6,7 @@ import UserDashboardCard from '@/components/ui/UserDashboardCard';
 import PageHeader from '@/components/ui/PageHeader';
 import { useUser } from '@/hooks/useUser';
 import { Star, Upload, Shield, LayoutDashboard } from 'lucide-react';
-import axios from '@/api/axios';
+import axios from '@/api/client';
 
 type ModelSummary = {
   id: string;

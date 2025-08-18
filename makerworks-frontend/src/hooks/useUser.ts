@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuthStore } from '@/store/useAuthStore'
 import * as Auth from '@/api/auth' // namespace import to avoid named-export mismatches
-import axios from '@/api/axios'
+import axios from '@/api/client'
 
 export interface Upload {
   id: string

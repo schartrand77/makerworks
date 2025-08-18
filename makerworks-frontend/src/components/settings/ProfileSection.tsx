@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/store/useAuthStore'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 
 export default function ProfileSection() {
   const { user, setUser } = useAuthStore()

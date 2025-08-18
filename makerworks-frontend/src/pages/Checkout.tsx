@@ -3,7 +3,7 @@ import { useCartStore } from '@/store/useCartStore';
 import PageLayout from '@/components/layout/PageLayout';
 import GlassCard from '@/components/ui/GlassCard';
 import PageHeader from '@/components/ui/PageHeader';
-import axios from '@/api/axios';
+import axios from '@/api/client';
 import { loadStripe } from '@stripe/stripe-js';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';

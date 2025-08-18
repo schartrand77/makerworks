@@ -1,7 +1,7 @@
 // src/components/settings/AvatarSection.tsx
 import { useRef, useState, useEffect, useMemo } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
-import axios from '@/api/axios';
+import axios from '@/api/client';
 import { toast } from 'sonner';
 import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
 

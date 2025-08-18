@@ -1,5 +1,5 @@
 // src/api/auth.ts
-import axios from './axios'
+import axios from './client'
 import { useAuthStore } from '@/store/useAuthStore'
 
 interface CodedError extends Error {

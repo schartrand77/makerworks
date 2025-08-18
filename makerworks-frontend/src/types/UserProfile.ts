@@ -17,8 +17,8 @@ export interface UserProfile {
   /** Optional display name (e.g. full name) */
   name?: string
 
-  /** Role of the user (usually 'user' or 'admin') */
-  role: 'user' | 'admin' | string
+  /** Role of the user. May be a string, object, or array depending on backend shape */
+  role?: string | { name?: string } | Array<string | { name?: string }>
 
   /** Optional groups or roles the user belongs to */
   groups?: string[]

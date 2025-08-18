@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/useAuthStore'
-import axiosInstance from '@/api/axios'
+import axiosInstance from '@/api/client'
 import { toast } from 'sonner'
 
 /** Best-effort backend sign-out + local store cleanup. Never throws. */

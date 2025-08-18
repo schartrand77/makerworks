@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
 import { renderHook, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 import { useSignIn } from '../useSignIn'
 import { useAuthStore } from '@/store/useAuthStore'
 
-vi.mock('@/api/axios')
+vi.mock('@/api/client')
 
 function createStorageMock() {
   let store: Record<string, string> = {}
@@ -42,7 +42,8 @@ beforeEach(() => {
 
 describe('useSignIn', () => {
   it('fetches profile after successful sign in', async () => {
-    (axios.post as any).mockResolvedValue({
+    ;(axios.post as any).mockResolvedValue({
+      status: 200,
       data: {
         user: { id: '1', username: 'u', email: 'e', role: 'user' }
       }

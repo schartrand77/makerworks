@@ -60,5 +60,11 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['react', 'react-dom'],
+    exclude: ['ioredis'],
+  },
+  build: {
+    rollupOptions: {
+      external: ['ioredis'],
+    },
   },
 })

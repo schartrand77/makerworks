@@ -55,8 +55,8 @@ services:
       - ./makerworks-backend:/app
     environment:
       <<: *buildkit-env
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks"
+      REDIS_URL: "redis://redis:6379/0"
       RUN_MIGRATIONS: "true"
     depends_on:
       postgres:
@@ -71,14 +71,28 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./makerworks-backend:/app
+      # map host folders so API & previews write where you can see them
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/app/uploads
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
     env_file:
       - ./makerworks-backend/.env.dev
       - ./makerworks-backend/.env
     environment:
       <<: *buildkit-env
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-      BASE_URL: http://localhost:8000
+      DATABASE_URL: "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks"
+      REDIS_URL: "redis://redis:6379/0"         # keep if backend uses Redis (sessions/cache)
+      BASE_URL: "http://localhost:8000"
+      # CORS for local dev
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:8080","http://localhost:3000"]'
+      # explicit paths that match the mounts above
+      UPLOAD_DIR: "/app/uploads"
+      THUMBNAILS_DIR: "/thumbnails"
+      THUMBNAILS_URL_PREFIX: "/thumbnails"
+      MODELS_DIR: "/models"
+      # sane thumbnail defaults (match your renderer)
+      THUMBNAIL_BACKEND: "plotly"
+      THUMBNAIL_SIZE: "1024"
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,28 +107,6 @@ services:
       start_period: 90s
       retries: 5
 
-  worker:
-    build:
-      context: ./makerworks-backend
-      dockerfile: Dockerfile.macos
-      args:
-        WORKER_IMAGE: "true"
-    container_name: makerworks_worker
-    restart: unless-stopped
-    command: celery -A app.celery_worker.celery_app worker --loglevel=INFO --concurrency=2
-    working_dir: /app
-    volumes:
-      - ./makerworks-backend:/app
-    environment:
-      <<: *buildkit-env
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      backend:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   # Dev frontend (Vite on 5173)
   frontend:
     build:
@@ -126,14 +118,17 @@ services:
     ports: ["5173:5173"]
     environment:
       <<: *buildkit-env
+      VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+      VITE_BACKEND_URL:  "http://localhost:8000"
     volumes:
       - ./makerworks-frontend:/app
-      - /app/node_modules       # preserve deps so vite is available
+      - /app/node_modules
     depends_on:
       backend:
         condition: service_healthy
+    command: npm run dev -- --host
 
-  # Prod frontend (Nginx serves /dist on port 80)
+  # Prod frontend (Nginx serves /dist) — moved off 5173 to avoid conflict
   frontend-prod:
     build:
       context: ./makerworks-frontend
@@ -141,7 +136,7 @@ services:
       target: production
     container_name: makerworks_frontend_prod
     restart: unless-stopped
-    ports: ["5173:80"]  # change to ["80:80"] if you want plain port 80
+    ports: ["5174:80"]
     volumes:
       - ./makerworks-frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:

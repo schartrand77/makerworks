@@ -13,13 +13,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-        required: true
     environment:
-      # Browser hits localhost:8000 (not the Docker service name)
-      VITE_API_URL: http://localhost:8000/api/v1
-      VITE_API_BASE_URL: http://localhost:8000/api/v1
-      VITE_THUMB_BASE: http://localhost:8000
-      VITE_UPLOADS_BASE: http://localhost:8000
+      # Browser hits the backend on the host
+      VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+      VITE_BACKEND_URL:  "http://localhost:8000"
     networks:
       - default
     ports:
@@ -41,16 +38,18 @@ services:
         condition: service_healthy
     environment:
       <<: *buildkit-env
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks"
+      REDIS_URL: "redis://redis:6379/0"
 
       # CORS & base URL so the API can emit absolute links
-      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:3000","http://127.0.0.1:3000"]'
-      BASE_URL: http://localhost:8000
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:3000","http://127.0.0.1:3000","http://localhost:8080"]'
+      BASE_URL: "http://localhost:8000"
 
-      # Thumbnails: container path & public URL prefix
-      THUMBNAILS_DIR: /thumbnails
-      THUMBNAILS_URL_PREFIX: /thumbnails
+      # Explicit in-container paths + public URL prefix
+      UPLOAD_DIR: "/app/uploads"
+      THUMBNAILS_DIR: "/thumbnails"
+      THUMBNAILS_URL_PREFIX: "/thumbnails"
+      MODELS_DIR: "/models"
 
       # Use CPU-safe Plotly path in Docker
       THUMBNAIL_BACKEND: "plotly"
@@ -88,40 +87,33 @@ services:
     restart: unless-stopped
     volumes:
       - ./makerworks-backend:/app
-      - ./uploads:/app/uploads
-      # Map thumbnails to your absolute macOS path (fixed spelling)
+      # Map host folders so API & previews write where you can see them
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/app/uploads
       - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails:rw
+      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
     working_dir: /app
 
   migrate:
     build:
       context: ./makerworks-backend
       dockerfile: Dockerfile.macos
-    command:
-      - echo
-      - "⏳ Waiting for PostgreSQL..."
-      - until
-      - PGPASSWORD=makerworks
-      - psql
-      - -h
-      - postgres
-      - -U
-      - makerworks
-      - -d
-      - makerworks
-      - -c
-      - \q
     container_name: makerworks_migrate
     depends_on:
       postgres:
         condition: service_healthy
-    entrypoint:
-      - /bin/sh
-      - -c
+    entrypoint: ["/bin/sh","-lc"]
+    command: >
+      echo "⏳ Waiting for PostgreSQL..." ;
+      until psql "postgresql://makerworks:makerworks@postgres:5432/makerworks" -c "\q" >/dev/null 2>&1; do
+        sleep 1;
+      done ;
+      echo "✅ DB ready — running Alembic" ;
+      alembic upgrade head ;
+      echo "✅ Migrations complete"
     environment:
       <<: *buildkit-env
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks"
+      REDIS_URL: "redis://redis:6379/0"
       RUN_MIGRATIONS: "true"
     networks:
       - default
@@ -161,39 +153,6 @@ services:
       timeout: 3s
       interval: 5s
       retries: 10
-
-  worker:
-    build:
-      context: ./makerworks-backend
-      dockerfile: Dockerfile.macos
-      args:
-        WORKER_IMAGE: "true"
-    command:
-      - celery
-      - -A
-      - app.celery_worker.celery_app
-      - worker
-      - --loglevel=INFO
-      - --concurrency=2
-    container_name: makerworks_worker
-    depends_on:
-      backend:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      <<: *buildkit-env
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-      # Make the worker write thumbnails to the same mounted dir
-      THUMBNAILS_DIR: /thumbnails
-    networks:
-      - default
-    restart: unless-stopped
-    volumes:
-      - ./makerworks-backend:/app
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails:rw
-    working_dir: /app
 
 volumes:
   postgres_data:

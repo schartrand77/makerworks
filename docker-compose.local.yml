@@ -1,7 +1,0 @@
-services:
-  frontend-prod:
-    ports:
-      - "5174:80"
-  frontend:
-    ports:
-      - "5173:5173"

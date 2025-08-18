@@ -21,19 +21,6 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    container_name: makerworks_redis
-    restart: unless-stopped
-    ports: ["6379:6379"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   migrate:
     build:
       context: ./makerworks-backend
@@ -56,7 +43,6 @@ services:
     environment:
       <<: *buildkit-env
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
       RUN_MIGRATIONS: "true"
     depends_on:
       postgres:
@@ -80,8 +66,9 @@ services:
     environment:
       <<: *buildkit-env
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
       BASE_URL: http://localhost:8000
+      # CORS for local dev (5173 Vite; add 8080 if you run prod preview)
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:8080"]'
       # explicit inside-container paths (match binds above)
       UPLOAD_DIR: /app/uploads
       THUMBNAILS_DIR: /thumbnails
@@ -91,8 +78,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL
@@ -111,34 +96,6 @@ services:
       retries: 5
     working_dir: /app
 
-  worker:
-    build:
-      context: ./makerworks-backend
-      dockerfile: Dockerfile.macos
-      args:
-        WORKER_IMAGE: "true"
-    container_name: makerworks_worker
-    restart: unless-stopped
-    command: celery -A app.celery_worker.celery_app worker --loglevel=INFO --concurrency=2
-    working_dir: /app
-    volumes:
-      - ./makerworks-backend:/app
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/app/uploads
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails
-      - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
-    environment:
-      <<: *buildkit-env
-      DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      REDIS_URL: redis://redis:6379/0
-      UPLOAD_DIR: /app/uploads
-      THUMBNAILS_DIR: /thumbnails
-      MODELS_DIR: /models
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   # Dev frontend (Vite on 5173)
   frontend:
     build:
@@ -150,14 +107,15 @@ services:
     ports: ["5173:5173"]
     environment:
       <<: *buildkit-env
-      VITE_API_URL: http://localhost:8000/api/v1
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      VITE_BACKEND_URL:  http://localhost:8000
     volumes:
       - ./makerworks-frontend:/app
-      - /app/node_modules    # keep node_modules inside container so vite is available
+      - /app/node_modules
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
+    command: npm run dev -- --host
 
 volumes:
   postgres_data:
-  redis_data:

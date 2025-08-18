@@ -15,14 +15,14 @@ interface AvatarSectionProps {
 const AVATAR_UPLOAD_PATH = '/avatar/';
 
 export default function AvatarSection({ currentAvatar, onAvatarUpdate }: AvatarSectionProps) {
-  const { user, token, fetchUser, setUser } = useAuthStore();
+  const { user, fetchUser, setUser } = useAuthStore();
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
-  // Ensure user is loaded if we have a token
+  // Ensure user profile is loaded
   useEffect(() => {
-    if (!user && token) fetchUser();
-  }, [user, token, fetchUser]);
+    if (!user) fetchUser();
+  }, [user, fetchUser]);
 
   // Build the base avatar URL
   const avatarBase = useMemo(() => {
@@ -72,7 +72,6 @@ export default function AvatarSection({ currentAvatar, onAvatarUpdate }: AvatarS
 
       const res = await axios.post(AVATAR_UPLOAD_PATH, formData, {
         withCredentials: true,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
 
       // backend returns a relative path like /uploads/users/<id>/avatars/<file>.png

@@ -27,7 +27,7 @@ const CARD_WIDTH = 450 // each card ~half the old width
 
 const UploadPage: React.FC = () => {
   // auth
-  const { token, user } = useAuthStore.getState ? useAuthStore() : ({ token: undefined, user: undefined } as any)
+  const { user } = useAuthStore.getState ? useAuthStore() : ({ user: undefined } as any)
 
   // ---------- MODEL CARD STATE ----------
   const [modelLoading, setModelLoading] = useState(false)
@@ -144,10 +144,6 @@ const UploadPage: React.FC = () => {
 
   // ---------- ACTIONS ----------
   const uploadModelWithProgress = async (file: File) => {
-    if (!token) {
-      toast.error('❌ Not authenticated (missing token).')
-      throw new Error('Missing token')
-    }
     const userId = resolveUserId()
     if (!userId) {
       toast.error('❌ Missing user id (X-User-Id). Sign in again.')
@@ -164,7 +160,6 @@ const UploadPage: React.FC = () => {
     return axios.post(`/upload`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
-        Authorization: `Bearer ${token}`,
         'X-User-Id': userId,
       },
       onUploadProgress: (e: ProgressEvent) => {
@@ -222,10 +217,6 @@ const UploadPage: React.FC = () => {
       toast.error('❌ Choose up to 3 images.')
       return
     }
-    if (!token) {
-      toast.error('❌ Not authenticated (missing token).')
-      return
-    }
     const userId = resolveUserId()
     if (!userId) {
       toast.error('❌ Missing user id (X-User-Id). Sign in again.')
@@ -242,7 +233,6 @@ const UploadPage: React.FC = () => {
       await axios.post(`/models/${effectiveModelId}/photos`, form, {
         headers: {
           'Content-Type': 'multipart/form-data',
-          Authorization: `Bearer ${token}`,
           'X-User-Id': userId,
         },
         onUploadProgress: (e: ProgressEvent) => {

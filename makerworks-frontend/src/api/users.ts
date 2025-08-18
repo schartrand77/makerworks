@@ -26,8 +26,8 @@ export type UpdateProfilePayload = z.infer<typeof UpdateProfileSchema>
 export const uploadAvatar = async (
   file: File
 ): Promise<AvatarUploadResponse | null> => {
-  const { token, user, setUser, fetchUser } = useAuthStore.getState()
-  if (!token || !user?.id) {
+  const { user, setUser, fetchUser } = useAuthStore.getState()
+  if (!user?.id) {
     toast.error('❌ Not authenticated. Please log in.')
     return null
   }
@@ -42,8 +42,7 @@ export const uploadAvatar = async (
       {
         headers: {
           'Content-Type': 'multipart/form-data',
-          'Authorization': `Bearer ${token}`
-        }
+        },
       }
     )
 

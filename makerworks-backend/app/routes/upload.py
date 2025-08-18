@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional, List  # ← added List
+from typing import Any, Dict, Optional, List
 
 from fastapi import (
     APIRouter,
@@ -29,14 +29,14 @@ from sqlalchemy import text
 from PIL import Image  # for PNG sanity check
 
 from app.db.session import async_engine
-from app.dependencies.auth import get_current_user  # ← wire in your auth dep
+from app.dependencies.auth import get_current_user  # auth dep
 
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
 
 # ── Config ────────────────────────────────────────────────────────────────
-UPLOAD_ROOT = Path(os.getenv("UPLOAD_DIR", "/uploads")).resolve()
-THUMB_ROOT = Path(os.getenv("THUMBNAILS_DIR", "/thumbnails")).resolve()
+UPLOAD_ROOT = Path(os.getenv("UPLOAD_DIR") or os.getenv("UPLOADS_PATH") or "/app/uploads").resolve()
+THUMB_ROOT = Path(os.getenv("THUMBNAILS_DIR") or "/thumbnails").resolve()
 
 # Ensure these exist and are writable
 def _ensure_dir_writable(path: Path):
@@ -59,7 +59,7 @@ ALLOWED_EXTS = {".stl", ".3mf"}
 MAX_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
 
 # PHOTOS: image policy
-ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}  # keep it sane
+ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB per image
 
 THUMBNAIL_SIZE    = int(os.getenv("THUMBNAIL_SIZE", "1024"))
@@ -202,12 +202,14 @@ async def _resolve_model_dir(model_id: str) -> tuple[Path, str]:
     return model_dir, owner_id
 
 # ── Route (auth REQUIRED via get_current_user) ─────────────────────────────
-@router.post("/upload", status_code=status.HTTP_201_CREATED)
+# NOTE: this router is mounted in main.py with prefix="/api/v1/upload"
+# so the path here must be "" (empty) to avoid /upload/upload.
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_model(
     file: UploadFile = File(...),
     name: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
-    current_user: Any = Depends(get_current_user),  # ← FastAPI will verify token & load user
+    current_user: Any = Depends(get_current_user),  # FastAPI verifies token & loads user
 ):
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing filename.")
@@ -252,6 +254,7 @@ async def upload_model(
     rel_to_uploads = dest_path.resolve().relative_to(UPLOAD_ROOT.resolve())
     file_url = f"/uploads/{rel_to_uploads.as_posix()}"
 
+    # Render thumbnail and compute public URL
     thumb_fs_path = await _make_thumbnail(dest_path, model_id)
     try:
         rel_to_thumbs = thumb_fs_path.resolve().relative_to(THUMB_ROOT.resolve())
@@ -267,7 +270,9 @@ async def upload_model(
         "filename": Path(file.filename).name,
         "file_path": str(dest_path),
         "file_url": file_url,
-        "thumbnail_path": thumb_url,  # store public URL for browse page
+        # Store the real filesystem path in thumbnail_path; URL in thumbnail_url (if column exists)
+        "thumbnail_path": str(thumb_fs_path),
+        "thumbnail_url": thumb_url,
         "turntable_path": None,
         "name": (name or Path(file.filename).stem),
         "description": (description or ""),
@@ -321,8 +326,8 @@ async def upload_model(
             "filename": record.get("filename"),
             "file_path": record.get("file_path"),
             "file_url": file_url,
-            "thumbnail_path": record.get("thumbnail_path"),
-            "thumbnail_url": thumb_url,
+            "thumbnail_path": record.get("thumbnail_path"),  # FS path
+            "thumbnail_url": thumb_url,                      # public URL
             "turntable_path": None,
             "uploaded_at": uploaded_at.isoformat(),
         },

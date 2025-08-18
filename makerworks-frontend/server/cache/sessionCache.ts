@@ -1,4 +1,16 @@
-import redis from './redisClient';
+import type Redis from 'ioredis';
+
+let redisPromise: Promise<Redis> | null = null;
+
+const getRedis = async (): Promise<Redis> => {
+  if (typeof window !== 'undefined') {
+    throw new Error('sessionCache should only run on the server');
+  }
+  if (!redisPromise) {
+    redisPromise = import('./redisClient').then((m) => m.getRedisClient());
+  }
+  return redisPromise;
+};
 
 const SESSION_TTL_SECONDS = 7200; // 2 hours
 
@@ -17,6 +29,7 @@ export interface SessionData {
 export async function getSessionFromCache(token: string): Promise<SessionData | null> {
   const key = `session:${token}`;
   try {
+    const redis = await getRedis();
     const data = await redis.get(key);
     if (!data) return null;
 
@@ -46,6 +59,7 @@ export async function setSessionCache(
       console.warn(`[sessionCache] Invalid TTL ${ttl}, defaulting to ${SESSION_TTL_SECONDS}`);
       ttl = SESSION_TTL_SECONDS;
     }
+    const redis = await getRedis();
     await redis.set(key, JSON.stringify(sessionData), 'EX', ttl);
   } catch (err) {
     console.error(`[sessionCache] Redis SET failed for ${key}`, err);
@@ -58,6 +72,7 @@ export async function setSessionCache(
 export async function invalidateSessionCache(token: string): Promise<void> {
   const key = `session:${token}`;
   try {
+    const redis = await getRedis();
     await redis.del(key);
   } catch (err) {
     console.error(`[sessionCache] Redis DEL failed for ${key}`, err);

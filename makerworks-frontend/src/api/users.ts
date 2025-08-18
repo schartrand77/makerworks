@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { z } from 'zod'
 import { useAuthStore } from '@/store/useAuthStore'
 import { getCurrentUser } from './auth'
+import { isAxiosError } from 'axios'
 
 export interface AvatarUploadResponse {
   status: 'ok'
@@ -60,11 +61,13 @@ export const uploadAvatar = async (
 
     toast.success('✅ Avatar updated.')
     return res.data
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[uploadAvatar] error', err)
-    toast.error(
-      err?.response?.data?.detail || '❌ Failed to upload avatar.'
-    )
+    const detail =
+      isAxiosError(err) && err.response?.data?.detail
+        ? String(err.response.data.detail)
+        : '❌ Failed to upload avatar.'
+    toast.error(detail)
     return null
   }
 }
@@ -95,11 +98,13 @@ export const updateUserProfile = async (
     await getCurrentUser()
 
     toast.success('✅ Profile updated.')
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[updateUserProfile] error', err)
-    toast.error(
-      err?.response?.data?.detail || '❌ Failed to update profile.'
-    )
+    const detail =
+      isAxiosError(err) && err.response?.data?.detail
+        ? String(err.response.data.detail)
+        : '❌ Failed to update profile.'
+    toast.error(detail)
     throw err
   }
 }
@@ -118,11 +123,13 @@ export const deleteAccount = async (): Promise<void> => {
     await axios.delete('/users/me')
     logout()
     toast.success('✅ Account deleted.')
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[deleteAccount] error', err)
-    toast.error(
-      err?.response?.data?.detail || '❌ Failed to delete account.'
-    )
+    const detail =
+      isAxiosError(err) && err.response?.data?.detail
+        ? String(err.response.data.detail)
+        : '❌ Failed to delete account.'
+    toast.error(detail)
     throw err
   }
 }

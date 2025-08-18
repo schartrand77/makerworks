@@ -36,9 +36,18 @@ def _set(obj: Any, attr: str, val: Any):
 
 def _row(row: Any) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
-    for k in ("id", "type", "color", "hex", "is_active", "created_at", "updated_at"):
-        if hasattr(row, k):
-            out[k] = getattr(row, k)
+    mapping = {
+        "id": "id",
+        "type": "type",
+        "color_name": "color",
+        "color_hex": "hex",
+        "is_active": "is_active",
+        "created_at": "created_at",
+        "updated_at": "updated_at",
+    }
+    for attr, key in mapping.items():
+        if hasattr(row, attr):
+            out[key] = getattr(row, attr)
     return out
 
 def _q_bool(req: Request, name: str, default: bool) -> bool:
@@ -115,8 +124,8 @@ async def create_filament(
         )
     f = Filament()
     _set(f, "type", type_val)
-    _set(f, "color", (payload.get("color") or "").strip())
-    _set(f, "hex", (payload.get("hex") or "").strip())
+    _set(f, "color_name", (payload.get("color") or "").strip())
+    _set(f, "color_hex", (payload.get("hex") or "").strip())
     if _has(Filament, "is_active"):
         _set(f, "is_active", bool(payload.get("is_active", True)))
     now = datetime.utcnow()
@@ -162,10 +171,10 @@ async def update_filament(
         if not val:
             raise HTTPException(422, "type cannot be empty")
         f.type = val
-    if "color" in payload and _has(Filament, "color"):
-        f.color = (payload.get("color") or "").strip()
-    if "hex" in payload and _has(Filament, "hex"):
-        f.hex = (payload.get("hex") or "").strip()
+    if "color" in payload and _has(Filament, "color_name"):
+        f.color_name = (payload.get("color") or "").strip()
+    if "hex" in payload and _has(Filament, "color_hex"):
+        f.color_hex = (payload.get("hex") or "").strip()
     if "is_active" in payload and _has(Filament, "is_active"):
         f.is_active = bool(payload.get("is_active"))
     if _has(Filament, "updated_at"):

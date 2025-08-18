@@ -100,7 +100,7 @@ A small utility script `generate_sample_images.py` can be used to create placeho
 
 ## Testing
 
-Vitest tests reside under `src/**/__tests__` and run in a jsdom environment. Cypress is used for full end‑to‑end tests and is configured in `.github/workflows/cypress.yml` for CI.
+Vitest tests reside under `src/**/__tests__` (and `tests/`) and run in a jsdom environment. These unit tests execute in CI alongside the Cypress end‑to‑end suite via `.github/workflows/cypress.yml`.
 
 ## Contributing
 

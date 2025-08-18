@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useDropzone } from 'react-dropzone'
 import toast, { Toaster } from 'react-hot-toast'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
 
 const allowedModelExtensions = ['stl', '3mf', 'obj'] // keeping 'obj' since your page lists it

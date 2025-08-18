@@ -214,37 +214,30 @@ function installInterceptors(instance: AxiosInstance) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-const api: AxiosInstance = Axios.create({
-  baseURL: baseOrigin, // ORIGIN ONLY — no path here
-  withCredentials: true,
-  headers: { Accept: 'application/json' },
-  timeout: 30000,
-})
-installInterceptors(api)
-
-// Patch GLOBAL defaults + default instance
-Axios.defaults.withCredentials = true
-Axios.defaults.headers.common['Accept'] = 'application/json'
-installInterceptors(Axios as unknown as AxiosInstance)
-
-// Monkey-patch Axios.create so every future instance inherits the guard
-const __origCreate = Axios.create.bind(Axios)
-Axios.create = function patchedCreate(
+export function createApiClient(
   config?: CreateAxiosDefaults
 ): AxiosInstance {
-  const inst = __origCreate(config)
+  const inst = Axios.create({
+    baseURL: baseOrigin, // ORIGIN ONLY — no path here
+    withCredentials: true,
+    headers: { Accept: 'application/json' },
+    timeout: 30000,
+    ...(config || {}),
+  })
+
   // Force origin-only even if a path sneaks into config.baseURL
-  if (config?.baseURL) {
+  if (inst.defaults.baseURL) {
     try {
-      ;(inst.defaults as { baseURL?: string }).baseURL = originOnly(
-        String(config.baseURL)
-      )
+      inst.defaults.baseURL = originOnly(String(inst.defaults.baseURL))
     } catch {
-      ;(inst.defaults as { baseURL?: string }).baseURL = baseOrigin
+      inst.defaults.baseURL = baseOrigin
     }
   }
+
   installInterceptors(inst)
   return inst
 }
+
+const api: AxiosInstance = createApiClient()
 
 export default api

@@ -1,6 +1,6 @@
 // src/pages/admin/FilamentsTab.tsx
 import { useEffect, useMemo, useState } from 'react';
-import axios from '@/api/axios';
+import axios from '@/api/client';
 
 type Filament = {
   id: string;

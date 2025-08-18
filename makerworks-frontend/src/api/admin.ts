@@ -14,7 +14,7 @@
 // NOTE: Our axios instance already targets the correct base (adds /api/v1).
 // Use paths beginning with /admin/... here.
 
-import axios from './axios'
+import axios from './client'
 
 export {
   fetchAvailableFilaments,

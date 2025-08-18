@@ -1,4 +1,4 @@
-import axios from './axios'
+import axios from './client'
 import { toast } from 'sonner'
 import { z } from 'zod'
 import { useAuthStore } from '@/store/useAuthStore'

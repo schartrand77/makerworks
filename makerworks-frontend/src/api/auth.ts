@@ -80,10 +80,13 @@ export async function signIn(payload: SignInPayload): Promise<User> {
     {
       withCredentials: true,
       validateStatus: (s) =>
-        // success
         (s >= 200 && s < 300) ||
-        // parseable client errors we want to surface
-        s === 400 || s === 401 || s === 403 || s === 404 || s === 405 || s === 422,
+        s === 400 ||
+        s === 401 ||
+        s === 403 ||
+        s === 404 ||
+        s === 405 ||
+        s === 422,
     }
   )
 
@@ -110,7 +113,7 @@ export async function signIn(payload: SignInPayload): Promise<User> {
     throw err
   }
 
-  const user = res.data as User
+  const user = (res.data as any)?.user as User
   try {
     useAuthStore.getState().setUser(user)
   } catch {}
@@ -122,7 +125,7 @@ export async function signUp(payload: SignUpPayload): Promise<User> {
   const res = await axios.post('api/v1/auth/signup', payload, {
     withCredentials: true,
   })
-  const user = res.data as User
+  const user = (res.data as any)?.user as User
   try {
     useAuthStore.getState().setUser(user)
   } catch {}

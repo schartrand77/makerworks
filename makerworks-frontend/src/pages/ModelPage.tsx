@@ -1,7 +1,7 @@
 // src/pages/ModelPage.tsx
 import { useParams, Link, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 import ModelViewer from '@/components/ui/ModelViewer'
 import getAbsoluteUrl from '@/lib/getAbsoluteUrl'
 import GlassCard from '@/components/ui/GlassCard'

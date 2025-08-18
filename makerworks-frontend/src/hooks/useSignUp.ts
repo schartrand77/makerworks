@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axiosInstance from '@/api/axios'
+import axiosInstance from '@/api/client'
 import axios, { AxiosError } from 'axios'
 import { useAuthStore } from '@/store/useAuthStore'
 import { UserOut } from '@/types/auth'

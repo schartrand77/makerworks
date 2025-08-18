@@ -46,7 +46,7 @@ const UserDropdown = ({ user }: Props) => {
     isAdmin: isAdminStore,
   } = useAuthStore() as any
 
-  // On first mount, ensure we have /auth/me loaded (cookie sessions may have no token)
+  // On first mount, ensure we have /auth/me loaded (cookie sessions may start without user)
   useEffect(() => {
     if (!resolved) {
       fetchUser().catch(() => {

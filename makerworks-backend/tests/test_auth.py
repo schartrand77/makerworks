@@ -69,18 +69,6 @@ async def db(client):
         yield session
 
 
-@pytest.fixture()
-async def token(client: AsyncClient):
-    email = f"t{uuid.uuid4()}@example.com"
-    username = f"t{uuid.uuid4()}"
-    password = "StrongPass123!"
-
-    resp = await client.post(
-        "/signup",
-        json={"email": email, "username": username, "password": password},
-    )
-    assert resp.status_code == 200
-    return resp.json()["token"]
 
 
 @pytest.mark.asyncio
@@ -96,7 +84,7 @@ async def test_signup(client: AsyncClient, db: AsyncSession):
     })
     assert response.status_code == 200
     data = response.json()
-    assert "token" in data
+    assert "user" in data
     assert data["user"]["email"] == email
     assert data["user"]["username"] == username
 
@@ -117,31 +105,33 @@ async def test_signin(client: AsyncClient):
 
     await client.post("/signup", json={"email": email, "username": username, "password": password})
 
-    response = await client.post("/signin", json={
-        "email_or_username": email,
-        "password": password
-    })
-    assert response.status_code == 200
-    data = response.json()
-    assert "token" in data
-
-
-@pytest.mark.asyncio
-async def test_me(client: AsyncClient, token: str):
-    headers = {"Authorization": f"Bearer {token}"}
-    response = await client.get("/me", headers=headers)
+    response = await client.post(
+        "/signin",
+        json={"email_or_username": email, "password": password},
+    )
     assert response.status_code == 200
     data = response.json()
     assert "user" in data
 
 
 @pytest.mark.asyncio
-async def test_debug(client: AsyncClient, token: str):
-    headers = {"Authorization": f"Bearer {token}"}
-    response = await client.get("/debug", headers=headers)
+async def test_me(client: AsyncClient):
+    email = f"m{uuid.uuid4()}@example.com"
+    username = f"m{uuid.uuid4()}"
+    password = "StrongPass123!"
+
+    resp = await client.post(
+        "/signup",
+        json={"email": email, "username": username, "password": password},
+    )
+    assert resp.status_code == 200
+
+    response = await client.get("/me")
     assert response.status_code == 200
     data = response.json()
-    assert data["token"] == "debug-token"
+    assert data["email"] == email
+
+
 
 
 @pytest.mark.asyncio

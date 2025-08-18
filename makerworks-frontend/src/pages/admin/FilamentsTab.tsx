@@ -1,6 +1,6 @@
 // src/pages/admin/FilamentsTab.tsx
 import { useEffect, useMemo, useState } from 'react';
-import axios from '@/api/client';
+import { fetchAvailableFilaments } from '@/api/filaments';
 
 type Filament = {
   id: string;
@@ -66,41 +66,11 @@ export default function FilamentsTab() {
   useEffect(() => {
     let cancelled = false;
 
-    const tryGet = async (url: string, params?: Record<string, any>) => {
-      const res = await axios.get(url, params ? { params } : undefined);
-      return res.data;
-    };
-
-    const fetchFilaments = async (): Promise<Filament[]> => {
-      // Only call the endpoints you actually have. Start with no params.
-      const tries: Array<() => Promise<any>> = [
-        () => tryGet('/api/v1/filaments'),                 // no trailing slash, no params
-        () => tryGet('/api/v1/filaments/'),                // trailing slash, no params
-        () => tryGet('/api/v1/filaments', { offset: 0, limit: 1000 }),
-        () => tryGet('/api/v1/filaments/', { offset: 0, limit: 1000 }),
-        // Optional: page/per_page if your backend tolerates them
-        () => tryGet('/api/v1/filaments', { page: 1, per_page: 1000 }),
-        () => tryGet('/api/v1/filaments/', { page: 1, per_page: 1000 }),
-      ];
-
-      let lastErr: any = null;
-      for (const attempt of tries) {
-        try {
-          const data = await attempt();
-          const items = normalizeItems(data);
-          if (items) return items; // accept [] as success
-        } catch (e: any) {
-          lastErr = e;
-        }
-      }
-      throw lastErr ?? new Error('All filament fetch attempts failed');
-    };
-
     (async () => {
       setLoading(true);
       setErr(null);
       try {
-        const items = await fetchFilaments();
+        const items = normalizeItems(await fetchAvailableFilaments());
         if (!cancelled) setFilaments(items ?? []);
       } catch (e: any) {
         console.error('[FilamentsTab] failed to load filaments', e);

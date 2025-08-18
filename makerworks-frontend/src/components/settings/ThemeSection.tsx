@@ -51,11 +51,11 @@ export default function ThemeSection() {
           <button
             key={option}
             onClick={() => handleChange(option)}
-            className={`flex-1 px-4 py-2 rounded-full text-sm font-medium transition-all backdrop-blur-md border shadow-sm
+            className={`flex-1 px-4 py-2 rounded-full text-sm font-medium transition-all backdrop-blur-md ring-1 shadow-sm
               ${
                 selected === option
-                  ? 'bg-blue-600/90 border-blue-500 text-white'
-                  : 'bg-blue-400/10 border-white/20 text-gray-200 hover:border-white/40'
+                  ? 'bg-transparent text-white ring-blue-500 hover:ring-blue-400'
+                  : 'bg-transparent text-gray-200 ring-white/20 hover:ring-white/40'
               }`}
           >
             {option === 'system' ? '🖥️ System' : option === 'light' ? '🌞 Light' : '🌙 Dark'}

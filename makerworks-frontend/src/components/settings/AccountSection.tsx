@@ -40,7 +40,7 @@ export default function AccountSection() {
         <button
           onClick={handleDelete}
           disabled={deleting}
-          className="w-full py-2 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all disabled:opacity-60"
+          className="w-full py-2 rounded-full bg-transparent ring-1 ring-red-600 text-white transition-all hover:ring-red-700 disabled:opacity-50 disabled:ring-red-400"
         >
           {deleting ? 'Deleting Account...' : 'Delete My Account'}
         </button>

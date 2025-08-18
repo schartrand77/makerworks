@@ -164,7 +164,7 @@ export default function AvatarSection({ currentAvatar, onAvatarUpdate }: AvatarS
       <button
         onClick={handleClick}
         disabled={uploading}
-        className="px-6 py-2 rounded-full bg-blue-500 hover:bg-blue-600 text-white transition-all disabled:opacity-50"
+        className="px-6 py-2 rounded-full bg-transparent ring-1 ring-blue-500 text-white transition-all hover:ring-blue-600 disabled:opacity-50 disabled:ring-blue-300"
       >
         {uploading ? 'Uploading…' : 'Change Avatar'}
       </button>

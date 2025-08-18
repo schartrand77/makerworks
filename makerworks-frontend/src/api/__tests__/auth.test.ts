@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 import { signIn } from '../auth'
 import { useAuthStore } from '@/store/useAuthStore'
 import type { AxiosResponse } from 'axios'
 import type { User } from '../auth'
 
-vi.mock('@/api/axios')
+vi.mock('@/api/client')
 
 interface AxiosMock {
   post: ReturnType<typeof vi.fn>

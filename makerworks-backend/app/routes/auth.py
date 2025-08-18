@@ -141,7 +141,9 @@ async def signup(
         except Exception as e:
             log.warning("[Signup] cache_user_profile failed: %s", e)
 
-        access_token = create_access_token(str(user.id), extra={"email": user.email, "role": user.role})
+        access_token = create_access_token(
+            str(user.id), extra={"email": user.email, "role": user.role}
+        )
         response.set_cookie(
             key="access_token",
             value=access_token,
@@ -166,12 +168,7 @@ async def signup(
         except Exception as e:
             log.warning("[Signup] create_session failed: %s", e)
 
-        return {
-            "access_token": access_token,
-            "token": access_token,  # back-compat
-            "token_type": "bearer",
-            "user": user_payload,
-        }
+        return {"user": user_payload}
 
     except HTTPException as http_ex:
         log.warning("[Signup] %s", http_ex.detail)
@@ -227,7 +224,9 @@ async def signin(
     except Exception as e:
         log.warning("[Signin] cache_user_profile failed: %s", e)
 
-    access_token = create_access_token(str(user.id), extra={"email": user.email, "role": user.role})
+    access_token = create_access_token(
+        str(user.id), extra={"email": user.email, "role": user.role}
+    )
     response.set_cookie(
         key="access_token",
         value=access_token,
@@ -252,12 +251,7 @@ async def signin(
     except Exception as e:
         log.warning("[Signin] create_session failed: %s", e)
 
-    return {
-        "access_token": access_token,
-        "token": access_token,  # back-compat
-        "token_type": "bearer",
-        "user": user_payload,
-    }
+    return {"user": user_payload}
 
 
 @router.get("/me")

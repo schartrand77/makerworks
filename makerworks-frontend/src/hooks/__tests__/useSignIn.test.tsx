@@ -34,7 +34,6 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', createStorageMock())
   vi.stubGlobal('sessionStorage', createStorageMock())
   useAuthStore.setState({
-    token: null,
     user: null,
     setAuth: vi.fn(),
     fetchUser: vi.fn().mockResolvedValue(null)
@@ -45,7 +44,6 @@ describe('useSignIn', () => {
   it('fetches profile after successful sign in', async () => {
     (axios.post as any).mockResolvedValue({
       data: {
-        token: 't',
         user: { id: '1', username: 'u', email: 'e', role: 'user' }
       }
     })
@@ -57,9 +55,8 @@ describe('useSignIn', () => {
     })
 
     expect(useAuthStore.getState().setAuth).toHaveBeenCalledWith({
-      token: 't',
       user: { id: '1', username: 'u', email: 'e', role: 'user' }
     })
-    expect(useAuthStore.getState().fetchUser).toHaveBeenCalledWith(true)
+    expect(useAuthStore.getState().fetchUser).not.toHaveBeenCalled()
   })
 })

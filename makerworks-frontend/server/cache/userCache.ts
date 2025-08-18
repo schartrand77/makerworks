@@ -1,5 +1,17 @@
-import redis from './redisClient';
+import type Redis from 'ioredis';
 import { CachedUser } from './types';
+
+let redisPromise: Promise<Redis> | null = null;
+
+const getRedis = async (): Promise<Redis> => {
+  if (typeof window !== 'undefined') {
+    throw new Error('userCache should only run on the server');
+  }
+  if (!redisPromise) {
+    redisPromise = import('./redisClient').then((m) => m.getRedisClient());
+  }
+  return redisPromise;
+};
 
 const USER_TTL_SECONDS = 3600; // 1 hour
 
@@ -9,6 +21,7 @@ const USER_TTL_SECONDS = 3600; // 1 hour
 export async function getUserFromCache(userId: string): Promise<CachedUser | null> {
   const key = `user:${userId}`;
   try {
+    const redis = await getRedis();
     const data = await redis.get(key);
     if (!data) return null;
 
@@ -39,6 +52,7 @@ export async function setUserCache(
       ttl = USER_TTL_SECONDS;
     }
 
+    const redis = await getRedis();
     await redis.set(key, JSON.stringify(userData), 'EX', ttl);
   } catch (err) {
     console.error(`[userCache] Redis SET failed for ${key}`, err);
@@ -51,6 +65,7 @@ export async function setUserCache(
 export async function invalidateUserCache(userId: string): Promise<void> {
   const key = `user:${userId}`;
   try {
+    const redis = await getRedis();
     await redis.del(key);
   } catch (err) {
     console.error(`[userCache] Redis DEL failed for ${key}`, err);

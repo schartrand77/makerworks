@@ -11,21 +11,22 @@ interface GlassButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>
 }
 
 const variants = {
-  primary: 'bg-brand-red text-brand-black hover:opacity-90',
+  primary:
+    'bg-transparent text-brand-red ring-1 ring-brand-red/60 hover:ring-brand-red/80 focus:ring-brand-red/80',
   secondary:
-    'bg-zinc-200/80 text-black dark:bg-zinc-700/70 dark:text-white hover:bg-zinc-300 dark:hover:bg-zinc-600',
+    'bg-transparent text-zinc-800 dark:text-zinc-200 ring-1 ring-zinc-300/60 dark:ring-zinc-600/60 hover:ring-zinc-300/80 dark:hover:ring-zinc-600/80 focus:ring-zinc-300/80 dark:focus:ring-zinc-600/80',
   ghost:
-    'bg-transparent text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100/40 dark:hover:bg-zinc-700/40',
+    'bg-transparent text-zinc-800 dark:text-zinc-200 ring-1 ring-zinc-300/60 dark:ring-zinc-700/60 hover:ring-zinc-300/80 dark:hover:ring-zinc-700/80 focus:ring-zinc-300/80 dark:focus:ring-zinc-700/80',
   danger:
-    'bg-red-500/80 text-white dark:bg-red-600/80 hover:bg-red-600 dark:hover:bg-red-700',
+    'bg-transparent text-red-600 dark:text-red-400 ring-1 ring-red-500/60 dark:ring-red-600/60 hover:ring-red-500/80 dark:hover:ring-red-600/80 focus:ring-red-500/80 dark:focus:ring-red-600/80',
   uploadBlue:
-    'bg-blue-100/30 text-blue-700 border border-blue-200/40 backdrop-blur hover:bg-blue-100/50 hover:text-blue-800',
+    'bg-transparent text-blue-700 dark:text-blue-300 ring-1 ring-blue-300/60 dark:ring-blue-400/60 backdrop-blur hover:ring-blue-300/80 dark:hover:ring-blue-400/80 focus:ring-blue-300/80 dark:focus:ring-blue-400/80',
 };
 
 const sizes = {
-  sm: 'px-3 py-1 text-sm rounded-md',
-  md: 'px-4 py-2 text-base rounded-lg',
-  lg: 'px-6 py-3 text-lg rounded-xl',
+  sm: 'px-3 py-1 text-sm rounded-full',
+  md: 'px-4 py-2 text-base rounded-full',
+  lg: 'px-6 py-3 text-lg rounded-full',
 };
 
 const GlassButton = React.forwardRef<HTMLButtonElement, GlassButtonProps>(

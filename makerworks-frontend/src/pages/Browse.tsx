@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import axios from '@/api/client';
 import GlassCard from '@/components/ui/GlassCard';
 import PageHeader from '@/components/ui/PageHeader';
+import GlassButton from '@/components/ui/GlassButton';
 import { Search } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useToast } from '@/context/ToastProvider';
@@ -425,22 +426,20 @@ const Browse: React.FC = () => {
                         Get estimate →
                       </button>
 
-                      <button
+                      <GlassButton
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           navigateToModel(model);
                         }}
-                        className={[
-                          'inline-flex h-10 w-full items-center justify-center rounded-full px-4',
-                          'text-sm font-medium text-center transition',
-                          'bg-brand-red text-black shadow hover:bg-brand-blue',
-                        ].join(' ')}
+                        variant="brand"
+                        size="md"
+                        className="h-10 w-full px-4 text-sm font-medium text-black shadow"
                         aria-label="View details"
                         title="View model details"
                       >
                         View Details →
-                      </button>
+                      </GlassButton>
                     </div>
                   </GlassCard>
                 );
@@ -449,13 +448,15 @@ const Browse: React.FC = () => {
 
           {hasMore && !isLoading && (
             <div className="mt-6 text-center">
-              <button
+              <GlassButton
                 onClick={() => setPage((p) => p + 1)}
                 disabled={loadingMore}
-                className="px-4 py-2 rounded-full bg-brand-red hover:bg-brand-blue transition text-black text-sm shadow disabled:opacity-50"
+                variant="brand"
+                size="md"
+                className="px-4 text-sm shadow rounded-full"
               >
                 {loadingMore ? 'Loading…' : 'Load more'}
-              </button>
+              </GlassButton>
             </div>
           )}
         </>

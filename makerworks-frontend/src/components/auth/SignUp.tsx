@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import PageLayout from '@/components/layout/PageLayout';
 import { useSignUp } from '@/hooks/useSignUp';
+import GlassButton from '@/components/ui/GlassButton';
 
 const SignUp = () => {
   const {
@@ -171,7 +172,7 @@ const SignUp = () => {
           </div>
         )}
 
-        <button
+        <GlassButton
           type="submit"
           disabled={
             loading ||
@@ -181,21 +182,11 @@ const SignUp = () => {
             !confirmPassword.trim() ||
             password !== confirmPassword
           }
-          className="
-            mt-4
-            rounded-full
-            px-6
-            py-2
-            bg-brand-red
-            text-brand-white
-            hover:bg-brand-blue
-            transition-colors
-            duration-200
-            disabled:opacity-50
-          "
+          variant="brand"
+          className="mt-4 px-6 text-brand-white transition-colors duration-200 disabled:opacity-50"
         >
           {loading ? 'Signing up…' : 'Sign Up'}
-        </button>
+        </GlassButton>
       </form>
     </PageLayout>
   );

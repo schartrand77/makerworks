@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import axios from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
+import GlassButton from '@/components/ui/GlassButton'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -76,13 +77,14 @@ export default function LoginPage() {
         onKeyDown={handleKeyPress}
         className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-blue"
       />
-      <button
-        onClick={handleLogin}
-        disabled={loading}
-        className="bg-brand-red hover:bg-brand-blue text-black py-2 rounded disabled:opacity-50"
-      >
-        {loading ? 'Logging in…' : 'Login'}
-      </button>
+        <GlassButton
+          onClick={handleLogin}
+          disabled={loading}
+          variant="brand"
+          className="py-2 text-black rounded"
+        >
+          {loading ? 'Logging in…' : 'Login'}
+        </GlassButton>
     </div>
   )
 }

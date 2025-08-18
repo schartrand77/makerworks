@@ -78,20 +78,22 @@ export interface Model {
 /**
  * HELPERS
  */
-function ok<S = any>(res: { status: number; statusText?: string; data: unknown }): S {
-  const { status, statusText, data } = res as any
+function ok<S = unknown>(res: { status: number; statusText?: string; data: unknown }): S {
+  const { status, statusText, data } = res
 
   if (status >= 200 && status < 300) return data as S
 
   // Try to surface FastAPI-style error details
-  const d = data as any
+  const d = data as { detail?: unknown }
   let msg: string | undefined
 
   if (d?.detail) {
     if (Array.isArray(d.detail)) {
       // FastAPI 422: [{loc, msg, type}, ...]
       msg = d.detail
-        .map((e: any) => (typeof e?.msg === 'string' ? e.msg : JSON.stringify(e)))
+        .map((e: { msg?: unknown }) =>
+          typeof e?.msg === 'string' ? e.msg : JSON.stringify(e)
+        )
         .join('; ')
     } else if (typeof d.detail === 'string') {
       msg = d.detail
@@ -267,7 +269,7 @@ export async function updateDiscordConfig(cfg: DiscordConfig): Promise<DiscordCo
  *  PATCH may not exist; keeping current shape to avoid breaking callers.)
  */
 export async function fetchAllModels(
-  params?: Record<string, any>
+  params?: Record<string, unknown>
 ): Promise<Model[]> {
   try {
     const res = await axios.get<Model[]>('/models', {

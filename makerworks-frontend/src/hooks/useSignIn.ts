@@ -5,14 +5,6 @@ import { toast } from 'sonner'
 import axios from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
 
-/**
- * The backend now uses cookie-based auth exclusively.
- * Keep this hook compatible with older token responses, and try the payload shape the API expects:
- *   { username_or_email, password }
- * We still gracefully fall back to older shapes (identifier/email/username or OAuth2 form)
- * so we don’t break existing users.
- */
-
 interface SignInResponse {
   user?: {
     id: string
@@ -62,7 +54,6 @@ export const useSignIn = () => {
       return
     }
 
-    // Track attempts to avoid loops
     const tried = new Set<string>()
 
     try {
@@ -87,44 +78,54 @@ export const useSignIn = () => {
           }
         | undefined
 
-      // 🔑 1) Preferred: { username_or_email, password } (admin & normal users)
+      // 🔑 1) Correct for your backend: { email_or_username, password }
       try {
-        tried.add('username_or_email')
-        res = await doJson({ username_or_email: ident, password: pass })
+        tried.add('email_or_username')
+        res = await doJson({ email_or_username: ident, password: pass })
       } catch (e1: any) {
-        // If payload shape was wrong, we’ll adapt; otherwise rethrow
+        // If not a validation error, bail
         if (e1?.response?.status !== 422) throw e1
 
-        // 2) Inspect 422 to see what the API wants
+        // 2) Parse 422 and try alternates the server might accept
         const fields = parse422Fields(e1)
+
+        // Try { username_or_email, password } (legacy variant)
+        if (!res && (!fields.length || fields.includes('username_or_email')) && !tried.has('username_or_email')) {
+          tried.add('username_or_email')
+          try {
+            res = await doJson({ username_or_email: ident, password: pass })
+          } catch (e2: any) {
+            if (e2?.response?.status !== 422) throw e2
+          }
+        }
 
         // Try { identifier, password }
         if (!res && fields.includes('identifier') && !tried.has('identifier')) {
           tried.add('identifier')
           try {
             res = await doJson({ identifier: ident, password: pass })
-          } catch (e2: any) {
-            if (e2?.response?.status !== 422) throw e2
-          }
-        }
-
-        // Try { email_or_username, password } (alternate naming we’ve seen)
-        if (!res && fields.includes('email_or_username') && !tried.has('email_or_username')) {
-          tried.add('email_or_username')
-          try {
-            res = await doJson({ email_or_username: ident, password: pass })
           } catch (e3: any) {
             if (e3?.response?.status !== 422) throw e3
           }
         }
 
-        // Try classic shapes explicitly if hints weren’t helpful
+        // Try { email_or_username } without hints (some APIs are… special)
+        if (!res && !tried.has('email_or_username_retry')) {
+          tried.add('email_or_username_retry')
+          try {
+            res = await doJson({ email_or_username: ident, password: pass })
+          } catch (e4: any) {
+            if (e4?.response?.status !== 422) throw e4
+          }
+        }
+
+        // Classic shapes explicitly if nothing worked
         if (!res && isEmail && !tried.has('email')) {
           tried.add('email')
           try {
             res = await doJson({ email: ident, password: pass })
-          } catch (e4: any) {
-            if (e4?.response?.status !== 422) throw e4
+          } catch (e5: any) {
+            if (e5?.response?.status !== 422) throw e5
           }
         }
 
@@ -132,12 +133,12 @@ export const useSignIn = () => {
           tried.add('username')
           try {
             res = await doJson({ username: ident, password: pass })
-          } catch (e5: any) {
-            if (e5?.response?.status !== 422) throw e5
+          } catch (e6: any) {
+            if (e6?.response?.status !== 422) throw e6
           }
         }
 
-        // 3) OAuth2 style form (some FastAPI templates support this)
+        // OAuth2 password flow form as a last resort
         if (!res && !tried.has('form')) {
           tried.add('form')
           try {
@@ -148,15 +149,9 @@ export const useSignIn = () => {
               scope: '',
             })
             res = await doForm(form)
-          } catch (e6: any) {
-            if (e6?.response?.status !== 422) throw e6
+          } catch (e7: any) {
+            if (e7?.response?.status !== 422) throw e7
           }
-        }
-
-        // 4) Last-ditch: try identifier again (covers username paths)
-        if (!res && !tried.has('identifier2')) {
-          tried.add('identifier2')
-          res = await doJson({ identifier: ident, password: pass })
         }
       }
 
@@ -178,7 +173,6 @@ export const useSignIn = () => {
       }
 
       toast.success(`Welcome back, ${user?.username ?? ident}!`)
-      // Let state settle before routing
       await new Promise((r) => setTimeout(r, 50))
       navigate('/dashboard', { replace: true })
     } catch (err: any) {
@@ -192,5 +186,4 @@ export const useSignIn = () => {
   return { signIn, loading }
 }
 
-// Keep default export to avoid breaking imports that expect it.
 export default useSignIn

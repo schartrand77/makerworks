@@ -6,15 +6,14 @@ import axios from '@/api/axios'
 import { useAuthStore } from '@/store/useAuthStore'
 
 /**
- * The backend supports cookie-based auth and (optionally) token+user.
- * Keep this hook compatible with both, and try the payload shape the API expects:
+ * The backend now uses cookie-based auth exclusively.
+ * Keep this hook compatible with older token responses, and try the payload shape the API expects:
  *   { username_or_email, password }
  * We still gracefully fall back to older shapes (identifier/email/username or OAuth2 form)
  * so we don’t break existing users.
  */
 
 interface SignInResponse {
-  token?: string
   user?: {
     id: string
     email: string
@@ -165,15 +164,14 @@ export const useSignIn = () => {
         throw new Error('Login failed')
       }
 
-      const { token, user } = res.data || {}
+      const data = res.data as SignInResponse | any
+      const user = data?.user || (data?.id ? (data as any) : undefined)
 
-      // JWT-style response
-      if (token && user) {
-        setAuth({ token, user })
+      if (user) {
+        setAuth({ user })
       } else {
-        // Cookie-session style: hydrate profile
         try {
-          await fetchUser(true) // force
+          await fetchUser(true)
         } catch {
           /* ignore */
         }

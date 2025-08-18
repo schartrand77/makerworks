@@ -4,6 +4,7 @@ import { useNavigate, Link, useLocation } from 'react-router-dom';
 import PageLayout from '@/components/layout/PageLayout';
 import { useSignIn } from '@/hooks/useSignIn';
 import { useAuthStore } from '@/store/useAuthStore';
+import GlassButton from '@/components/ui/GlassButton';
 
 const SignIn: React.FC = () => {
   const [emailOrUsername, setEmailOrUsername] = useState('');
@@ -80,13 +81,14 @@ const SignIn: React.FC = () => {
           </button>
         </div>
 
-        <button
-          className="mt-4 rounded-full px-6 py-2 bg-brand-red text-brand-white hover:bg-brand-blue transition-colors duration-200 disabled:opacity-50"
+        <GlassButton
+          className="mt-4 px-6 text-brand-white transition-colors duration-200 disabled:opacity-50"
           type="submit"
           disabled={loading}
+          variant="brand"
         >
           {loading ? 'Signing in…' : 'Sign In'}
-        </button>
+        </GlassButton>
 
         <p className="text-center text-sm mt-2">
           Not a member?{' '}

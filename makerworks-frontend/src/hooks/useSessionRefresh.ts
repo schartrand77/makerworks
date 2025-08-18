@@ -10,10 +10,10 @@ const DEFAULT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
  */
 export const useSessionRefresh = (intervalMs: number = DEFAULT_INTERVAL_MS) => {
   const fetchUser = useAuthStore((s) => s.fetchUser);
-  const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
-    if (!token) return;
+    if (!user) return;
 
     const id = setInterval(() => {
       fetchUser?.(true).catch((err) => {
@@ -22,5 +22,5 @@ export const useSessionRefresh = (intervalMs: number = DEFAULT_INTERVAL_MS) => {
     }, intervalMs);
 
     return () => clearInterval(id);
-  }, [fetchUser, token, intervalMs]);
+  }, [fetchUser, user, intervalMs]);
 };

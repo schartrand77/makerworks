@@ -2,6 +2,10 @@
 import axios from './axios'
 import { useAuthStore } from '@/store/useAuthStore'
 
+interface CodedError extends Error {
+  code?: string
+}
+
 export type SignInPayload = {
   /** preferred field; we’ll map to username_or_email for the backend */
   identifier?: string
@@ -33,13 +37,13 @@ export type User =
 
 /** GET /api/v1/auth/me — returns user or null (401) */
 export async function me(): Promise<User> {
-  const res = await axios.get('api/v1/auth/me', {
+  const res = await axios.get<User>('api/v1/auth/me', {
     withCredentials: true,
     validateStatus: (s) => s === 200 || s === 401,
   })
 
   if (res.status === 200) {
-    const user = res.data as User
+    const user = res.data
     try {
       useAuthStore.getState().setUser(user)
     } catch {}
@@ -69,51 +73,55 @@ export async function signIn(payload: SignInPayload): Promise<User> {
   const password = payload.password?.trim() ?? ''
 
   if (!username_or_email || !password) {
-    const err = new Error('Missing credentials: provide identifier/email/username and password.')
-    ;(err as any).code = 'E_BAD_INPUT'
+    const err: CodedError = new Error(
+      'Missing credentials: provide identifier/email/username and password.'
+    )
+    err.code = 'E_BAD_INPUT'
     throw err
   }
 
-  const res = await axios.post(
-    'api/v1/auth/signin',
-    { username_or_email, password },
-    {
-      withCredentials: true,
-      validateStatus: (s) =>
-        (s >= 200 && s < 300) ||
-        s === 400 ||
-        s === 401 ||
-        s === 403 ||
-        s === 404 ||
-        s === 405 ||
-        s === 422,
-    }
-  )
+  const res = await axios.post<{ user: User }>('api/v1/auth/signin', {
+    username_or_email,
+    password,
+  }, {
+    withCredentials: true,
+    validateStatus: (s) =>
+      (s >= 200 && s < 300) ||
+      s === 400 ||
+      s === 401 ||
+      s === 403 ||
+      s === 404 ||
+      s === 405 ||
+      s === 422,
+  })
 
   // Handle common unhappy paths *cleanly*
   if (res.status === 422) {
     // FastAPI ValidationError shape: { detail: [...] } or { detail: "..." }
+    const data = res.data as { detail?: Array<{ msg?: string }> | string }
     const detail =
-      (Array.isArray(res.data?.detail) ? res.data.detail[0]?.msg : res.data?.detail) ??
+      (Array.isArray(data.detail) ? data.detail[0]?.msg : data.detail) ??
       'Invalid sign-in payload.'
-    const err = new Error(String(detail))
-    ;(err as any).code = 'E_VALIDATION'
+    const err: CodedError = new Error(String(detail))
+    err.code = 'E_VALIDATION'
     throw err
   }
 
   if (res.status === 401) {
-    const err = new Error('Invalid email/username or password.')
-    ;(err as any).code = 'E_AUTH'
+    const err: CodedError = new Error(
+      'Invalid email/username or password.'
+    )
+    err.code = 'E_AUTH'
     throw err
   }
 
   if (res.status >= 400) {
-    const err = new Error(`Sign-in failed (${res.status}).`)
-    ;(err as any).code = `E_${res.status}`
+    const err: CodedError = new Error(`Sign-in failed (${res.status}).`)
+    err.code = `E_${res.status}`
     throw err
   }
 
-  const user = (res.data as any)?.user as User
+  const user = res.data.user
   try {
     useAuthStore.getState().setUser(user)
   } catch {}
@@ -122,10 +130,10 @@ export async function signIn(payload: SignInPayload): Promise<User> {
 
 /** POST /api/v1/auth/signup — creates user & signs in; returns user */
 export async function signUp(payload: SignUpPayload): Promise<User> {
-  const res = await axios.post('api/v1/auth/signup', payload, {
+  const res = await axios.post<{ user: User }>('api/v1/auth/signup', payload, {
     withCredentials: true,
   })
-  const user = (res.data as any)?.user as User
+  const user = res.data.user
   try {
     useAuthStore.getState().setUser(user)
   } catch {}

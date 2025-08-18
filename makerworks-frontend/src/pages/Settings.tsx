@@ -39,33 +39,41 @@ export default function Settings() {
         <div className="flex gap-4 mb-6">
           <button
             onClick={() => setActiveTab('profile')}
-            className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'profile' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
-            }`}
+            className={`
+              px-4 py-2 rounded-lg transition border bg-transparent
+              text-brand-black dark:text-brand-white
+              ${activeTab === 'profile' ? 'border-brand-red' : 'border-transparent'}
+            `}
           >
             Profile
           </button>
           <button
             onClick={() => setActiveTab('account')}
-            className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'account' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
-            }`}
+            className={`
+              px-4 py-2 rounded-lg transition border bg-transparent
+              text-brand-black dark:text-brand-white
+              ${activeTab === 'account' ? 'border-brand-red' : 'border-transparent'}
+            `}
           >
             Account
           </button>
           <button
             onClick={() => setActiveTab('avatar')}
-            className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'avatar' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
-            }`}
+            className={`
+              px-4 py-2 rounded-lg transition border bg-transparent
+              text-brand-black dark:text-brand-white
+              ${activeTab === 'avatar' ? 'border-brand-red' : 'border-transparent'}
+            `}
           >
             Avatar
           </button>
           <button
             onClick={() => setActiveTab('theme')}
-            className={`px-4 py-2 rounded-lg transition ${
-              activeTab === 'theme' ? 'bg-brand-red text-black' : 'bg-gray-200 dark:bg-gray-700'
-            }`}
+            className={`
+              px-4 py-2 rounded-lg transition border bg-transparent
+              text-brand-black dark:text-brand-white
+              ${activeTab === 'theme' ? 'border-brand-red' : 'border-transparent'}
+            `}
           >
             Theme
           </button>

@@ -143,7 +143,7 @@ const GlassNavbar = () => {
                 text-brand-black dark:text-brand-white
                 border border-brand-white shadow transition
                 hover:bg-brand-white/60 dark:hover:bg-brand-white/30
-                ${isActive ? 'bg-brand-red text-brand-black' : ''}
+                ${isActive ? 'bg-transparent border-brand-red ring-2 ring-brand-red' : ''}
               `}
             >
               {item.label}

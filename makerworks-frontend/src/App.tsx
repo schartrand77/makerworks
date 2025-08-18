@@ -14,7 +14,6 @@ function AppContent() {
 }
 
 export default function App() {
-  const token = useAuthStore((s) => s.token);
   const { setUser, fetchUser, setResolved, resolved } = useAuthStore.getState();
   useSessionRefresh();
 
@@ -57,7 +56,7 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, [token]);
+  }, []);
 
   return (
     <div

@@ -41,3 +41,36 @@ describe('useAuthStore.logout', () => {
     expect(localStorage.length).toBe(0)
   })
 })
+
+describe('useAuthStore role helpers', () => {
+  let useAuthStore: typeof import('../useAuthStore').useAuthStore
+
+  beforeEach(async () => {
+    vi.resetModules()
+    vi.stubGlobal('localStorage', createLocalStorageMock())
+    vi.stubGlobal('sessionStorage', createLocalStorageMock())
+    ;({ useAuthStore } = await import('../useAuthStore'))
+  })
+
+  it('detects roles and admin status across shapes', () => {
+    useAuthStore.setState({
+      user: { id: '1', username: 'u', email: 'e', role: 'admin' },
+    })
+    expect(useAuthStore.getState().isAdmin()).toBe(true)
+
+    useAuthStore.setState({
+      user: { id: '2', username: 'u2', email: 'e2', role: ['user', 'editor'] },
+    })
+    expect(useAuthStore.getState().hasRole('editor')).toBe(true)
+
+    useAuthStore.setState({
+      user: {
+        id: '3',
+        username: 'u3',
+        email: 'e3',
+        roles: [{ name: 'Admin' }],
+      },
+    })
+    expect(useAuthStore.getState().isAdmin()).toBe(true)
+  })
+})

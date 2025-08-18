@@ -5,8 +5,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as matchers from '@testing-library/jest-dom/matchers';
 expect.extend(matchers);
 import Estimate from '../../pages/Estimate';
-import axios from '@/api/axios';
+import axios from '@/api/client';
 import * as estimateApi from '@/api/estimate';
+import { MemoryRouter } from 'react-router-dom';
+
+vi.mock('@/api/client', () => ({ default: { get: vi.fn() } }));
 vi.mock('@/components/ui/ModelViewer', () => ({
   default: () => <div data-testid="model-viewer" />,
 }));
@@ -21,17 +24,26 @@ describe('<Estimate />', () => {
   beforeEach(() => {
     // jsdom doesn't implement scrollTo
     window.scrollTo = vi.fn();
+    ;(axios.get as any).mockResolvedValue({ data: [] });
   });
   it('renders page header', () => {
-    render(<Estimate />);
+    render(
+      <MemoryRouter>
+        <Estimate />
+      </MemoryRouter>
+    );
     expect(screen.getByText(/Estimate Print Job/i)).toBeInTheDocument();
   });
 
   it('loads filaments and shows success toast', async () => {
-    ;(axios.get as any) = vi.fn().mockResolvedValue({
+    ;(axios.get as any).mockResolvedValue({
       data: [{ id: '1', type: 'PLA', color: 'Red', hex: '#ff0000' }]
     });
-    render(<Estimate />);
+    render(
+      <MemoryRouter>
+        <Estimate />
+      </MemoryRouter>
+    );
     await waitFor(() => {
       expect(screen.getAllByText(/Select filament/i)[0]).toBeInTheDocument();
     });

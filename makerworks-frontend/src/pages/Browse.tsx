@@ -1,7 +1,7 @@
 // src/pages/Browse.tsx
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import axios from '@/api/axios';
+import axios from '@/api/client';
 import GlassCard from '@/components/ui/GlassCard';
 import PageHeader from '@/components/ui/PageHeader';
 import { Search } from 'lucide-react';

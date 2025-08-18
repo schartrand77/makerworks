@@ -11,16 +11,12 @@ services:
     restart: unless-stopped
     ports:
       - "5173:5173"
-    env_file:
-      - .env
     environment:
-      # Your app hits the API at the backend; thumbnails are served by backend at /thumbnails
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
-      VITE_THUMB_BASE_URL: ${VITE_THUMB_BASE_URL:-http://localhost:8000/thumbnails}
+      VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8000}
     volumes:
       - ./makerworks-frontend:/app
       - /app/node_modules
-      # (Optional) Mount the host thumbnails into the dev container too, in case you want to peek at them here.
       - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails:rw
     command: npm run dev -- --host
 
@@ -32,21 +28,82 @@ services:
       context: ./makerworks-frontend
       dockerfile: Dockerfile
       target: production
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8000}
     container_name: makerworks_frontend_prod
     restart: unless-stopped
     ports:
-      - "80:80"
-    env_file:
-      - .env
-    environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
-      # not strictly used at runtime, but keeps env symmetry with dev
-      VITE_THUMB_BASE_URL: ${VITE_THUMB_BASE_URL:-/thumbnails}
+      - "8080:80"       # avoid conflict with local dev
     depends_on:
       backend:
         condition: service_healthy
     volumes:
-      # serve the built app
       - ./makerworks-frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # mount the **root thumbnail library** so Nginx can serve /thumbnails directly
       - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails:ro
+    environment:
+      BACKEND_ORIGIN: ${BACKEND_ORIGIN:-http://backend:8000}
+
+  # ------------------------
+  # Backend (FastAPI + Uvicorn/Gunicorn)
+  # ------------------------
+  backend:
+    build:
+      context: ./makerworks-backend
+      dockerfile: Dockerfile
+    container_name: makerworks_backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql+psycopg://makerworks:makerworks@postgres:5432/makerworks
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: development
+      SECRET_KEY: ${SECRET_KEY:-dev-secret}
+    volumes:
+      - ./makerworks-backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------
+  # Postgres
+  # ------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: makerworks_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: makerworks
+      POSTGRES_PASSWORD: makerworks
+      POSTGRES_DB: makerworks
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U makerworks"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------
+  # Redis
+  # ------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: makerworks_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:

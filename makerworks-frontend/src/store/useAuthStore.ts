@@ -1,7 +1,7 @@
 // src/store/useAuthStore.ts
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 import { toast } from 'sonner'
 import type { UserOut } from '@/types/auth'
 import { isAxiosError } from 'axios'

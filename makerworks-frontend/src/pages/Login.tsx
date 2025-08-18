@@ -6,7 +6,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { setToken, setUser } = useAuthStore()
+  const { setAuth } = useAuthStore()
   const [usernameOrEmail, setUsernameOrEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -33,10 +33,8 @@ export default function LoginPage() {
         password,
       })
 
-      const { token, user } = response.data
-
-      setToken(token)
-      setUser(user)
+      const { user } = response.data
+      setAuth({ user })
 
       if (user.avatar_url) {
         try {

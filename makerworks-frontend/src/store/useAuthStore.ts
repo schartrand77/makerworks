@@ -7,15 +7,13 @@ import type { UserOut } from '@/types/auth'
 
 interface AuthState {
   user: UserOut | null
-  token: string | null
   loading: boolean
   resolved: boolean
   hadUser: boolean
   lastAuthStatus: number | null
 
   setUser: (user: UserOut | null) => void
-  setToken: (token: string | null) => void
-  setAuth: (payload: { user: UserOut; token?: string | null }) => void
+  setAuth: (payload: { user: UserOut }) => void
   setResolved: (val: boolean) => void
   logout: () => Promise<void>
   fetchUser: (force?: boolean) => Promise<UserOut | null>
@@ -30,10 +28,9 @@ const API_SIGNOUT = 'api/v1/auth/signout'
 
 const initialState = (): Pick<
   AuthState,
-  'user' | 'token' | 'loading' | 'resolved' | 'hadUser' | 'lastAuthStatus'
+  'user' | 'loading' | 'resolved' | 'hadUser' | 'lastAuthStatus'
 > => ({
   user: null,
-  token: null,
   loading: false,
   resolved: false,
   hadUser: false,
@@ -58,23 +55,13 @@ export const useAuthStore = create<AuthState>()(
         })
       },
 
-      setToken: (token) => {
-        if (token) localStorage.setItem('token', token)
-        else localStorage.removeItem('token')
-        set({ token })
-      },
-
-      // token is optional (cookie sessions)
-      setAuth: ({ user, token = null }) => {
-        if (token) localStorage.setItem('token', token)
-        else localStorage.removeItem('token')
-
+      // token removed — rely on HTTP-only cookies
+      setAuth: ({ user }) => {
         if (user?.avatar_url) localStorage.setItem('avatar_url', user.avatar_url)
         else localStorage.removeItem('avatar_url')
 
         set({
           user,
-          token,
           resolved: true,
           hadUser: true,
           lastAuthStatus: 200,
@@ -96,13 +83,11 @@ export const useAuthStore = create<AuthState>()(
         } finally {
           set({
             user: null,
-            token: null,
             loading: false,
             resolved: true,
           })
           try {
             localStorage.removeItem('avatar_url')
-            localStorage.removeItem('token')
             localStorage.removeItem('auth-storage')
             sessionStorage.removeItem('auth-storage')
           } catch (err) {
@@ -149,12 +134,7 @@ export const useAuthStore = create<AuthState>()(
           // Soft failures: 401/403/404/405/422 — do NOT nuke user unless forced
           if ([401, 403, 404, 405, 422].includes(res.status)) {
             if (force || !get().user) {
-              set({
-                user: null,
-                token: null,
-                loading: false,
-                resolved: true,
-              })
+              set({ user: null, loading: false, resolved: true })
             } else {
               set({ loading: false, resolved: true })
             }
@@ -170,7 +150,6 @@ export const useAuthStore = create<AuthState>()(
           set({
             lastAuthStatus: code,
             user: force ? null : get().user,
-            token: force ? null : get().token,
             loading: false,
             resolved: true,
           })
@@ -178,11 +157,10 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      // Cookie sessions mean `user` can be truthy even if token is null.
       isAuthenticated: () => {
-        const { token, user, resolved } = get()
+        const { user, resolved } = get()
         if (!resolved) return false
-        return Boolean(user || token)
+        return Boolean(user)
       },
 
       hasRole: (role: string) => {
@@ -229,7 +207,6 @@ export const useAuthStore = create<AuthState>()(
       name: 'auth-storage',
       partialize: (state) => ({
         user: state.user,
-        token: state.token,
         hadUser: state.hadUser,
       }),
       onRehydrateStorage: () => (state) => {

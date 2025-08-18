@@ -27,7 +27,6 @@ type SignupRequest = {
 
 type SignupResponse = {
   user: UserOut
-  token?: string
 }
 
 export const useSignUp = (): UseSignUpResult => {
@@ -67,14 +66,13 @@ export const useSignUp = (): UseSignUpResult => {
 
       console.debug('[useSignUp] Response:', res)
 
-      const { user, token } = res.data
+      const { user } = res.data
 
       if (!user) {
         throw new Error('Invalid response: missing user')
       }
 
-      // ✅ Clean Zustand + localStorage sync
-      useAuthStore.getState().setAuth({ user, token: token || null })
+      useAuthStore.getState().setAuth({ user })
 
       console.info('[useSignUp] ✅ User registered & state updated:', user)
 

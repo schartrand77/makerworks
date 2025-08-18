@@ -2,8 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import axios from '@/api/axios'
 import { uploadAvatar, updateUserProfile, deleteAccount } from '../users'
 import { useAuthStore } from '@/store/useAuthStore'
+import type { UserOut } from '@/types/auth'
+import type { AxiosResponse } from 'axios'
 
 vi.mock('@/api/axios')
+
+interface AxiosMock {
+  get: ReturnType<typeof vi.fn>
+  post: ReturnType<typeof vi.fn>
+  patch: ReturnType<typeof vi.fn>
+  delete: ReturnType<typeof vi.fn>
+}
+
+const mockedAxios = axios as unknown as AxiosMock
 
 function createStorageMock() {
   let store: Record<string, string> = {}
@@ -29,17 +40,22 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.stubGlobal('localStorage', createStorageMock())
   vi.stubGlobal('sessionStorage', createStorageMock())
+  const fetchUserMock = vi.fn<[], Promise<UserOut | null>>().mockResolvedValue(null)
   useAuthStore.setState({
-    user: { id: '1', email: 'e', username: 'u', role: 'user' } as any,
-    fetchUser: vi.fn().mockResolvedValue(null)
+    user: { id: '1', email: 'e', username: 'u', role: 'user' } as UserOut,
+    fetchUser: fetchUserMock,
   })
-  ;(axios.get as any).mockResolvedValue({ data: { id: '1', email: 'e' } })
+  mockedAxios.get.mockResolvedValue(
+    { data: { id: '1', email: 'e' } } as AxiosResponse
+  )
 })
 
 describe('users.ts', () => {
   it('uploads avatar', async () => {
-    const fakeRes = { data: { status: 'ok', avatar_url: 'x', thumbnail_url: 'y', uploaded_at: 'now' } }
-    ;(axios.post as any).mockResolvedValue(fakeRes)
+    const fakeRes = {
+      data: { status: 'ok', avatar_url: 'x', thumbnail_url: 'y', uploaded_at: 'now' },
+    }
+    mockedAxios.post.mockResolvedValue(fakeRes as AxiosResponse)
 
     const file = new File([''], 'avatar.png')
     const result = await uploadAvatar(file)
@@ -54,7 +70,7 @@ describe('users.ts', () => {
   })
 
   it('updates user profile', async () => {
-    (axios.patch as any).mockResolvedValue({})
+    mockedAxios.patch.mockResolvedValue({} as AxiosResponse)
 
     await expect(
       updateUserProfile({ username: 'valid', email: 'test@example.com' })
@@ -73,7 +89,7 @@ describe('users.ts', () => {
   })
 
   it('deletes account', async () => {
-    (axios.delete as any).mockResolvedValue({})
+    mockedAxios.delete.mockResolvedValue({} as AxiosResponse)
 
     await expect(deleteAccount()).resolves.not.toThrow()
 

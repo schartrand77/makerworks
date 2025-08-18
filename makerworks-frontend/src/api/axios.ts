@@ -3,6 +3,7 @@ import Axios, {
   AxiosInstance,
   AxiosError,
   InternalAxiosRequestConfig,
+  CreateAxiosDefaults,
 } from 'axios'
 
 /**
@@ -17,9 +18,15 @@ import Axios, {
 
 const API_PREFIX = '/api/v1'
 
+const env = import.meta.env as ImportMetaEnv & {
+  VITE_API_BASE_URL?: string
+  VITE_API_ORIGIN?: string
+  VITE_AXIOS_DEBUG?: string
+}
+
 const rawBase =
-  (import.meta.env as any)?.VITE_API_BASE_URL?.toString().trim() ||
-  (import.meta.env as any)?.VITE_API_ORIGIN?.toString().trim() ||
+  env.VITE_API_BASE_URL?.toString().trim() ||
+  env.VITE_API_ORIGIN?.toString().trim() ||
   (typeof window !== 'undefined'
     ? window.location.origin.replace(':5173', ':8000')
     : 'http://localhost:8000')
@@ -38,9 +45,7 @@ function originOnly(u: string): string {
 const baseOrigin = originOnly(rawBase)
 
 const DEBUG =
-  ((import.meta.env?.DEV &&
-    (import.meta.env as any)?.VITE_AXIOS_DEBUG !== '0') ||
-    (import.meta.env as any)?.VITE_AXIOS_DEBUG === '1')
+  ((env.DEV && env.VITE_AXIOS_DEBUG !== '0') || env.VITE_AXIOS_DEBUG === '1')
 
 const stripSlashes = (s: string) => s.replace(/^\/+|\/+$/g, '')
 
@@ -162,8 +167,9 @@ function fullUrl(u: string) {
 // ──────────────────────────────────────────────────────────────────────────────
 function installInterceptors(instance: AxiosInstance) {
   const tag = '__mw_prefix_installed__'
-  if ((instance as any)[tag]) return
-  ;(instance as any)[tag] = true
+  const inst = instance as AxiosInstance & Record<string, unknown>
+  if (inst[tag]) return
+  inst[tag] = true
 
   instance.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     const original = config.url ?? ''
@@ -223,14 +229,18 @@ installInterceptors(Axios as unknown as AxiosInstance)
 
 // Monkey-patch Axios.create so every future instance inherits the guard
 const __origCreate = Axios.create.bind(Axios)
-Axios.create = function patchedCreate(config?: any): AxiosInstance {
+Axios.create = function patchedCreate(
+  config?: CreateAxiosDefaults
+): AxiosInstance {
   const inst = __origCreate(config)
   // Force origin-only even if a path sneaks into config.baseURL
   if (config?.baseURL) {
     try {
-      ;(inst.defaults as any).baseURL = originOnly(String(config.baseURL))
+      ;(inst.defaults as { baseURL?: string }).baseURL = originOnly(
+        String(config.baseURL)
+      )
     } catch {
-      ;(inst.defaults as any).baseURL = baseOrigin
+      ;(inst.defaults as { baseURL?: string }).baseURL = baseOrigin
     }
   }
   installInterceptors(inst)

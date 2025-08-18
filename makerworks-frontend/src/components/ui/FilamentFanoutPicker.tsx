@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useEstimateStore } from '@/store/useEstimateStore'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 import GlassCard from '@/components/ui/GlassCard'
 import { X } from 'lucide-react'
 

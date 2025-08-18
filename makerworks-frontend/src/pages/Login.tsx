@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
 
 export default function LoginPage() {

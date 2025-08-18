@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useAuthStore } from '@/store/useAuthStore'
 import { toast } from 'sonner'
-import axios from '@/api/axios'
+import axios from '@/api/client'
 
 export default function AccountSection() {
   const { user, logout } = useAuthStore()

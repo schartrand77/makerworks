@@ -6,7 +6,7 @@ import toast, { Toaster } from 'react-hot-toast'
 import axios from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
 
-const allowedModelExtensions = ['stl', '3mf', 'obj'] // keeping 'obj' since your page lists it
+const allowedModelExtensions = ['stl', '3mf', 'obj']
 
 const Glass: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({ style, className, ...rest }) => (
   <div

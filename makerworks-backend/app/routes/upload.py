@@ -55,7 +55,7 @@ _ensure_dir_writable(UPLOAD_ROOT)
 _ensure_dir_writable(THUMB_ROOT)
 
 # Model file policy
-ALLOWED_EXTS = {".stl", ".3mf"}
+ALLOWED_EXTS = {".stl", ".3mf", ".obj"}
 MAX_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
 
 # PHOTOS: image policy
@@ -144,7 +144,7 @@ def _safe_ext(filename: str) -> str:
     if ext not in ALLOWED_EXTS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only .stl or .3mf files are allowed.",
+            detail="Only .stl, .3mf, or .obj files are allowed.",
         )
     return ext
 

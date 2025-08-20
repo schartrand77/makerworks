@@ -81,30 +81,37 @@ def client(tmp_path):
     async def _noop():
         return None
     upload.check_alembic_revision = _noop
-    class DummyResult:
-        def scalars(self):
-            return self
-        def first(self):
-            return None
-    class DummySession:
-        def add(self, *_args, **_kwargs):
-            pass
-        async def commit(self):
-            pass
-        async def refresh(self, _obj):
-            pass
-        async def rollback(self):
-            pass
+
+    class DummyConnection:
         async def execute(self, *_args, **_kwargs):
+            class DummyResult:
+                def scalars(self): return self
+                def first(self): return None
             return DummyResult()
-    async def override_db():
-        yield DummySession()
-    app.dependency_overrides[upload.get_db] = override_db
+        async def __aenter__(self): return self
+        async def __aexit__(self, exc_type, exc, tb): pass
+
+    class DummyEngine:
+        def begin(self):
+            return DummyConnection()
+
+    upload.async_engine = DummyEngine()
+    upload._model_uploads_columns = lambda: {"thumbnail_url": True}
+    upload.UPLOAD_ROOT = Path(tmp_path)
+    upload.THUMB_ROOT = Path(tmp_path)
+
     with TestClient(app) as c:
         c.upload_module = upload
         yield c
 
-def test_thumbnail_created(client, tmp_path):
+@pytest.mark.parametrize(
+    "filename,file_bytes,mime",
+    [
+        ("cube.stl", b"solid cube\nendsolid cube", "model/stl"),
+        ("cube.obj", b"o cube\nv 0 0 0\n", "application/octet-stream"),
+    ],
+)
+def test_thumbnail_created(client, tmp_path, filename, file_bytes, mime):
     user_id = uuid4()
     add_test_user(client.app, user_id)
 
@@ -114,27 +121,26 @@ def test_thumbnail_created(client, tmp_path):
 
     client.app.dependency_overrides[upload.get_current_user] = override_get_current_user
 
-    # Patch render_thumbnail to create a fake file
-    def fake_render(model_path, output_path, size=(512, 512)):
-        with open(output_path, "wb") as f:
-            f.write(b"png")
-        return True
+    # Patch _make_thumbnail to create a fake file without invoking external tools
+    async def fake_make_thumbnail(model_path, model_id):
+        out_path = Path(tmp_path) / f"{model_id}.png"
+        out_path.write_bytes(b"png")
+        return out_path
 
-    original_render = upload.render_thumbnail
-    upload.render_thumbnail = fake_render
+    original_make_thumb = upload._make_thumbnail
+    upload._make_thumbnail = fake_make_thumbnail
 
-    data = BytesIO(b"solid cube\nendsolid cube")
+    data = BytesIO(file_bytes)
     resp = client.post(
         "/api/v1/upload",
-        files={"file": ("cube.stl", data, "model/stl")},
+        files={"file": (filename, data, mime)},
         headers={"Authorization": "Bearer test"},
     )
 
     client.app.dependency_overrides.pop(upload.get_current_user, None)
-    upload.render_thumbnail = original_render
+    upload._make_thumbnail = original_make_thumb
 
-    assert resp.status_code == 200
-    thumb_dir = Path(tmp_path) / "users" / str(user_id) / "thumbnails"
-    # Thumbnail uses generated UUID name; ensure directory is not empty
-    files = list(thumb_dir.glob("*.png"))
+    assert resp.status_code in (200, 201)
+    # Thumbnail uses generated UUID name under THUMB_ROOT (patched to tmp_path)
+    files = list(Path(tmp_path).glob("*.png"))
     assert files

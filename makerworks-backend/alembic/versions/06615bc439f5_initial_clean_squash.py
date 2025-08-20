@@ -3,6 +3,8 @@
 This is a full base migration that creates the current schema from scratch:
 - All core tables (users, model_uploads, model_metadata, favorites, estimates, estimate_settings,
   filaments, filament_pricing, checkout_sessions, upload_jobs, audit_logs)
+- Inventory tables (brands, categories, products, product_variants, media, warehouses,
+  inventory_levels, suppliers, supplier_skus, stock_moves, user_items)
 - FKs, indexes and sensible defaults
 - The compatibility VIEW public.models and its INSTEAD OF triggers
 
@@ -114,7 +116,6 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
         schema="public",
     )
-    # unique geometry hash (if you compute it)
     op.create_index(
         "ix_public_model_metadata_geometry_hash",
         "model_metadata",
@@ -170,7 +171,7 @@ def upgrade() -> None:
     )
 
     # ──────────────────────────────────────────────────────────────────────
-    # filaments
+    # filaments (legacy/simple)
     # ──────────────────────────────────────────────────────────────────────
     op.create_table(
         "filaments",
@@ -188,7 +189,7 @@ def upgrade() -> None:
     )
 
     # ──────────────────────────────────────────────────────────────────────
-    # filament_pricing
+    # filament_pricing (legacy/simple)
     # ──────────────────────────────────────────────────────────────────────
     op.create_table(
         "filament_pricing",
@@ -200,6 +201,150 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
         schema="public",
     )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # INVENTORY (retail-grade, flexible)
+    # ──────────────────────────────────────────────────────────────────────
+
+    # brands
+    op.create_table(
+        "brands",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(120), nullable=False, unique=True),
+        sa.Column("website", sa.String(255), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # categories (tree via parent_id)
+    op.create_table(
+        "categories",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(120), nullable=False),
+        sa.Column("slug", sa.String(120), nullable=False, unique=True),
+        sa.Column("parent_id", UUID, sa.ForeignKey("public.categories.id"), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # products
+    op.create_table(
+        "products",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("title", sa.String(200), nullable=False),
+        sa.Column("description", sa.Text(), nullable=True),
+        sa.Column("brand_id", UUID, sa.ForeignKey("public.brands.id"), nullable=True),
+        sa.Column("category_id", UUID, sa.ForeignKey("public.categories.id"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index("ix_public_products_category", "products", ["category_id"], unique=False, schema="public")
+    op.create_index("ix_public_products_brand", "products", ["brand_id"], unique=False, schema="public")
+
+    # product_variants (SKU + JSONB attributes)
+    op.create_table(
+        "product_variants",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("product_id", UUID, sa.ForeignKey("public.products.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("sku", sa.String(120), nullable=False, unique=True),
+        sa.Column("title", sa.String(200), nullable=False),
+        sa.Column("price_cents", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("compare_at_cents", sa.Integer(), nullable=True),
+        sa.Column("attributes", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index("ix_public_variant_product", "product_variants", ["product_id"], unique=False, schema="public")
+    op.create_index("ix_public_variant_sku", "product_variants", ["sku"], unique=True, schema="public")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_public_variant_attributes_gin "
+        "ON public.product_variants USING GIN (attributes)"
+    )
+
+    # media (per product/variant)
+    op.create_table(
+        "media",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("product_id", UUID, sa.ForeignKey("public.products.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("variant_id", UUID, sa.ForeignKey("public.product_variants.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("url", sa.String(512), nullable=False),
+        sa.Column("alt", sa.String(200), nullable=True),
+        sa.Column("position", sa.Integer(), nullable=True, server_default="0"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # warehouses
+    op.create_table(
+        "warehouses",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(120), nullable=False, unique=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # inventory_levels (composite PK)
+    op.create_table(
+        "inventory_levels",
+        sa.Column("variant_id", UUID, sa.ForeignKey("public.product_variants.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+        sa.Column("warehouse_id", UUID, sa.ForeignKey("public.warehouses.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+        sa.Column("on_hand", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("reserved", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # suppliers
+    op.create_table(
+        "suppliers",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(200), nullable=False, unique=True),
+        sa.Column("contact_email", sa.String(200), nullable=True),
+        sa.Column("website", sa.String(255), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # supplier_skus (per-variant vendor SKU + costs)
+    op.create_table(
+        "supplier_skus",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("supplier_id", UUID, sa.ForeignKey("public.suppliers.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("variant_id", UUID, sa.ForeignKey("public.product_variants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("supplier_sku", sa.String(120), nullable=False),
+        sa.Column("cost_cents", sa.Integer(), nullable=False, server_default="0"),
+        schema="public",
+    )
+    op.create_unique_constraint("uq_public_supplier_variant", "supplier_skus", ["supplier_id", "variant_id"])
+
+    # stock_moves (inventory movements)
+    op.create_table(
+        "stock_moves",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("variant_id", UUID, sa.ForeignKey("public.product_variants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("warehouse_id", UUID, sa.ForeignKey("public.warehouses.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("qty", sa.Integer(), nullable=False),
+        sa.Column("type", sa.Enum("purchase", "sale", "adjust", "transfer", name="stock_move_type"), nullable=False),
+        sa.Column("note", sa.String(255), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index("ix_public_stock_moves_variant", "stock_moves", ["variant_id"], unique=False, schema="public")
+
+    # user_items (per-user personal/maker inventory)
+    op.create_table(
+        "user_items",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("user_id", UUID, sa.ForeignKey("public.users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("variant_id", UUID, sa.ForeignKey("public.product_variants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("qty", sa.Integer(), nullable=False, server_default="1"),
+        sa.Column("cost_cents", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("notes", sa.String(255), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index("ix_public_user_items_user", "user_items", ["user_id"], unique=False, schema="public")
 
     # ──────────────────────────────────────────────────────────────────────
     # checkout_sessions
@@ -368,8 +513,32 @@ def downgrade() -> None:
     op.drop_table("audit_logs", schema="public")
     op.drop_table("upload_jobs", schema="public")
     op.drop_table("checkout_sessions", schema="public")
+
+    # Inventory group (reverse)
+    op.drop_index("ix_public_user_items_user", table_name="user_items", schema="public")
+    op.drop_table("user_items", schema="public")
+    op.drop_index("ix_public_stock_moves_variant", table_name="stock_moves", schema="public")
+    op.drop_table("stock_moves", schema="public")
+    op.drop_constraint("uq_public_supplier_variant", "supplier_skus", schema="public", type_="unique")
+    op.drop_table("supplier_skus", schema="public")
+    op.drop_table("suppliers", schema="public")
+    op.drop_table("inventory_levels", schema="public")
+    op.drop_table("warehouses", schema="public")
+    op.drop_table("media", schema="public")
+    op.drop_index("ix_public_variant_sku", table_name="product_variants", schema="public")
+    op.drop_index("ix_public_variant_product", table_name="product_variants", schema="public")
+    op.drop_table("product_variants", schema="public")
+    op.drop_index("ix_public_products_brand", table_name="products", schema="public")
+    op.drop_index("ix_public_products_category", table_name="products", schema="public")
+    op.drop_table("products", schema="public")
+    op.drop_table("categories", schema="public")
+    op.drop_table("brands", schema="public")
+    op.execute("DROP TYPE IF EXISTS stock_move_type")
+
+    # Legacy filament tables
     op.drop_table("filament_pricing", schema="public")
     op.drop_table("filaments", schema="public")
+
     op.drop_table("estimate_settings", schema="public")
     op.drop_table("estimates", schema="public")
     op.drop_table("favorites", schema="public")

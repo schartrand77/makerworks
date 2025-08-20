@@ -211,7 +211,7 @@ async def upload_avatar_no_slash(
 ):
     return await _handle_upload(request, avatar, file, db, current_user)
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_avatar_slash(
     request: Request,
     avatar: Optional[UploadFile] = File(default=None),

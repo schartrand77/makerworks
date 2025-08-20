@@ -9,6 +9,7 @@ import sys
 import traceback
 import inspect
 import time
+import re  # ← added for duplicate error parsing
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Sequence
@@ -105,7 +106,8 @@ try:
     # Routers: import modules (NOT aggregated router here)
     from app.routes import (
         admin, auth, avatar, cart, checkout, filaments, models,
-        metrics, system, upload, users
+        metrics, system, upload, users,
+        inventory_levels, inventory_moves, user_inventory,  # ← new inventory routes
     )
 
     try:
@@ -383,15 +385,68 @@ async def unhandled_exc_handler(request: Request, exc: Exception):
         )
     return JSONResponse({"detail": "Internal server error"}, status_code=500, headers=headers)
 
-# Map DB unique violations to 409 Conflict (e.g., email/username taken)
+# ── smarter duplicate payloads (so frontend gets the right hint) ──────────────
+_DUP_RE = re.compile(r"Key \((?P<cols>.+?)\)=\((?P<vals>.+?)\) already exists")
+
+def _dup_payload_from_exc(exc: IntegrityError) -> dict:
+    """
+    Parse Postgres unique violation into a stable JSON payload the UI can act on.
+    Keeps the old auth hints for users; adds specific hints for filaments/SKU/etc.
+    """
+    payload: dict = {"detail": "duplicate", "hint": "duplicate"}
+    orig = getattr(exc, "orig", None)
+
+    # psycopg diag (when available)
+    diag = getattr(orig, "diag", None)
+    constraint = getattr(diag, "constraint_name", None)
+    table = getattr(diag, "table_name", None)
+    schema = getattr(diag, "schema_name", None)
+
+    if constraint: payload["constraint"] = str(constraint)
+    if table:      payload["table"] = str(table)
+    if schema:     payload["schema"] = str(schema)
+
+    # Parse textual message
+    msg = str(orig or exc)
+    m = _DUP_RE.search(msg)
+    if m:
+        cols = [c.strip().strip('"') for c in m.group("cols").split(",")]
+        vals = [v.strip() for v in m.group("vals").split(",")]
+        payload["fields"] = cols
+        payload["values"] = vals
+
+    low_c = (constraint or "").lower() if constraint else ""
+    low_t = (table or "").lower() if table else ""
+    fields = [f.lower() for f in payload.get("fields", [])]
+
+    # users.*
+    if "user" in low_t:
+        if "email" in low_c or "email" in fields:
+            payload["hint"] = "email_taken"
+            return payload
+        if "username" in low_c or "username" in fields:
+            payload["hint"] = "username_taken"
+            return payload
+        payload["hint"] = "user_duplicate"
+        return payload
+
+    # filaments.*
+    if "filament" in low_t or "uq_filament" in low_c or "filaments" in low_t:
+        payload["hint"] = "filament_exists"
+        return payload
+
+    # product/catalog-ish
+    if any(k in low_t for k in ("product", "variant", "sku")) or "sku" in fields:
+        payload["hint"] = "sku_taken"
+        return payload
+
+    return payload
+
+# Map DB unique violations to 409 Conflict (e.g., email/username taken, filament exists)
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError):
     headers = _cors_headers_for_request(request)
-    return JSONResponse(
-        {"detail": "duplicate", "hint": "email_or_username_taken"},
-        status_code=409,
-        headers=headers,
-    )
+    return JSONResponse(_dup_payload_from_exc(exc), status_code=409, headers=headers)
 
 # Bubble pydantic validation as 422 with field errors
 @app.exception_handler(ValidationError)
@@ -801,21 +856,26 @@ if health_router:
 # The upload router was previously mounted at "/api/v1" which could capture "/api/v1/filaments".
 # Reorder so specific routes win, then mount upload LAST (and isolate it under /api/v1/upload).
 
-mount(auth,     "/api/v1/auth",     ["auth"])
-mount(users,    "/api/v1/users",    ["users"])
-mount(avatar,   "/api/v1/avatar",   ["avatar"])
-mount(system,   "/api/v1/system",   ["system"])
-mount(filaments,"/api/v1/filaments",["filaments"])
-mount(admin,    "/api/v1/admin",    ["admin"])
-mount(cart,     "/api/v1/cart",     ["cart"])
+mount(auth,      "/api/v1/auth",      ["auth"])
+mount(users,     "/api/v1/users",     ["users"])
+mount(avatar,    "/api/v1/avatar",    ["avatar"])
+mount(system,    "/api/v1/system",    ["system"])
+mount(filaments, "/api/v1/filaments", ["filaments"])
+mount(admin,     "/api/v1/admin",     ["admin"])
+mount(cart,      "/api/v1/cart",      ["cart"])
+
+# New inventory routes (mounted under /api/v1 to honor internal prefixes)
+mount(inventory_levels, "/api/v1", ["inventory"])
+mount(inventory_moves,  "/api/v1", ["inventory"])
+mount(user_inventory,   "/api/v1", ["user-inventory"])
 
 if getattr(settings, "stripe_secret_key", ""):
     mount(checkout, "/api/v1/checkout", ["checkout"])
 else:
     logger.warning("⚠️ STRIPE_SECRET_KEY is not set. Checkout routes not mounted.")
 
-mount(models,   "/api/v1/models",   ["models"])
-mount(metrics,  "/metrics",         ["metrics"])
+mount(models,    "/api/v1/models",    ["models"])
+mount(metrics,   "/metrics",          ["metrics"])
 
 # ⬇️ Mount upload LAST and isolate it so it can't shadow other /api/v1/* routes.
 UPLOAD_PREFIX = os.getenv("UPLOAD_API_PREFIX") or "/api/v1/upload"

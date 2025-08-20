@@ -1,5 +1,5 @@
+// src/components/ui/MobileDrawer.tsx
 import React from 'react'
-import { useUser } from '@/hooks/useUser'
 import { useAuthStore } from '@/store/useAuthStore'
 
 interface MobileDrawerProps {
@@ -7,27 +7,49 @@ interface MobileDrawerProps {
   onClose: () => void
 }
 
-export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
-  const { user, isAdmin } = useUser()
+function hasAdminPrivileges(u: any): boolean {
+  if (!u) return false
+  const roleStr = String(u.role ?? '').toLowerCase()
+  if (['admin', 'owner', 'superuser', 'staff'].includes(roleStr)) return true
+  if (u.is_admin === true || u.is_staff === true || u.is_superuser === true || u.isOwner === true) return true
+  if (Number(u.role_id) === 1) return true // tolerate "1" (string) too
+  if (Array.isArray(u.permissions) && u.permissions.some((p: any) => String(p).toLowerCase().includes('admin'))) {
+    return true
+  }
+  return false
+}
 
-  // Be tolerant of different role shapes to avoid "I'm admin but UI says no"
+function coerceIsAdmin(val: unknown): boolean {
+  // store may expose a fn or a boolean
+  if (typeof val === 'function') {
+    try {
+      const out = (val as () => unknown)()
+      return !!out
+    } catch {
+      return false
+    }
+  }
+  return !!val
+}
+
+export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
+  // Single source of truth: the auth store (already hydrated by App.tsx)
+  const storeUser = useAuthStore((s: any) => s.user)
+  const storeIsAdmin = useAuthStore((s: any) => s.isAdmin)
+  const logout = useAuthStore((s: any) => s.logout)
+
   const isAdminUser = React.useMemo(() => {
-    const role = (user as any)?.role
-    const roleStr = typeof role === 'string' ? role.toLowerCase() : String(role ?? '').toLowerCase()
-    return (
-      isAdmin === true ||
-      roleStr === 'admin' ||
-      (user as any)?.is_admin === true ||
-      (user as any)?.role_id === 1
-    )
-  }, [user, isAdmin])
+    const flag = coerceIsAdmin(storeIsAdmin)
+    if (flag) return true
+    return hasAdminPrivileges(storeUser)
+  }, [storeIsAdmin, storeUser])
 
   if (!open) return null
 
   const handleAuthClick = () => {
-    if (user) {
+    if (storeUser) {
       console.info('[MobileDrawer] Signing out...')
-      useAuthStore.getState().logout()
+      logout?.()
       window.location.href = '/'
     } else {
       console.info('[MobileDrawer] Navigating to Sign In...')
@@ -91,15 +113,15 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
           </a>
         )}
 
-        {user && (
+        {storeUser && (
           <div
             className="
               mt-2 text-xs text-center text-gray-700 dark:text-zinc-300
               truncate max-w-[180px] px-2
             "
-            title={user.email}
+            title={(storeUser as any)?.email}
           >
-            {user.email}
+            {(storeUser as any)?.email}
           </div>
         )}
 
@@ -117,7 +139,7 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
             transition
           "
         >
-          {user ? 'Sign Out' : 'Sign In'}
+          {storeUser ? 'Sign Out' : 'Sign In'}
         </button>
       </div>
     </div>

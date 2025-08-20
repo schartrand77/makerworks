@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
+import inspect
+from typing import Optional, Any
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from sqlalchemy import or_, select, func
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Prefer the project's decoder if available; fall back to PyJWT
 try:
-    from app.core.security import decode_token as _project_decode_token  # type: ignore
+    from app.core.security import decode_token as _project_decode_token  # may be async or sync
 except Exception:  # pragma: no cover
     _project_decode_token = None  # type: ignore
 
@@ -30,31 +31,45 @@ except Exception:  # pragma: no cover
 
 
 def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
-    if not authorization:
+    """
+    Be DEFENSIVE: only operate on strings so accidental FastAPI Header(...) sentinels
+    (when someone calls this dependency directly without DI) won't explode.
+    """
+    if not isinstance(authorization, str):
         return None
-    parts = authorization.split()
+    s = authorization.strip()
+    if not s:
+        return None
+    parts = s.split(None, 1)
     if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1]
+        val = parts[1].strip()
+        return val or None
     return None
 
 
-def _decode_jwt(token: str) -> dict:
+async def _decode_jwt(token: str) -> dict:
     """
-    Decode a JWT using the project's decoder if present,
+    Decode a JWT using the project's decoder if present (async OR sync),
     else fall back to PyJWT + SECRET_KEY.
     """
     if _project_decode_token:
-        return _project_decode_token(token)  # type: ignore[misc]
+        try:
+            result = _project_decode_token(token)
+            return await result if inspect.isawaitable(result) else result  # type: ignore[no-any-return]
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"[AUTH] project decode_token failed: {e}")
 
     if not jwt:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Auth unavailable")
 
     try:
-        # Default to HS256 unless your project sets something else in its decoder.
+        # Default to HS256 unless your project overrides algorithm in decode_token
         return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-    except jwt.ExpiredSignatureError:
+    except getattr(jwt, "ExpiredSignatureError", Exception):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError:
+    except getattr(jwt, "InvalidTokenError", Exception):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 
@@ -63,7 +78,7 @@ async def _fetch_user_by_identifier(db: AsyncSession, ident: str) -> Optional[Us
     Accept UUID/email/username; return User or None.
     Case-insensitive match for email/username.
     """
-    # Try UUID
+    # Try UUID first
     try:
         user_id = uuid.UUID(str(ident))
         res = await db.execute(select(User).where(User.id == user_id))
@@ -74,7 +89,6 @@ async def _fetch_user_by_identifier(db: AsyncSession, ident: str) -> Optional[Us
         pass
 
     ident_l = ident.lower()
-    # Case-insensitive email/username match
     q = select(User).where(
         or_(
             func.lower(User.email) == ident_l,
@@ -89,7 +103,7 @@ async def get_current_user(
     request: Request,
     db: AsyncSession = Depends(get_db),
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
-    access_token_cookie: Optional[str] = Cookie(default=None, alias="access_token"),
+    access_token: Optional[str] = Cookie(default=None),  # cookie named "access_token"
 ) -> User:
     """
     Unified auth dependency (JWT-first).
@@ -106,21 +120,20 @@ async def get_current_user(
     token = _extract_bearer(authorization)
     if token:
         try:
-            payload = _decode_jwt(token)
+            payload = await _decode_jwt(token)
             user_ident = payload.get("sub") or payload.get("email")
             if not user_ident:
                 logger.warning("[AUTH] JWT missing 'sub' and 'email' claims")
         except HTTPException as e:
-            # Real auth failures should bubble; continue to other methods only
-            # if we want soft fallback. Here we log and try cookie next.
+            # Log and continue to cookie fallback (common during transitions)
             logger.warning(f"[AUTH] Bearer decode failed: {e.detail}")
-        except Exception as e:  # defensive
+        except Exception as e:
             logger.warning(f"[AUTH] Bearer decode error: {e}")
 
     # 2) JWT from access_token cookie (what your signin/signup set)
-    if not user_ident and access_token_cookie:
+    if not user_ident and access_token:
         try:
-            payload = _decode_jwt(access_token_cookie)
+            payload = await _decode_jwt(access_token)
             user_ident = payload.get("sub") or payload.get("email")
             if not user_ident:
                 logger.warning("[AUTH] Cookie JWT missing 'sub'/'email'")
@@ -129,7 +142,7 @@ async def get_current_user(
         except Exception as e:
             logger.warning(f"[AUTH] Cookie token decode error: {e}")
 
-    # 3) Transitional: X-User-Id
+    # 3) Transitional: X-User-Id header
     if not user_ident:
         header_uid = request.headers.get("X-User-Id")
         if header_uid:
@@ -157,7 +170,7 @@ async def get_current_user(
     if getattr(user, "is_active", True) is False:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User disabled")
 
-    # Best-effort side effect
+    # Best-effort side effect; failures should never block auth
     try:
         ensure_user_model_thumbnails_for_user(str(user.id))
     except Exception as e:
@@ -166,8 +179,32 @@ async def get_current_user(
     return user
 
 
+async def optional_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    access_token: Optional[str] = Cookie(default=None),
+) -> Optional[User]:
+    """
+    Like get_current_user but returns None (never raises) if unauthenticated.
+    IMPORTANT: we accept the same DI params here and pass them through so nobody
+    accidentally triggers Header()/Cookie() default objects by direct call.
+    """
+    try:
+        return await get_current_user(
+            request=request,
+            db=db,
+            authorization=authorization,
+            access_token=access_token,
+        )  # type: ignore[return-value]
+    except HTTPException:
+        return None
+
+
 async def admin_required(user: User = Depends(get_current_user)) -> User:
-    # Allow both admin and owner; tweak as needed.
+    """
+    Gate for admin-only routes. Accepts 'admin' or 'owner' roles.
+    """
     role = (getattr(user, "role", "") or "").lower()
     if role not in {"admin", "owner"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")

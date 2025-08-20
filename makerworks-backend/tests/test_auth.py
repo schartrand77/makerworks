@@ -19,10 +19,11 @@ os.environ.setdefault("ASYNC_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "secret")
 os.environ.setdefault("STRIPE_SECRET_KEY", "test")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest
 from fastapi import FastAPI
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from app.db.base import Base
@@ -31,7 +32,7 @@ from app.models.models import User
 from app.routes import auth, avatar
 
 
-def create_test_app():
+async def create_test_app():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -46,10 +47,9 @@ def create_test_app():
     app = FastAPI()
     app.dependency_overrides[get_db] = override_get_db
     app.include_router(auth.router, prefix="", tags=["auth"])
-    app.include_router(avatar.router, prefix="", tags=["avatar"])
+    app.include_router(avatar.router, prefix="/api/v1/avatar", tags=["avatar"])
 
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(init_models())
+    await init_models()
 
     app.state._sessionmaker = session_local
     return app
@@ -57,8 +57,9 @@ def create_test_app():
 
 @pytest.fixture()
 async def client():
-    app = create_test_app()
-    async with AsyncClient(app=app, base_url="http://testserver") as c:
+    app = await create_test_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         yield c
 
 
@@ -176,3 +177,74 @@ async def test_avatar_url_persists(client: AsyncClient, db: AsyncSession):
 
     refreshed = await db.get(User, uuid.UUID(user_id))
     assert refreshed.avatar_url == avatar_url
+
+
+@pytest.mark.asyncio
+async def test_cookie_flags_non_production(client: AsyncClient, monkeypatch):
+    email = f"c{uuid.uuid4()}@example.com"
+    username = f"c{uuid.uuid4()}"
+    password = "StrongPass123!"
+
+    async def fake_create_session(user_id):
+        return "token"
+
+    from app.routes import auth as auth_route
+
+    monkeypatch.setattr(auth_route, "create_session", fake_create_session)
+
+    response = await client.post(
+        "/signup",
+        json={"email": email, "username": username, "password": password},
+    )
+    assert response.status_code == 200
+
+    cookies = response.headers.get_list("set-cookie")
+    access_cookie = next((c for c in cookies if c.startswith("access_token=")), "")
+    session_cookie = next((c for c in cookies if c.startswith("session=")), "")
+    assert "Secure" not in access_cookie
+    assert "Secure" not in session_cookie
+    assert "samesite=lax" in access_cookie.lower()
+    assert "samesite=lax" in session_cookie.lower()
+
+
+@pytest.mark.asyncio
+async def test_cookie_flags_production(monkeypatch):
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "test-secret")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    import importlib
+    import app.core.config as core_settings
+    importlib.reload(core_settings)
+    import app.routes.auth as auth_module
+    importlib.reload(auth_module)
+
+    app = await create_test_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async def fake_create_session(user_id):
+            return "token"
+
+        from app.routes import auth as auth_route
+
+        monkeypatch.setattr(auth_route, "create_session", fake_create_session)
+        email = f"p{uuid.uuid4()}@example.com"
+        username = f"p{uuid.uuid4()}"
+        password = "StrongPass123!"
+
+        response = await client.post(
+            "/signup",
+            json={"email": email, "username": username, "password": password},
+        )
+        assert response.status_code == 200
+
+        cookies = response.headers.get_list("set-cookie")
+        access_cookie = next((c for c in cookies if c.startswith("access_token=")), "")
+        session_cookie = next((c for c in cookies if c.startswith("session=")), "")
+        assert "Secure" in access_cookie
+        assert "Secure" in session_cookie
+        assert "samesite=strict" in access_cookie.lower()
+        assert "samesite=strict" in session_cookie.lower()
+
+    monkeypatch.setenv("ENV", "test")
+    importlib.reload(core_settings)
+    importlib.reload(auth_module)

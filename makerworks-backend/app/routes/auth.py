@@ -23,6 +23,11 @@ from app.services.cache.user_cache import cache_user_profile
 from app.services.session_backend import create_session, destroy_session
 from app.utils.filesystem import ensure_user_model_thumbnails_for_user
 
+try:
+    from app.core.config import settings  # preferred
+except Exception:  # pragma: no cover
+    from app.config.settings import settings  # legacy
+
 router = APIRouter()
 log = logging.getLogger("uvicorn.error")
 
@@ -144,12 +149,14 @@ async def signup(
         access_token = create_access_token(
             str(user.id), extra={"email": user.email, "role": user.role}
         )
+        is_prod = settings.env == "production"
+        same_site = "strict" if is_prod else "lax"
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
-            samesite="lax",
-            secure=False,
+            samesite=same_site,
+            secure=is_prod,
             max_age=60 * 60,
             path="/",
         )
@@ -160,8 +167,8 @@ async def signup(
                 key="session",
                 value=session_token,
                 httponly=True,
-                samesite="lax",
-                secure=False,
+                samesite=same_site,
+                secure=is_prod,
                 max_age=60 * 60 * 24 * 7,
                 path="/",
             )
@@ -227,12 +234,14 @@ async def signin(
     access_token = create_access_token(
         str(user.id), extra={"email": user.email, "role": user.role}
     )
+    is_prod = settings.env == "production"
+    same_site = "strict" if is_prod else "lax"
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        samesite="lax",
-        secure=False,
+        samesite=same_site,
+        secure=is_prod,
         max_age=60 * 60,
         path="/",
     )
@@ -243,8 +252,8 @@ async def signin(
             key="session",
             value=session_token,
             httponly=True,
-            samesite="lax",
-            secure=False,
+            samesite=same_site,
+            secure=is_prod,
             max_age=60 * 60 * 24 * 7,
             path="/",
         )

@@ -1,5 +1,8 @@
 import os
 import sys
+import uuid
+import asyncio
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -16,35 +19,28 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "secret")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
-import importlib.util
-from pathlib import Path
-
+from app.routes import admin
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.session import get_db
-
-spec_auth = importlib.util.spec_from_file_location(
-    "app.routes.auth",
-    Path(__file__).resolve().parents[1] / "app" / "routes" / "auth.py",
-)
-auth = importlib.util.module_from_spec(spec_auth)
-spec_auth.loader.exec_module(auth)
-
-spec_admin = importlib.util.spec_from_file_location(
-    "app.routes.admin",
-    Path(__file__).resolve().parents[1] / "app" / "routes" / "admin.py",
-)
-admin = importlib.util.module_from_spec(spec_admin)
-spec_admin.loader.exec_module(admin)
+from app.dependencies.auth import get_current_user
+from app.models.models import User, AuditLog
 
 
-def create_test_app():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+def create_test_app(overrides: dict | None = None) -> FastAPI:
+    engine = create_async_engine(
+        'sqlite+aiosqlite:///:memory:',
+        echo=False,
+        connect_args={'check_same_thread': False},
+        poolclass=StaticPool,
+    )
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async def override_get_db():
@@ -55,30 +51,33 @@ def create_test_app():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(init_models())
+
     app = FastAPI()
     app.dependency_overrides[get_db] = override_get_db
-    app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+    if overrides:
+        for dep, func in overrides.items():
+            app.dependency_overrides[dep] = func
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
-
-    import asyncio
-
-    asyncio.get_event_loop().run_until_complete(init_models())
-
+    app.state.async_session = async_session
     return app
 
 
-@pytest.fixture()
-def client():
+def test_admin_logs_requires_auth():
     app = create_test_app()
-    with TestClient(app) as c:
-        yield c
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/admin/logs", json={"action": "ping"})
+        assert resp.status_code == 401
 
 
-def test_auth_admin_unlock_protected(client):
-    resp = client.post("/api/v1/auth/admin/unlock")
-    assert resp.status_code == 401
+def test_admin_logs_forbidden_for_non_admin():
+    async def override_user():
+        return User(id=uuid.uuid4(), email="user@example.com", username="user", hashed_password="x", role="user")
+
+    app = create_test_app({get_current_user: override_user})
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/admin/logs", json={"action": "ping"})
+        assert resp.status_code == 403
 
 
-def test_admin_unlock_protected(client):
-    resp = client.post("/api/v1/admin/admin/unlock")
-    assert resp.status_code == 401

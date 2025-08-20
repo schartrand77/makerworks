@@ -1,85 +1,93 @@
 // src/components/ui/GlassNavbar.tsx
-import { Link, useLocation } from 'react-router-dom';
-import UserDropdown from '@/components/ui/UserDropdown';
-import { useAuthStore } from '@/store/useAuthStore';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
+import { Link, useLocation } from 'react-router-dom'
+import UserDropdown from '@/components/ui/UserDropdown' // ← existing dropdown
+import { useAuthStore } from '@/store/useAuthStore'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import getAbsoluteUrl from '@/lib/getAbsoluteUrl'
 
 /**
  * Resolve a stable avatar URL with cache-busting based on avatar_updated_at.
  * Falls back to thumbnail, then cached localStorage, then default asset.
  */
 function buildAvatarUrl(
-  user?: {
-    avatar_url?: string | null;
-    thumbnail_url?: string | null;
-    avatar_updated_at?: string | number | null;
-  } | null
+  user?:
+    | {
+        avatar_url?: string | null
+        thumbnail_url?: string | null
+        avatar_updated_at?: string | number | null
+      }
+    | null
 ) {
-  // Avoid hitting localStorage during SSR
-  const cached = typeof window !== 'undefined' ? localStorage.getItem('avatar_url') : null;
+  const cached = typeof window !== 'undefined' ? localStorage.getItem('avatar_url') : null
 
   const base =
     (user?.avatar_url && (getAbsoluteUrl(user.avatar_url) || user.avatar_url)) ||
     (user?.thumbnail_url && (getAbsoluteUrl(user.thumbnail_url) || user.thumbnail_url)) ||
     (cached && (getAbsoluteUrl(cached) || cached)) ||
-    '/default-avatar.png';
+    '/default-avatar.png'
 
-  // Never cache-bust the baked-in default
-  if (!user?.avatar_updated_at || base === '/default-avatar.png') return base;
-
-  const ts = new Date(user.avatar_updated_at as any).getTime();
-  return `${base}${base.includes('?') ? '&' : '?'}v=${ts}`;
+  if (!user?.avatar_updated_at || base === '/default-avatar.png') return base
+  const ts = new Date(user.avatar_updated_at as any).getTime()
+  return `${base}${base.includes('?') ? '&' : '?'}v=${ts}`
 }
 
 const GlassNavbar = () => {
-  const user = useAuthStore((s) => s.user);
-  const isAuthenticatedFn = useAuthStore((s) => s.isAuthenticated);
-  const isAuthenticated = typeof isAuthenticatedFn === 'function' ? isAuthenticatedFn() : false;
+  const user = useAuthStore((s) => s.user)
+  const isAuthenticatedVal = useAuthStore((s) => s.isAuthenticated)
+  const isAuthenticated =
+    typeof isAuthenticatedVal === 'function' ? (isAuthenticatedVal as () => boolean)() : !!isAuthenticatedVal
 
-  const location = useLocation();
-  const gearRef = useRef<HTMLSpanElement>(null);
+  const location = useLocation()
+  const path = location.pathname.toLowerCase()
+  const gearRef = useRef<HTMLSpanElement>(null)
+
+  // Decide visibility (landing + auth routes hide the nav)
+  const hideNav = useMemo(() => {
+    if (path === '/') return true
+    if (path === '/auth' || path === '/auth/') return true
+    if (path.startsWith('/auth/')) return true
+    return false
+  }, [path])
 
   // Detect PWA standalone mode (iOS and others)
   const isStandalone =
     typeof window !== 'undefined' &&
-    (window.matchMedia('(display-mode: standalone)').matches ||
-      (window.navigator as any).standalone);
+    (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone)
 
   // Local state for live avatar updates
-  const [avatarUrl, setAvatarUrl] = useState<string>(() => buildAvatarUrl(user));
+  const [avatarUrl, setAvatarUrl] = useState<string>(() => buildAvatarUrl(user))
 
   // Update when user in store changes
   useEffect(() => {
-    setAvatarUrl(buildAvatarUrl(user));
-  }, [user?.avatar_url, user?.thumbnail_url, user?.avatar_updated_at]);
+    setAvatarUrl(buildAvatarUrl(user))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.avatar_url, user?.thumbnail_url, user?.avatar_updated_at])
 
   // Listen for uploads broadcasting a fresh avatar URL
   useEffect(() => {
     const onUpdate = (e: any) => {
-      const next: string | undefined = e?.detail?.url;
+      const next: string | undefined = e?.detail?.url
       if (typeof next === 'string' && next.length > 0) {
-        setAvatarUrl(next);
-        // Also update Zustand store avatar_url so other components refresh
+        setAvatarUrl(next)
         useAuthStore.setState((state) => ({
           user: state.user ? { ...state.user, avatar_url: next } : state.user,
-        }));
+        }))
       }
-    };
-    window.addEventListener('avatar:updated', onUpdate);
-    return () => window.removeEventListener('avatar:updated', onUpdate);
-  }, []);
+    }
+    window.addEventListener('avatar:updated', onUpdate)
+    return () => window.removeEventListener('avatar:updated', onUpdate)
+  }, [])
 
-  // Gear spin effect
+  // Gear spin effect (safe when nav hidden; ref will be null)
   useEffect(() => {
     const interval = setInterval(() => {
       if (gearRef.current) {
-        gearRef.current.classList.add('animate-spin-once');
-        setTimeout(() => gearRef.current?.classList.remove('animate-spin-once'), 1000);
+        gearRef.current.classList.add('animate-spin-once')
+        setTimeout(() => gearRef.current?.classList.remove('animate-spin-once'), 1000)
       }
-    }, Math.random() * 8000 + 3000);
-    return () => clearInterval(interval);
-  }, []);
+    }, Math.random() * 8000 + 3000)
+    return () => clearInterval(interval)
+  }, [])
 
   const navRoutes = useMemo(
     () => [
@@ -91,7 +99,7 @@ const GlassNavbar = () => {
       { path: '/checkout', label: 'Checkout' },
     ],
     []
-  );
+  )
 
   const fallbackUser = useMemo(
     () => ({
@@ -101,17 +109,18 @@ const GlassNavbar = () => {
       role: 'guest',
     }),
     []
-  );
+  )
 
-  // Inject live avatar URL into resolvedUser
+  // For authenticated users, do NOT merge fallback (don’t clobber role/flags); only fix avatar.
   const resolvedUser = useMemo(() => {
-    if (!isAuthenticated) return fallbackUser;
-    return {
-      ...fallbackUser,
-      ...user,
-      avatar_url: avatarUrl || '/default-avatar.png',
-    };
-  }, [isAuthenticated, user, avatarUrl, fallbackUser]);
+    if (!isAuthenticated) return fallbackUser
+    const base: any = { ...(user || {}) }
+    base.avatar_url = avatarUrl || base.avatar_url || '/default-avatar.png'
+    return base
+  }, [isAuthenticated, user, avatarUrl, fallbackUser])
+
+  // ✅ Important: return based on hideNav AFTER all hooks are declared
+  if (hideNav) return null
 
   return (
     <nav
@@ -127,12 +136,14 @@ const GlassNavbar = () => {
       <div className="flex items-center gap-2">
         <Link to="/" className="text-lg font-bold text-gray-800 dark:text-white">
           MakerW
-          <span ref={gearRef} className="gear">⚙️</span>
+          <span ref={gearRef} className="gear">
+            ⚙️
+          </span>
           rks
         </Link>
 
         {navRoutes.map((item) => {
-          const isActive = location.pathname === item.path;
+          const isActive = path === item.path
           return (
             <Link
               key={item.path}
@@ -148,7 +159,7 @@ const GlassNavbar = () => {
             >
               {item.label}
             </Link>
-          );
+          )
         })}
       </div>
 
@@ -171,8 +182,8 @@ const GlassNavbar = () => {
         )}
       </div>
     </nav>
-  );
-};
+  )
+}
 
-export default GlassNavbar;
+export default GlassNavbar
 

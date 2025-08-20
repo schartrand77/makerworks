@@ -65,6 +65,7 @@ MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB per image
 THUMBNAIL_SIZE    = int(os.getenv("THUMBNAIL_SIZE", "1024"))
 THUMBNAIL_BACKEND = os.getenv("THUMBNAIL_BACKEND", "auto")  # auto|pyrender|plotly
 ALLOW_THUMB_FALLBACK = os.getenv("THUMBNAIL_FALLBACK", "false").lower() == "true"
+THUMBNAIL_TIMEOUT = int(os.getenv("THUMBNAIL_TIMEOUT", "120"))
 
 # 1×1 transparent PNG (fallback)
 _PNG_1x1 = (
@@ -90,10 +91,21 @@ async def _make_thumbnail(model_path: Path, model_id: str) -> Path:
         "--size", str(THUMBNAIL_SIZE),
     ]
     log.info("[thumbnail] render: %s", " ".join(cmd))
+    timeout = THUMBNAIL_TIMEOUT
 
     def _run():
-        return subprocess.run(cmd, capture_output=True, text=True)
-    proc = await run_in_threadpool(_run)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+    try:
+        proc = await run_in_threadpool(_run)
+    except subprocess.TimeoutExpired:
+        log.error("[thumbnail] renderer timed out after %ss", timeout)
+        if ALLOW_THUMB_FALLBACK:
+            out_path.write_bytes(_PNG_1x1)
+            return out_path
+        with contextlib.suppress(Exception):
+            out_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Thumbnail renderer timed out.")
 
     if proc.returncode != 0:
         log.error("[thumbnail] renderer failed (%s)\nSTDOUT:\n%s\nSTDERR:\n%s",

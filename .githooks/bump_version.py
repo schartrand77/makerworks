@@ -2,10 +2,17 @@
 """
 Auto-bump VERSION (semver) every commit, then sync it to common manifests.
 
-- Bumps major/minor/patch based on $BUMP (default: patch)
-- Updates: VERSION, any top-level or common-subdir package.json, and pyproject.toml
-  (updates [project].version or [tool.poetry].version if present)
-- Stages modified files (git add) so the same commit includes the bump(s)
+Default behavior: **roll patch every 13th commit** (0..12):
+  ... → 0.1.10 → 0.1.11 → 0.1.12 → 0.2.0 → 0.2.1 → ...
+
+Overrides via env:
+  - BUMP=patch  : force patch++ (no 13th rollover)
+  - BUMP=minor  : minor++ ; patch=0
+  - BUMP=major  : major++ ; minor=0 ; patch=0
+
+Also updates: VERSION, any top-level or common-subdir package.json, and pyproject.toml
+(updates [project].version or [tool.poetry].version if present)
+Then stages modified files (git add) so the same commit includes the bump(s).
 
 Keep this fast—it's run in a pre-commit hook.
 """
@@ -31,6 +38,9 @@ SCAN_DIRS = [
 ]
 IGNORE_DIRS = {"node_modules", ".git", ".venv", "venv", "__pycache__"}
 
+# Roll to next minor when patch reaches this value (i.e., 0..12 → next is .0 and minor++)
+PATCH_ROLLOVER = 12
+
 
 def read_version() -> str:
     if not VERSION_PATH.exists():
@@ -47,17 +57,24 @@ def parse_semver(v: str):
     return tuple(int(x) for x in m.groups())
 
 
-def bump(major: int, minor: int, patch: int):
-    how = os.getenv("BUMP", "patch").lower().strip()
-    if how not in {"major", "minor", "patch"}:
-        how = "patch"
+def bump(major: int, minor: int, patch: int) -> str:
+    """
+    Default: roll patch every 13th commit (0..12). On reaching PATCH_ROLLOVER, bump minor and reset patch=0.
+    Explicit overrides via BUMP env: major|minor|patch.
+    """
+    how = os.getenv("BUMP", "").lower().strip()
+
     if how == "major":
-        major, minor, patch = major + 1, 0, 0
-    elif how == "minor":
-        minor, patch = minor + 1, 0
-    else:
-        patch += 1
-    return f"{major}.{minor}.{patch}"
+        return f"{major + 1}.0.0"
+    if how == "minor":
+        return f"{major}.{minor + 1}.0"
+    if how == "patch":
+        return f"{major}.{minor}.{patch + 1}"
+
+    # Auto (13-step cycle): 0..12 then rollover
+    if patch >= PATCH_ROLLOVER:
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
 
 
 def write_if_changed(path: Path, content: str) -> bool:

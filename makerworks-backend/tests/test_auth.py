@@ -29,7 +29,26 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from app.db.base import Base
 from app.db.session import get_db
 from app.models.models import User
-from app.routes import auth, avatar
+import importlib.util
+import types
+import sys
+
+ROUTES_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "app" / "routes"
+routes_pkg = types.ModuleType("app.routes")
+routes_pkg.__path__ = [str(ROUTES_DIR)]
+sys.modules.setdefault("app.routes", routes_pkg)
+
+
+def _load_route_module(name: str):
+    spec = importlib.util.spec_from_file_location(f"app.routes.{name}", ROUTES_DIR / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[f"app.routes.{name}"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+auth = _load_route_module("auth")
+avatar = _load_route_module("avatar")
 
 
 async def create_test_app():
@@ -108,7 +127,24 @@ async def test_signin(client: AsyncClient):
 
     response = await client.post(
         "/signin",
-        json={"email_or_username": email, "password": password},
+        json={"email_or_username": email.upper(), "password": password},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "user" in data
+
+
+@pytest.mark.asyncio
+async def test_signin_username_case_insensitive(client: AsyncClient):
+    email = f"u{uuid.uuid4()}@example.com"
+    username = f"u{uuid.uuid4()}"
+    password = "StrongPass123!"
+
+    await client.post("/signup", json={"email": email, "username": username, "password": password})
+
+    response = await client.post(
+        "/signin",
+        json={"email_or_username": username.upper(), "password": password},
     )
     assert response.status_code == 200
     data = response.json()

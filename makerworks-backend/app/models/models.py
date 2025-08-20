@@ -19,6 +19,7 @@ from sqlalchemy import (
     event,
     JSON,
     Index,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -39,7 +40,6 @@ except Exception:
 
 # Resolve uploads root safely (used by the path normalizer)
 try:
-    # Prefer the canonical root the app sets; fall back to settings/uploads
     uploads_root = Path(getattr(settings, "UPLOAD_DIR", getattr(settings, "uploads_path", "/uploads"))).resolve()
 except Exception:
     logging.warning("⚠️ uploads path not configured, using /uploads fallback")
@@ -66,7 +66,6 @@ class User(Base):
     language = Column(String, default="en")
     theme = Column(String, default="light")
 
-    # Admin is determined by this string. Default is plain user.
     role = Column(String, default="user")
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
@@ -80,19 +79,14 @@ class User(Base):
     checkout_sessions = relationship("CheckoutSession", back_populates="user", cascade="all, delete-orphan")
     printed_examples = relationship("PrintedExample", back_populates="user", cascade="all, delete-orphan")
 
-    __table_args__ = (
-        # Helpful if you ever filter by role in queries
-        Index("ix_users_role", "role"),
-    )
+    __table_args__ = (Index("ix_users_role", "role"),)
 
     @hybrid_property
     def is_admin(self) -> bool:
-        """Python-side check."""
         return (self.role or "").strip().lower() == "admin"
 
     @is_admin.expression  # type: ignore
     def is_admin(cls):
-        """SQL-side check: enables .filter(User.is_admin == True)."""
         return func.lower(func.coalesce(cls.role, "")) == "admin"
 
     def __repr__(self) -> str:
@@ -108,10 +102,9 @@ class ModelUpload(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # Use Text for anything that can exceed 255 (filenames, file paths, URLs)
-    filename = Column(Text, nullable=False)        # original filename
-    file_path = Column(Text, nullable=False)       # filesystem path (container)
-    file_url = Column(Text, nullable=True)         # served URL (e.g., /models/... or /uploads/...)
+    filename = Column(Text, nullable=False)
+    file_path = Column(Text, nullable=False)
+    file_url = Column(Text, nullable=True)
 
     thumbnail_path = Column(Text, nullable=True)
     turntable_path = Column(Text, nullable=True)
@@ -121,9 +114,8 @@ class ModelUpload(Base):
 
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
-    # Geometry / analysis
     volume = Column(Float, nullable=True)
-    bbox = Column(JSON, nullable=True)             # store dict like {"x":..,"y":..,"z":..}
+    bbox = Column(JSON, nullable=True)
     faces = Column(Integer, nullable=True)
     vertices = Column(Integer, nullable=True)
 
@@ -134,42 +126,23 @@ class ModelUpload(Base):
     estimates = relationship("Estimate", back_populates="model", cascade="all, delete-orphan")
     favorites = relationship("Favorite", back_populates="model", cascade="all, delete-orphan")
 
-    # Rich metadata rows
-    metadata_entries = relationship(
-        "ModelMetadata",
-        back_populates="model",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-    )
+    metadata_entries = relationship("ModelMetadata", back_populates="model", cascade="all, delete-orphan", lazy="selectin")
+    printed_examples = relationship("PrintedExample", back_populates="model", cascade="all, delete-orphan", lazy="selectin")
 
-    # Real-world printed examples of this model
-    printed_examples = relationship(
-        "PrintedExample",
-        back_populates="model",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-    )
-
-    __table_args__ = (
-        Index("ix_model_uploads_user_uploaded_at", "user_id", "uploaded_at"),
-    )
+    __table_args__ = (Index("ix_model_uploads_user_uploaded_at", "user_id", "uploaded_at"),)
 
 
-# ✅ Normalize FS paths (NOT URLs) before insert/update to be relative to uploads_root
 @event.listens_for(ModelUpload, "before_insert")
 @event.listens_for(ModelUpload, "before_update")
-def normalize_modelupload_paths(mapper, connection, target: ModelUpload):
+def normalize_modelupload_paths(mapper, connection, target: "ModelUpload"):
     def normalize_path(value: str) -> str:
         if not value:
             return value
         p = Path(value)
-        # if not absolute, interpret relative to uploads_root
         if not p.is_absolute():
             p = uploads_root / p
         try:
-            # Resolve to eliminate ".." and symlinks, then ensure within root
-            rel = p.resolve().relative_to(uploads_root).as_posix()
-            return rel
+            return p.resolve().relative_to(uploads_root).as_posix()
         except Exception as exc:
             raise ValueError(f"Path outside uploads root: {p}") from exc
 
@@ -179,17 +152,12 @@ def normalize_modelupload_paths(mapper, connection, target: ModelUpload):
         target.thumbnail_path = normalize_path(target.thumbnail_path)
     if target.turntable_path:
         target.turntable_path = normalize_path(target.turntable_path)
-    # IMPORTANT: do NOT normalize file_url — it's already a URL rooted at /uploads or /models
 
 
 # =========================
-# Printed Examples (real-life prints of a model)
+# Printed Examples
 # =========================
 class PrintedExample(Base):
-    """
-    Represents a real-world printed instance of a ModelUpload (with print settings & notes).
-    Has one-to-many photos in ExampleImage.
-    """
     __tablename__ = "printed_examples"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -199,36 +167,35 @@ class PrintedExample(Base):
     title = Column(String, nullable=True)
     description = Column(Text, nullable=True)
 
-    # Basic print metadata (keep flexible and stringly-typed where needed)
     printer_brand = Column(String, nullable=True)
     printer_model = Column(String, nullable=True)
     slicer = Column(String, nullable=True)
 
-    filament_material = Column(String, nullable=True)      # e.g., PLA, PETG
+    filament_material = Column(String, nullable=True)
     filament_brand = Column(String, nullable=True)
     filament_color_name = Column(String, nullable=True)
     filament_color_hex = Column(String, nullable=True)
 
-    nozzle_mm = Column(Float, nullable=True)               # 0.4, 0.6
+    nozzle_mm = Column(Float, nullable=True)
     layer_height_mm = Column(Float, nullable=True)
     infill_percent = Column(Float, nullable=True)
     wall_count = Column(Integer, nullable=True)
     supports = Column(Boolean, nullable=True)
-    adhesion = Column(String, nullable=True)               # skirt/brim/raft/none
+    adhesion = Column(String, nullable=True)
 
     nozzle_temp_c = Column(Integer, nullable=True)
     bed_temp_c = Column(Integer, nullable=True)
     speed_mm_s = Column(Float, nullable=True)
 
-    scale_percent = Column(Float, nullable=True)           # 100 = original
-    orientation = Column(JSON, nullable=True)              # {"yaw":..,"pitch":..,"roll":..}
+    scale_percent = Column(Float, nullable=True)
+    orientation = Column(JSON, nullable=True)
 
     print_time_sec = Column(Integer, nullable=True)
     filament_used_g = Column(Float, nullable=True)
     cost_estimated = Column(Float, nullable=True)
 
-    visibility = Column(String, default="public")          # public | unlisted | private
-    license = Column(String, nullable=True)                # e.g., CC-BY, All Rights Reserved
+    visibility = Column(String, default="public")
+    license = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -244,19 +211,15 @@ class PrintedExample(Base):
 
 
 class ExampleImage(Base):
-    """
-    A photo of a PrintedExample (multiple per example).
-    Stores filesystem paths (relative to uploads root) and a served URL.
-    """
     __tablename__ = "example_images"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     example_id = Column(UUID(as_uuid=True), ForeignKey("printed_examples.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    file_path = Column(Text, nullable=False)      # FS path (normalize to relative)
-    file_url = Column(Text, nullable=True)        # served URL (/uploads/.. or CDN)
-    thumbnail_path = Column(Text, nullable=True)  # FS path (normalize to relative)
+    file_path = Column(Text, nullable=False)
+    file_url = Column(Text, nullable=True)
+    thumbnail_path = Column(Text, nullable=True)
 
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
@@ -267,7 +230,7 @@ class ExampleImage(Base):
 
     order_index = Column(Integer, default=0, nullable=False)
     is_primary = Column(Boolean, default=False, nullable=False)
-    status = Column(String, default="active", nullable=False)  # active|hidden|removed
+    status = Column(String, default="active", nullable=False)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -275,14 +238,12 @@ class ExampleImage(Base):
     example = relationship("PrintedExample", back_populates="images")
     user = relationship("User")
 
-    __table_args__ = (
-        Index("ix_example_images_example_order", "example_id", "order_index"),
-    )
+    __table_args__ = (Index("ix_example_images_example_order", "example_id", "order_index"),)
 
 
 @event.listens_for(ExampleImage, "before_insert")
 @event.listens_for(ExampleImage, "before_update")
-def normalize_exampleimage_paths(mapper, connection, target: ExampleImage):
+def normalize_exampleimage_paths(mapper, connection, target: "ExampleImage"):
     def normalize_path(value: str) -> str:
         if not value:
             return value
@@ -299,7 +260,22 @@ def normalize_exampleimage_paths(mapper, connection, target: ExampleImage):
         target.file_path = normalize_path(target.file_path)
     if target.thumbnail_path:
         target.thumbnail_path = normalize_path(target.thumbnail_path)
-    # do not touch file_url (it's a URL)
+    # do not touch file_url
+
+
+# =========================
+# Favorites
+# =========================
+class Favorite(Base):
+    __tablename__ = "favorites"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    model_id = Column(UUID(as_uuid=True), ForeignKey("model_uploads.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="favorites")
+    model = relationship("ModelUpload", back_populates="favorites")
 
 
 # =========================
@@ -344,93 +320,83 @@ class EstimateSettings(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
-# =========================
-# Favorites
-# =========================
-class Favorite(Base):
-    __tablename__ = "favorites"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    model_id = Column(UUID(as_uuid=True), ForeignKey("model_uploads.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    user = relationship("User", back_populates="favorites")
-    model = relationship("ModelUpload", back_populates="favorites")
-
-
-# =========================
-# Filaments
-# =========================
-from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy import func, Index
-
+# ─────────────────────────────────────────────────────────────────────
+# Filaments (canonical + legacy compatibility) and FilamentPricing
+# ─────────────────────────────────────────────────────────────────────
 class Filament(Base):
     __tablename__ = "filaments"
+    __table_args__ = (
+        UniqueConstraint("name", "category", "color_hex", name="uq_public_filaments_name_category_colorhex"),
+        Index("ix_public_filaments_type_color_hex", "type", "color_name", "color_hex"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Existing physical columns (keep these as-is to avoid migrations)
-    material = Column(String, nullable=False)       # e.g. PLA, PETG (brand or family if you use it that way)
-    type = Column(String, nullable=False)           # legacy "category" in the new API
-    color_name = Column(String, nullable=False)     # legacy "color" in the UI/API
-    color_hex = Column(String, nullable=False)      # maps to "hex" / "colorHex"
-    price_per_kg = Column(Float, nullable=False)
+    # Canonical
+    name = Column(String(128), nullable=False)
+    category = Column(String(64), nullable=False)
+    color_hex = Column(String(16), nullable=False)
+    price_per_kg = Column(Float, nullable=False, default=0.0)
+
+    # Legacy (kept nullable)
+    material = Column(String, nullable=True)
+    type = Column(String, nullable=True)          # legacy alias of category
+    color_name = Column(String, nullable=True)    # legacy alias of color/name
+
     attributes = Column(Text, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    # ---- Compatibility aliases (hybrid so they work in queries/order_by) ----
+    pricing = relationship("FilamentPricing", back_populates="filament", cascade="all, delete-orphan", lazy="selectin")
 
+    # ---------- Hybrid compatibility aliases ----------
     @hybrid_property
-    def color(self) -> str:
+    def color(self) -> str | None:
         return self.color_name
 
-    @color.expression  # type: ignore
+    @color.expression  # type: ignore[misc]
     def color(cls):
         return cls.color_name
 
     @hybrid_property
-    def hex(self) -> str:
+    def hex(self) -> str | None:
         return self.color_hex
 
-    @hex.expression  # type: ignore
+    @hex.expression  # type: ignore[misc]
     def hex(cls):
         return cls.color_hex
 
     @hybrid_property
-    def category(self) -> str:
-        # new API calls this "category"; it's your legacy "type"
-        return self.type
+    def name_display(self) -> str:
+        base = f"{(self.category or self.type or '').strip()} {(self.color_name or '').strip()}".strip()
+        return base or (self.name or "")
 
-    @category.expression  # type: ignore
-    def category(cls):
-        return cls.type
-
-    @hybrid_property
-    def name(self) -> str:
-        # reasonable display name; matches what the UI/POST builds
-        base = f"{(self.type or '').strip()} {(self.color_name or '').strip()}".strip()
-        return base or (self.material or "")
-
-    @name.expression  # type: ignore
-    def name(cls):
-        # concat_ws avoids double-spaces when either side is empty
-        return func.concat_ws(" ", cls.type, cls.color_name)
+    @name_display.expression  # type: ignore[misc]
+    def name_display(cls):
+        return func.concat_ws(" ", func.coalesce(cls.category, cls.type), cls.color_name)
 
     def __repr__(self) -> str:
-        return f"<Filament {self.type}/{self.color_name} #{self.color_hex} ${self.price_per_kg}/kg>"
+        return f"<Filament {self.category or self.type}/{self.color_name} #{self.color_hex} ${self.price_per_kg}/kg>"
 
-    __table_args__ = (
-        # Helpful composite index for lookups and uniqueness checks in services
-        Index("ix_filaments_type_color_hex", "type", "color_name", "color_hex"),
-    )
+
+class FilamentPricing(Base):
+    __tablename__ = "filament_pricing"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    filament_id = Column(UUID(as_uuid=True), ForeignKey("filaments.id", ondelete="CASCADE"), nullable=False)
+
+    price_per_gram = Column(Float, nullable=False)
+    price_per_mm3 = Column(Float, nullable=True)
+
+    effective_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    filament = relationship("Filament", back_populates="pricing", lazy="joined")
+
+    def __repr__(self) -> str:
+        return f"<FilamentPricing filament={self.filament_id} g={self.price_per_gram} mm3={self.price_per_mm3}>"
 
 
 # =========================
@@ -460,14 +426,6 @@ class ModelMetadata(Base):
 # Audit Log
 # =========================
 class AuditLog(Base):
-    """Generic audit trail entry.
-
-    We intentionally track the acting user's ID rather than a dedicated
-    admin identifier so the table can record both administrative and
-    non‑administrative events.  The helper in ``auth_service`` expects
-    these column names (``user_id`` and ``created_at``).
-    """
-
     __tablename__ = "audit_logs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

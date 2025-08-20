@@ -2,10 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from '@/api/client';
-import GlassCard from '@/components/ui/GlassCard';
-import PageHeader from '@/components/ui/PageHeader';
-import GlassButton from '@/components/ui/GlassButton';
-import { Search } from 'lucide-react';
+import { Search as SearchIcon } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useToast } from '@/context/ToastProvider';
 import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
@@ -17,7 +14,6 @@ interface Model {
   thumbnail_url: string | null;
   file_url: string | null;
   uploader_username: string | null;
-  /** Added so we can pass the exact STL to ModelPage */
   stl_url?: string | null;
 }
 
@@ -31,18 +27,16 @@ const SOURCES: { key: SourceKey; label: string }[] = [
   { key: 'thangs',      label: 'Thangs' },
 ];
 
-/** Backend origin resolver (no guessing games). */
 const BACKEND_BASE =
   (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ||
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/api\/v1\/?$/, '') ||
   `${window.location.protocol}//${window.location.hostname}:8000`;
 
-/** Always send media to the backend origin; never 5173. */
 function resolveMediaUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = String(raw).trim();
   if (!s) return null;
-  if (/^https?:\/\//i.test(s)) return s; // already absolute
+  if (/^https?:\/\//i.test(s)) return s;
 
   if (s.startsWith('/thumbnails') || s.startsWith('/uploads') || s.startsWith('/static')) {
     return `${BACKEND_BASE}${s}`;
@@ -52,24 +46,12 @@ function resolveMediaUrl(raw: string | null | undefined): string | null {
   return s.startsWith('/') ? s : `/${s}`;
 }
 
-/** VisionOS-y pill, emerald ring only (no glow) — reused for the Estimate button */
-const ledClasses = (active: boolean = true) =>
-  [
-    // pill + layout
-    'inline-flex h-10 w-full items-center justify-center rounded-full px-4 text-sm font-medium transition',
-    // glass base
-    'backdrop-blur-xl bg-white/70 dark:bg-white/10',
-    // readable text
-    'text-emerald-950 dark:text-emerald-200',
-    // crisp emerald ring
-    'border border-emerald-500/40 dark:border-emerald-400/35',
-    // subtle inner highlight only (no external bloom)
-    'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-    // interactive ring emphasis, still glow-free
-    'hover:border-emerald-500/60 dark:hover:border-emerald-400/60',
-    // states
-    active ? 'cursor-pointer' : 'opacity-55 cursor-not-allowed',
-  ].join(' ');
+type ListResponse = {
+  total: number;
+  items: any[];
+  limit: number;
+  offset: number;
+};
 
 const Browse: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
@@ -88,7 +70,7 @@ const Browse: React.FC = () => {
   const location = useLocation();
   const toast = useToast();
 
-  const limit = 6;
+  const limit = 9;
 
   useEffect(() => {
     if (source === 'local') {
@@ -111,29 +93,18 @@ const Browse: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, source]);
 
-  type ListResponse = {
-    total: number;
-    items: any[];
-    limit: number;
-    offset: number;
-  };
-
   const fetchModels = async (pageParam = 1, limitParam = limit) => {
     if (pageParam > 1) setLoadingMore(true);
     try {
-      // API is offset/limit-based; compute offset from page
       const offset = (pageParam - 1) * limitParam;
       const url = `${BACKEND_BASE}/api/v1/models`;
-      const res = await axios.get<ListResponse>(url, {
-        params: { offset, limit: limitParam },
-      });
+      const res = await axios.get<ListResponse>(url, { params: { offset, limit: limitParam } });
       console.debug('[Browse] /models ->', res.status, res.data);
 
       const fetched: Model[] = (res.data.items || []).map((m) => {
         const defaultThumb = m?.id ? `/thumbnails/${m.id}.png` : null;
         const rawThumb = m.thumbnail_url || m.thumbnail_path || defaultThumb;
 
-        // pick up either 'stl_url' or 'file_url' from API
         const rawFile = m.stl_url || m.file_url || null;
         const fileAbs = resolveMediaUrl(rawFile);
 
@@ -142,14 +113,13 @@ const Browse: React.FC = () => {
           name: m.name ?? null,
           description: m.description ?? null,
           thumbnail_url: resolveMediaUrl(rawThumb),
-          file_url: fileAbs,     // keep for older consumers
-          stl_url: fileAbs,      // use this when navigating to ModelPage
+          file_url: fileAbs,
+          stl_url: fileAbs,
           uploader_username: m.uploader_username || null,
         } as Model;
       });
 
       setModels((prev) => (pageParam === 1 ? fetched : [...prev, ...fetched]));
-
       const nextCount = (pageParam - 1) * limitParam + fetched.length;
       setHasMore(nextCount < (res.data.total ?? nextCount));
     } catch (err) {
@@ -169,7 +139,7 @@ const Browse: React.FC = () => {
       const res = await axios.get<string[]>(`${BACKEND_BASE}/api/v1/users/${user.id}/favorites`);
       setFavorites(new Set(res.data || []));
     } catch (err) {
-      console.error('[Browse] Failed to load favorites:', err);
+      console.error('[Browse] Failed to load favorites]:', err);
     }
   };
 
@@ -195,7 +165,6 @@ const Browse: React.FC = () => {
     }
   };
 
-  // Open external sources in a new tab and reset the select back to "local".
   const redirectToExternal = (platform: Exclude<SourceKey, 'local'>) => {
     const urls: Record<Exclude<SourceKey, 'local'>, string> = {
       makerworld: 'https://makerworld.com',
@@ -205,9 +174,7 @@ const Browse: React.FC = () => {
     };
     const url = urls[platform];
     const win = window.open(url, '_blank', 'noopener,noreferrer');
-    if (!win) {
-      toast.info('Popup blocked. Allow popups to open external sources in a new tab.');
-    }
+    if (!win) toast.info('Popup blocked. Allow popups to open external sources in a new tab.');
     setSource('local');
   };
 
@@ -224,7 +191,6 @@ const Browse: React.FC = () => {
 
   const navigateToModel = (m: Model) => {
     if (!m?.id) return;
-    // record EXACT return location (page, filters, etc.)
     const from = `${location.pathname}${location.search}`;
     navigate(`/models/${m.id}`, {
       state: {
@@ -236,12 +202,11 @@ const Browse: React.FC = () => {
           stl_url: m.stl_url ?? m.file_url ?? null,
           uploader_username: m.uploader_username,
         },
-        from, // used by ModelPage's Back button
+        from,
       },
     });
   };
 
-  // Green estimate button action (same payload shape as ModelPage)
   const navigateToEstimate = (m: Model) => {
     if (!m?.id) return;
     const payload = {
@@ -255,89 +220,72 @@ const Browse: React.FC = () => {
   };
 
   return (
-    <main className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      <PageHeader
-        icon={<Search className="w-8 h-8 text-zinc-400" />}
-        title="Browse Models"
-      />
+    <main className="page-wrap compact-page space-y-5">
+      {/* Page Title */}
+      <h1 className="page-title">
+        <SearchIcon className="w-6 h-6 text-zinc-400" />
+        <span className="title-chip">Browse Models</span>
+      </h1>
 
-      <div className="flex flex-col sm:flex-row gap-4 mb-6 justify-center">
+      {/* Controls — removed grey container: no 'section' class, no background */}
+      <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center bg-transparent">
+        {/* Search input — pill with persistent orange rim */}
         <input
           type="text"
           placeholder="Search models…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="
-            w-full sm:w-1/2 rounded-full px-4 py-2
-            glass-card
-            ring-1 ring-black/5 dark:ring-white/20
-            text-sm text-zinc-800 dark:text-zinc-100
-            placeholder:text-zinc-400
-            focus:outline-none focus-visible:ring-black/10 dark:focus-visible:ring-white/20
-            transition
-          "
+          className={[
+            'glass-input rounded-full sm:flex-1',
+            'ring-1 ring-amber-400/40 border-amber-300/60',
+            'shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_1px_rgba(251,146,60,0.30),0_0_8px_rgba(251,146,60,0.14)]',
+            'focus:ring-amber-400/60 focus:border-amber-400/60',
+            'bg-transparent', // ensure no grey block
+          ].join(' ')}
+          aria-label="Search models"
         />
 
-        {/* VisionOS-style pill dropdown */}
-        <div className="relative inline-flex items-center w-full sm:w-auto">
+        {/* Source select — pill with persistent orange rim */}
+        <div className="relative inline-flex items-center w-full sm:w-auto bg-transparent">
           <select
             aria-label="Source"
             value={source}
             onChange={(e) => setSource(e.target.value as SourceKey)}
-            className="
-              appearance-none
-              w-full sm:w-[220px]
-              px-4 pr-10 py-2 h-10
-              rounded-full
-              text-sm
-              bg-white/60 dark:bg-white/10
-              backdrop-blur-xl
-              ring-1 ring-black/5 dark:ring-white/20
-              border border-black/10 dark:border-white/15
-              shadow-[inset_0_-1px_0_rgba(255,255,255,0.6),0_4px_12px_rgba(0,0,0,0.12)]
-              text-zinc-800 dark:text-zinc-100
-              hover:bg-white/70 dark:hover:bg-white/15
-              focus:outline-none
-              focus-visible:ring-2 focus-visible:ring-emerald-400/30
-              transition
-            "
+            className={[
+              'glass-input rounded-full w-full sm:w-[220px] h-9 pr-9 appearance-none',
+              'ring-1 ring-amber-400/40 border-amber-300/60',
+              'shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_1px_rgba(251,146,60,0.30),0_0_8px_rgba(251,146,60,0.14)]',
+              'focus:ring-amber-400/60 focus:border-amber-400/60',
+              'bg-transparent', // ensure no grey block
+            ].join(' ')}
           >
             {SOURCES.map(({ key, label }) => (
-              <option key={key} value={key} className="bg-white dark:bg-zinc-900">
+              <option key={key} value={key} className="bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
                 {label}
               </option>
             ))}
           </select>
-
-          {/* custom chevron */}
-          <div
-            className="
-              pointer-events-none absolute inset-y-0 right-3 flex items-center
-              text-zinc-700/70 dark:text-zinc-300/70
-            "
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-zinc-700/70 dark:text-zinc-300/70">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
         </div>
       </div>
 
+      {/* Grid */}
       {source === 'local' && (
         <>
-          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" role="list" aria-label="Model results">
             {isLoading &&
-              Array.from({ length: 6 }).map((_, idx) => (
-                <GlassCard
-                  key={`skeleton-${idx}`}
-                  className="animate-pulse ring-1 ring-black/5 dark:ring-white/20"
-                >
+              Array.from({ length: 8 }).map((_, idx) => (
+                <div key={`skeleton-${idx}`} className="card card--rim-orange animate-pulse p-3" role="listitem">
                   <div className="space-y-3">
-                    <div className="w-full h-40 bg-zinc-300/20 dark:bg-zinc-600/20 rounded-md animate-pulse" />
-                    <div className="h-4 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-3/4 animate-pulse" />
-                    <div className="h-3 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-full animate-pulse" />
+                    <div className="w-full aspect-[4/3] bg-zinc-300/20 dark:bg-zinc-600/20 rounded-lg" />
+                    <div className="h-4 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-3/4" />
+                    <div className="h-3 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-full" />
                   </div>
-                </GlassCard>
+                </div>
               ))}
 
             {!isLoading && filteredModels.length === 0 && (
@@ -354,13 +302,10 @@ const Browse: React.FC = () => {
                 );
 
                 return (
-                  <GlassCard
+                  <article
                     key={`model-${modelKey}`}
-                    className="
-                      relative cursor-pointer hover:scale-[1.02] transition-transform
-                      ring-1 ring-black/5 dark:ring-white/20
-                      hover:ring-black/10 dark:hover:ring-white/20
-                    "
+                    className="card card--rim-orange p-3 relative cursor-pointer hover:scale-[1.015] transition-transform"
+                    role="listitem"
                     onClick={() => navigateToModel(model)}
                   >
                     <button
@@ -370,48 +315,40 @@ const Browse: React.FC = () => {
                       }}
                       className="absolute top-2 right-2 text-yellow-400 hover:scale-110 transition"
                       aria-label="Favorite"
+                      title="Toggle favorite"
                     >
                       {model.id && favorites.has(model.id) ? '★' : '☆'}
                     </button>
 
-                    {thumbUrl ? (
-                      <img
-                        key={`thumb-${modelKey}`}
-                        src={thumbUrl}
-                        alt={model.name ?? 'Model'}
-                        className="rounded-md mb-2 w-full h-40 object-contain bg-white"
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src = `${BACKEND_BASE}/static/default-avatar.png`;
-                        }}
-                        draggable={false}
-                      />
-                    ) : (
-                      <div
-                        key={`placeholder-${modelKey}`}
-                        className="w-full h-40 bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center rounded-md mb-2 text-sm text-zinc-500"
-                      >
-                        No preview available
-                      </div>
-                    )}
+                    <div className="rounded-lg mb-2 w-full aspect-[4/3] bg-white/70 dark:bg-white/10 grid place-items-center overflow-hidden border border-white/20">
+                      {thumbUrl ? (
+                        <img
+                          key={`thumb-${modelKey}`}
+                          src={thumbUrl}
+                          alt={model.name ?? 'Model'}
+                          className="w-full h-full object-contain p-3"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = `${BACKEND_BASE}/static/default-avatar.png`;
+                          }}
+                          draggable={false}
+                        />
+                      ) : (
+                        <div className="text-sm text-zinc-500">No preview available</div>
+                      )}
+                    </div>
 
-                    <h2 className="text-lg font-semibold mb-1">
-                      {model.name || 'Untitled'}
-                    </h2>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">
+                    <h2 className="text-[15px] font-extrabold mb-0.5">{model.name || 'Untitled'}</h2>
+                    <p className="text-[12px] mb-1 line-clamp-2">
                       {model.description || 'No description provided.'}
                     </p>
 
                     {model.uploader_username && (
-                      <p
-                        key={`uploader-${modelKey}`}
-                        className="text-xs text-zinc-500 dark:text-zinc-400 mb-2"
-                      >
-                        Uploaded by <span className="font-medium">{model.uploader_username}</span>
+                      <p className="text-[12px] text-zinc-500 dark:text-zinc-400 mb-2">
+                        Uploaded by <span className="font-semibold">{model.uploader_username}</span>
                       </p>
                     )}
 
-                    {/* Actions: perfectly symmetric buttons */}
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <button
                         type="button"
@@ -419,44 +356,40 @@ const Browse: React.FC = () => {
                           e.stopPropagation();
                           navigateToEstimate(model);
                         }}
-                        className={ledClasses(true)}
+                        className="btn btn--neon btn--sm text-brand-text text-[12px]"
                         aria-label="Get estimate"
                         title="Send this model to the estimator"
                       >
                         Get estimate →
                       </button>
 
-                      <GlassButton
+                      <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           navigateToModel(model);
                         }}
-                        variant="brand"
-                        size="md"
-                        className="h-10 w-full px-4 text-sm font-medium text-black shadow"
+                        className="btn btn--neon btn--ghost btn--sm text-brand-text text-[12px]"
                         aria-label="View details"
                         title="View model details"
                       >
-                        View Details →
-                      </GlassButton>
+                        View details →
+                      </button>
                     </div>
-                  </GlassCard>
+                  </article>
                 );
               })}
           </div>
 
           {hasMore && !isLoading && (
-            <div className="mt-6 text-center">
-              <GlassButton
+            <div className="mt-5 text-center">
+              <button
                 onClick={() => setPage((p) => p + 1)}
                 disabled={loadingMore}
-                variant="brand"
-                size="md"
-                className="px-4 text-sm shadow rounded-full"
+                className="btn btn--neon btn--sm text-brand-text text-[12px] px-4 rounded-full"
               >
                 {loadingMore ? 'Loading…' : 'Load more'}
-              </GlassButton>
+              </button>
             </div>
           )}
         </>

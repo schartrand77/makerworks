@@ -362,35 +362,75 @@ class Favorite(Base):
 # =========================
 # Filaments
 # =========================
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy import func, Index
+
 class Filament(Base):
     __tablename__ = "filaments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    material = Column(String, nullable=False)
-    type = Column(String, nullable=False)
-    color_name = Column(String, nullable=False)
-    color_hex = Column(String, nullable=False)
+
+    # Existing physical columns (keep these as-is to avoid migrations)
+    material = Column(String, nullable=False)       # e.g. PLA, PETG (brand or family if you use it that way)
+    type = Column(String, nullable=False)           # legacy "category" in the new API
+    color_name = Column(String, nullable=False)     # legacy "color" in the UI/API
+    color_hex = Column(String, nullable=False)      # maps to "hex" / "colorHex"
     price_per_kg = Column(Float, nullable=False)
     attributes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
+    # ---- Compatibility aliases (hybrid so they work in queries/order_by) ----
 
-class FilamentPricing(Base):
-    __tablename__ = "filament_pricing"
+    @hybrid_property
+    def color(self) -> str:
+        return self.color_name
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    filament_id = Column(UUID(as_uuid=True), ForeignKey("filaments.id", ondelete="CASCADE"), nullable=False)
+    @color.expression  # type: ignore
+    def color(cls):
+        return cls.color_name
 
-    price_per_gram = Column(Float, nullable=False)
-    price_per_mm3 = Column(Float, nullable=True)
+    @hybrid_property
+    def hex(self) -> str:
+        return self.color_hex
 
-    effective_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    @hex.expression  # type: ignore
+    def hex(cls):
+        return cls.color_hex
 
-    filament = relationship("Filament")
+    @hybrid_property
+    def category(self) -> str:
+        # new API calls this "category"; it's your legacy "type"
+        return self.type
+
+    @category.expression  # type: ignore
+    def category(cls):
+        return cls.type
+
+    @hybrid_property
+    def name(self) -> str:
+        # reasonable display name; matches what the UI/POST builds
+        base = f"{(self.type or '').strip()} {(self.color_name or '').strip()}".strip()
+        return base or (self.material or "")
+
+    @name.expression  # type: ignore
+    def name(cls):
+        # concat_ws avoids double-spaces when either side is empty
+        return func.concat_ws(" ", cls.type, cls.color_name)
+
+    def __repr__(self) -> str:
+        return f"<Filament {self.type}/{self.color_name} #{self.color_hex} ${self.price_per_kg}/kg>"
+
+    __table_args__ = (
+        # Helpful composite index for lookups and uniqueness checks in services
+        Index("ix_filaments_type_color_hex", "type", "color_name", "color_hex"),
+    )
 
 
 # =========================

@@ -41,8 +41,7 @@ async def get_session_user_id(token: str) -> Optional[str]:
 async def destroy_session(user_id: Union[str, UUID]):
     """Destroy all sessions belonging to this user_id."""
     user_id_str = _to_str_id(user_id)
-    keys = await redis.keys(SESSION_PREFIX + "*")
-    for key in keys:
+    async for key in redis.scan_iter(f"{SESSION_PREFIX}*"):
         val = await redis.get(key)
         if val == user_id_str:
             await redis.delete(key)

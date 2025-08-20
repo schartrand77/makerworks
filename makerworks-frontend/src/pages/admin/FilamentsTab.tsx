@@ -10,10 +10,16 @@ import {
 
 type Filament = {
   id: string;
+  // legacy fields
   type?: string | null;
   color?: string | null;
   hex?: string | null;            // any CSS color string
   is_active?: boolean | null;
+  // new backend fields (optional)
+  name?: string | null;
+  category?: string | null;
+  colorHex?: string | null;
+  pricePerKg?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -32,7 +38,6 @@ function normalizeItems(body: any): Filament[] {
 
 function formatApiError(data: any): string {
   if (!data) return '';
-  // FastAPI "validation_error" envelope
   if (typeof data.detail === 'string' && data.detail === 'validation_error' && Array.isArray(data.errors)) {
     return data.errors.map((e: any) => {
       const loc = Array.isArray(e?.loc) ? e.loc.join('.') : e?.loc ?? '';
@@ -40,7 +45,6 @@ function formatApiError(data: any): string {
       return loc ? `${loc}: ${msg}` : String(msg);
     }).join(' · ');
   }
-  // FastAPI classic detail as array
   if (Array.isArray(data.detail)) {
     return data.detail.map((d: any) => {
       const loc = Array.isArray(d?.loc) ? d.loc.join('.') : d?.loc ?? '';
@@ -52,6 +56,22 @@ function formatApiError(data: any): string {
   try { return JSON.stringify(data); } catch { return String(data); }
 }
 
+function stripEmpty<T extends Record<string, any>>(obj: T): Partial<T> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === '' || v === null || v === undefined) continue;
+    out[k] = v;
+  }
+  return out as Partial<T>;
+}
+
+function toNumberOr<T extends number | undefined>(v: any, fallback: T): number | T {
+  const n = typeof v === 'string' ? v.trim() : v;
+  if (n === '' || n === null || n === undefined) return fallback;
+  const num = Number(n);
+  return Number.isFinite(num) ? num : fallback;
+}
+
 type EditState = Partial<Filament> & { id?: string };
 
 export default function FilamentsTab() {
@@ -61,7 +81,13 @@ export default function FilamentsTab() {
 
   // row-level ui state
   const [creating, setCreating] = useState(false);
-  const [createVal, setCreateVal] = useState<EditState>({ type: '', color: '', hex: '', is_active: true });
+  const [createVal, setCreateVal] = useState<EditState>({
+    type: '',
+    color: '',
+    hex: '',
+    pricePerKg: 0,
+    is_active: true,
+  });
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState<EditState>({});
@@ -97,14 +123,16 @@ export default function FilamentsTab() {
     return filaments
       .slice()
       .sort((a, b) => {
-        // Active first
         const aa = a.is_active === false ? 1 : 0;
         const bb = b.is_active === false ? 1 : 0;
         if (aa !== bb) return aa - bb;
-        // Then by type, then color
-        const t = (a.type || '').localeCompare(b.type || '');
+        const at = (a.category || a.type || '').toString();
+        const bt = (b.category || b.type || '').toString();
+        const t = at.localeCompare(bt);
         if (t) return t;
-        return (a.color || '').localeCompare(b.color || '');
+        const ac = (a.name || a.color || '').toString();
+        const bc = (b.name || b.color || '').toString();
+        return ac.localeCompare(bc);
       });
   }, [filaments]);
 
@@ -112,9 +140,10 @@ export default function FilamentsTab() {
     setEditingId(f.id);
     setEditVal({
       id: f.id,
-      type: f.type ?? '',
-      color: f.color ?? '',
-      hex: f.hex ?? '',
+      type: f.type ?? f.category ?? '',
+      color: f.color ?? f.name ?? '',
+      hex: f.hex ?? f.colorHex ?? '',
+      pricePerKg: typeof f.pricePerKg === 'number' ? f.pricePerKg : 0,
       is_active: f.is_active !== false,
     });
   };
@@ -123,21 +152,38 @@ export default function FilamentsTab() {
     setEditVal({});
   };
 
+  /** Build a superset payload compatible with old and new backends. */
+  const compatPayloadFrom = (src: EditState) => {
+    const type = (src.type ?? '').toString().trim();
+    const color = (src.color ?? '').toString().trim();
+    const hex = (src.hex ?? '').toString().trim();
+    const pricePerKg = toNumberOr(src.pricePerKg, 0);
+    const is_active = !!src.is_active;
+
+    // derive new schema fields
+    const category = type;
+    const name = `${type} ${color}`.trim();
+    const colorHex = hex;
+
+    const superset = stripEmpty({
+      // legacy keys
+      type, color, hex, is_active,
+      // new keys
+      name, category, colorHex, pricePerKg,
+    });
+
+    return superset as unknown as FilamentDTO;
+  };
+
   const doCreate = async () => {
     if (creating) return;
     setCreating(true);
     setErr(null);
     try {
-      const payload: FilamentDTO = {
-        type: (createVal.type ?? '').trim(),
-        color: (createVal.color ?? '').trim(),
-        hex: (createVal.hex ?? '').trim(),
-        is_active: !!createVal.is_active,
-      };
+      const payload = compatPayloadFrom(createVal);
       const created = await createFilament(payload);
-      // optimistic: prepend
-      setFilaments((prev) => [created, ...prev]);
-      setCreateVal({ type: '', color: '', hex: '', is_active: true });
+      setFilaments((prev) => [{ ...(payload as any), ...(created as any) } as Filament, ...prev]);
+      setCreateVal({ type: '', color: '', hex: '', pricePerKg: 0, is_active: true });
     } catch (e: any) {
       console.error('[FilamentsTab] create failed', e);
       const st = e?.response?.status;
@@ -153,14 +199,11 @@ export default function FilamentsTab() {
     setSavingId(id);
     setErr(null);
     try {
-      const payload: FilamentDTO = {
-        type: (editVal.type ?? '').toString(),
-        color: (editVal.color ?? '').toString(),
-        hex: (editVal.hex ?? '').toString(),
-        is_active: !!editVal.is_active,
-      };
+      const payload = compatPayloadFrom(editVal);
       const updated = await updateFilament(id, payload);
-      setFilaments((prev) => prev.map((f) => (f.id === id ? { ...f, ...updated } : f)));
+      setFilaments((prev) =>
+        prev.map((f) => (f.id === id ? { ...f, ...(payload as any), ...(updated as any) } : f))
+      );
       cancelEdit();
     } catch (e: any) {
       console.error('[FilamentsTab] save failed', e);
@@ -203,29 +246,37 @@ export default function FilamentsTab() {
         </div>
       )}
 
-      {/* Create row */}
+      {/* Create row — simplified */}
       <div className="mb-4 rounded-md border p-3 backdrop-blur-xl shadow-sm">
         <div className="mb-2 text-sm font-medium">Add Filament</div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-6">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
           <input
-            className="col-span-1 sm:col-span-1 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
             placeholder="Type (PLA, PETG...)"
             value={createVal.type ?? ''}
             onChange={(e) => setCreateVal((v) => ({ ...v, type: e.target.value }))}
           />
           <input
-            className="col-span-1 sm:col-span-1 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
             placeholder="Color name"
             value={createVal.color ?? ''}
             onChange={(e) => setCreateVal((v) => ({ ...v, color: e.target.value }))}
           />
           <input
-            className="col-span-1 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-            placeholder="Color value (hex or CSS color)"
+            className="col-span-12 sm:col-span-3 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+            placeholder="Color hex (#000000)"
             value={createVal.hex ?? ''}
             onChange={(e) => setCreateVal((v) => ({ ...v, hex: e.target.value }))}
           />
-          <label className="col-span-1 flex items-center gap-2 text-sm">
+          <input
+            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+            placeholder="Price/kg (e.g., 24.99)"
+            type="number"
+            step="0.01"
+            value={createVal.pricePerKg ?? 0}
+            onChange={(e) => setCreateVal((v) => ({ ...v, pricePerKg: Number(e.target.value) }))}
+          />
+          <label className="col-span-12 sm:col-span-2 flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={!!createVal.is_active}
@@ -233,10 +284,15 @@ export default function FilamentsTab() {
             />
             Active
           </label>
-          <div className="col-span-1 flex items-center justify-end">
+
+          <div className="col-span-12 sm:col-span-1 flex items-center justify-end">
             <button
               className="rounded px-3 py-1 text-sm border shadow-sm disabled:opacity-50"
-              disabled={creating || !(createVal.type ?? '').trim()}
+              disabled={
+                creating ||
+                !(createVal.type && createVal.color && createVal.hex) ||
+                createVal.pricePerKg == null
+              }
               onClick={doCreate}
             >
               {creating ? 'Creating…' : 'Create'}
@@ -252,6 +308,7 @@ export default function FilamentsTab() {
               <th className="py-2 pr-4">Type</th>
               <th className="py-2 pr-4">Color</th>
               <th className="py-2 pr-4">Value</th>
+              <th className="py-2 pr-4">Price/kg</th>
               <th className="py-2 pr-4">Active</th>
               <th className="py-2 pr-4">Created</th>
               <th className="py-2 pr-4">Updated</th>
@@ -262,7 +319,7 @@ export default function FilamentsTab() {
             {loading &&
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={`skeleton-${i}`} className="border-b last:border-0">
-                  {[24, 28, 40, 16, 36, 36, 24].map((w, j) => (
+                  {[24, 28, 40, 24, 16, 36, 36, 24].map((w, j) => (
                     <td key={j} className="py-2 pr-4">
                       <div className="h-3" style={{ width: w }} />
                     </td>
@@ -272,12 +329,15 @@ export default function FilamentsTab() {
 
             {!loading && !err && sorted.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-3 pr-4 text-zinc-500">No filaments found.</td>
+                <td colSpan={8} className="py-3 pr-4 text-zinc-500">No filaments found.</td>
               </tr>
             )}
 
             {!loading && !err && sorted.map((f) => {
               const isEditing = editingId === f.id;
+              const displayHex = f.colorHex ?? f.hex ?? '';
+              const displayPrice = typeof f.pricePerKg === 'number' ? f.pricePerKg : undefined;
+
               return (
                 <tr key={f.id} className="border-b last:border-0">
                   <td className="py-2 pr-4">
@@ -287,8 +347,9 @@ export default function FilamentsTab() {
                         value={editVal.type ?? ''}
                         onChange={(e) => setEditVal((v) => ({ ...v, type: e.target.value }))}
                       />
-                    ) : (f.type || '—')}
+                    ) : (f.type || f.category || '—')}
                   </td>
+
                   <td className="py-2 pr-4">
                     {isEditing ? (
                       <input
@@ -300,13 +361,14 @@ export default function FilamentsTab() {
                       <div className="flex items-center gap-2">
                         <span
                           className="inline-block h-4 w-4 rounded-full border border-black/10 dark:border-white/15"
-                          style={{ background: f.hex || 'transparent' }}
-                          title={f.hex || ''}
+                          style={{ background: displayHex || 'transparent' }}
+                          title={displayHex || ''}
                         />
-                        <span>{f.color || '—'}</span>
+                        <span>{f.color || f.name || '—'}</span>
                       </div>
                     )}
                   </td>
+
                   <td className="py-2 pr-4">
                     {isEditing ? (
                       <input
@@ -314,30 +376,42 @@ export default function FilamentsTab() {
                         value={editVal.hex ?? ''}
                         onChange={(e) => setEditVal((v) => ({ ...v, hex: e.target.value }))}
                       />
-                    ) : (f.hex || '—')}
+                    ) : (displayHex || '—')}
                   </td>
+
+                  <td className="py-2 pr-4">
+                    {isEditing ? (
+                      <input
+                        className="w-28 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+                        type="number"
+                        step="0.01"
+                        value={editVal.pricePerKg ?? 0}
+                        onChange={(e) => setEditVal((v) => ({ ...v, pricePerKg: Number(e.target.value) }))}
+                      />
+                    ) : (displayPrice != null ? `$${displayPrice.toFixed(2)}` : '—')}
+                  </td>
+
                   <td className="py-2 pr-4">
                     {isEditing ? (
                       <label className="inline-flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
-                          checked={!!editVal.is_active}
+                          checked={!!(editVal.is_active ?? true)}
                           onChange={(e) => setEditVal((v) => ({ ...v, is_active: e.target.checked }))}
                         />
                         Active
                       </label>
                     ) : (f.is_active === false ? 'No' : 'Yes')}
                   </td>
+
                   <td className="py-2 pr-4">{f.created_at ? new Date(f.created_at).toLocaleString() : '—'}</td>
                   <td className="py-2 pr-4">{f.updated_at ? new Date(f.updated_at).toLocaleString() : '—'}</td>
+
                   <td className="py-2 pr-0">
                     <div className="flex justify-end gap-2">
                       {!isEditing ? (
                         <>
-                          <button
-                            className="rounded px-2 py-1 border shadow-sm"
-                            onClick={() => startEdit(f)}
-                          >
+                          <button className="rounded px-2 py-1 border shadow-sm" onClick={() => startEdit(f)}>
                             Edit
                           </button>
                           <button
@@ -352,15 +426,15 @@ export default function FilamentsTab() {
                         <>
                           <button
                             className="rounded px-2 py-1 border shadow-sm"
-                            disabled={savingId === f.id || !(editVal.type ?? '').toString().trim()}
-                            onClick={() => doSave(f.id)}
+                            disabled={
+                              savingId === f.id ||
+                              !( (editVal.type ?? '').trim() && (editVal.color ?? '').trim() && (editVal.hex ?? '').trim() )
+                            }
+                            onClick={() => doSave(f.id!)}
                           >
                             {savingId === f.id ? 'Saving…' : 'Save'}
                           </button>
-                          <button
-                            className="rounded px-2 py-1 border shadow-sm"
-                            onClick={cancelEdit}
-                          >
+                          <button className="rounded px-2 py-1 border shadow-sm" onClick={cancelEdit}>
                             Cancel
                           </button>
                         </>

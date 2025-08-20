@@ -171,20 +171,43 @@ def upgrade() -> None:
     )
 
     # ──────────────────────────────────────────────────────────────────────
-    # filaments (legacy/simple)
+    # filaments (canonical + legacy compatibility)
     # ──────────────────────────────────────────────────────────────────────
     op.create_table(
         "filaments",
         sa.Column("id", UUID, primary_key=True, nullable=False),
-        sa.Column("material", sa.String(), nullable=False),
-        sa.Column("type", sa.String(), nullable=False),
-        sa.Column("color_name", sa.String(), nullable=False),
-        sa.Column("color_hex", sa.String(), nullable=False),
+
+        # Canonical (required by API)
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("category", sa.String(length=64), nullable=False),
+        sa.Column("color_hex", sa.String(length=16), nullable=False),
         sa.Column("price_per_kg", sa.Float(), nullable=False),
+
+        # Legacy (kept for compatibility; nullable so new API writes succeed)
+        sa.Column("material", sa.String(), nullable=True),
+        sa.Column("type", sa.String(), nullable=True),          # legacy alias of category
+        sa.Column("color_name", sa.String(), nullable=True),    # legacy alias of color/name
+
         sa.Column("attributes", sa.Text(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # Legacy lookup index
+    op.create_index(
+        "ix_public_filaments_type_color_hex",
+        "filaments",
+        ["type", "color_name", "color_hex"],
+        unique=False,
+        schema="public",
+    )
+    # Canonical uniqueness
+    op.create_unique_constraint(
+        "uq_public_filaments_name_category_colorhex",
+        "filaments",
+        ["name", "category", "color_hex"],
         schema="public",
     )
 
@@ -527,6 +550,8 @@ def downgrade() -> None:
     op.drop_table("media", schema="public")
     op.drop_index("ix_public_variant_sku", table_name="product_variants", schema="public")
     op.drop_index("ix_public_variant_product", table_name="product_variants", schema="public")
+    # drop the GIN index created via raw SQL
+    op.execute("DROP INDEX IF EXISTS ix_public_variant_attributes_gin")
     op.drop_table("product_variants", schema="public")
     op.drop_index("ix_public_products_brand", table_name="products", schema="public")
     op.drop_index("ix_public_products_category", table_name="products", schema="public")
@@ -535,10 +560,23 @@ def downgrade() -> None:
     op.drop_table("brands", schema="public")
     op.execute("DROP TYPE IF EXISTS stock_move_type")
 
-    # Legacy filament tables
+    # Filament-related (reverse)
     op.drop_table("filament_pricing", schema="public")
+    # drop canonical uniqueness + legacy index before table
+    op.drop_constraint(
+        "uq_public_filaments_name_category_colorhex",
+        "filaments",
+        schema="public",
+        type_="unique",
+    )
+    op.drop_index(
+        "ix_public_filaments_type_color_hex",
+        table_name="filaments",
+        schema="public",
+    )
     op.drop_table("filaments", schema="public")
 
+    # The rest
     op.drop_table("estimate_settings", schema="public")
     op.drop_table("estimates", schema="public")
     op.drop_table("favorites", schema="public")

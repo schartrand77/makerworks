@@ -82,10 +82,11 @@ const SignIn: React.FC = () => {
         </div>
 
         <GlassButton
-          className="mt-4 px-6 text-brand-white transition-colors duration-200 disabled:opacity-50"
+          className="mt-4 px-6 !text-gray-900 dark:!text-white transition-colors duration-200 disabled:opacity-60"
           type="submit"
           disabled={loading}
           variant="brand"
+          aria-busy={loading}
         >
           {loading ? 'Signing in…' : 'Sign In'}
         </GlassButton>

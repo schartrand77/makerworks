@@ -98,7 +98,7 @@ async def check_username(username: str, db: AsyncSession = Depends(get_async_db)
 # ─────────────────────────────────────────────────────────────
 
 @router.get(
-    "/",
+    "",
     summary="Admin-only: list all users",
     status_code=status.HTTP_200_OK,
 )

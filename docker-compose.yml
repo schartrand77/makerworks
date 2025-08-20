@@ -21,6 +21,20 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: makerworks_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 3s
+      interval: 5s
+      retries: 10
+
   migrate:
     build:
       context: ./makerworks-backend
@@ -34,7 +48,7 @@ services:
         sleep 1
       done
       echo "🔖 Stamping initial stub..."
-      alembic -c alembic.ini stamp ecf884acd250
+      alembic -c alembic.ini stamp 06615bc439f5
       echo "🚀 Applying migrations..."
       alembic -c alembic.ini upgrade head
     working_dir: /app
@@ -73,11 +87,19 @@ services:
       UPLOAD_DIR: /app/uploads
       THUMBNAILS_DIR: /thumbnails
       MODELS_DIR: /models
+      # Redis wiring (multiple formats because codebases love bikeshedding names)
+      REDIS_URL: redis://redis:6379/0
+      REDIS_URI: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL
@@ -119,3 +141,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

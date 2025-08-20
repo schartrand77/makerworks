@@ -2,59 +2,310 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 🌌 Global Background Colors */
-@layer base {
-  html, body, #root {
-    @apply min-h-screen;
-  }
+/* ===========================
+   Glow variables (LED vibes)
+   =========================== */
+:root{
+  --mw-orange:#FF7A1A;
+  --mw-green:#42FFA1;
+  --mw-text:#2b2d31; /* primary text in light mode */
 
-  body {
-    @apply transition-colors duration-500 text-brand-text;
-    background-color: #FFFFFF;
+  /* general rings */
+  --mw-orange-inner: inset 0 0 12px rgba(255,122,26,.18), inset 0 0 2px rgba(255,122,26,.42);
+  --mw-orange-outer: 0 0 12px rgba(255,122,26,.22), 0 0 36px rgba(255,122,26,.08);
+  --mw-orange-strong: inset 0 0 16px rgba(255,122,26,.28), inset 0 0 3px rgba(255,122,26,.55), 0 0 18px rgba(255,122,26,.28), 0 0 56px rgba(255,122,26,.12);
+
+  --mw-green-inner: inset 0 0 12px rgba(66,255,161,.18), inset 0 0 2px rgba(66,255,161,.45);
+  --mw-green-outer: 0 0 12px rgba(66,255,161,.22), 0 0 36px rgba(66,255,161,.10);
+  --mw-green-strong: inset 0 0 16px rgba(66,255,161,.30), inset 0 0 3px rgba(66,255,161,.55), 0 0 20px rgba(66,255,161,.32), 0 0 60px rgba(66,255,161,.14);
+
+  /* softer chip ring just for page title */
+  --mw-orange-chip-inner: inset 0 0 6px rgba(255,122,26,.14), inset 0 0 1px rgba(255,122,26,.30);
+  --mw-orange-chip-outer: 0 0 8px rgba(255,122,26,.16), 0 0 22px rgba(255,122,26,.06);
+
+  /* light-mode stronger green for buttons */
+  --mw-green-stronger-border:#00b35f;
+  --mw-green-stronger-inner: inset 0 0 14px rgba(0,179,95,.30), inset 0 0 3px rgba(0,179,95,.55);
+  --mw-green-stronger-outer: 0 0 16px rgba(0,179,95,.32), 0 0 44px rgba(0,179,95,.14);
+}
+
+/* 🌌 Global Background Colors */
+@layer base{
+  html,body,#root{@apply min-h-screen;}
+
+  body{
+    @apply transition-colors duration-500;
+    color: var(--mw-text);            /* dark grey text in light mode */
+    background-color:#FFFFFF;
   }
 
   /* 🌙 Dark Theme */
-  body.dark,
-  .dark body {
+  body.dark,.dark body{
     @apply text-brand-white;
-    background-color: #000000;
+    background-color:#000000;
   }
+
+  /* ensure elements inherit the chosen color */
+  h1,h2,h3,h4,h5,h6,p,small,span,label{ color: inherit; }
 }
 
-@layer components {
-  .glass-input {
-    @apply w-full px-4 py-3 rounded-xl border
-           bg-white/10 dark:bg-white/10
-           text-white dark:text-white
-           placeholder-white/70 dark:placeholder-white/50
-           backdrop-blur-md shadow-vision
-           border-white/30 dark:border-white/30
-           focus:outline-none focus:ring-2 focus:ring-brand-blue
-           transition-all duration-200;
+/* ================
+   Components
+   ================ */
+@layer components{
+  /* provide a concrete utility many components already use */
+  .text-brand-text{ color: var(--mw-text) !important; }
+
+  /* ---------- Layout rhythm ---------- */
+  .page-wrap{@apply max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 pt-3 pb-16;}
+
+  /* ---------- Page title chip (soft orange rim) ---------- */
+  .page-title{
+    @apply flex items-center gap-3 font-extrabold tracking-tight text-brand-text dark:text-white;
+    font-size:clamp(22px,2.4vw,32px);
+    text-shadow:0 1px 1px rgba(0,0,0,.25);
+    margin:18px 2px 18px;
+  }
+  .page-title .title-chip{
+    @apply px-3 py-1.5 rounded-full border;
+    border-color:rgba(255,122,26,.34);
+    background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.03));
+    box-shadow:var(--mw-orange-chip-inner),var(--mw-orange-chip-outer);
   }
 
-  .glass-card {
-    @apply rounded-xl border border-white/30 dark:border-zinc-700/40
+  /* ---------- GlassNavbar / Tabs (orange ring) ---------- */
+  .tab-pill,
+  .glass-navbar .nav-pill,
+  .glass-navbar .tab-pill,
+  .GlassNavbar .tab-pill{
+    @apply inline-flex h-9 items-center justify-center px-3.5 rounded-full border font-semibold
+           text-brand-text dark:text-white transition duration-150;
+    background:rgba(255,255,255,.08);
+    border-color:rgba(0,0,0,.08);
+  }
+  .tab-pill:hover,
+  .glass-navbar .tab-pill:hover,
+  .glass-navbar .nav-pill:hover{
+    border-color:rgba(255,122,26,.45);
+    box-shadow:var(--mw-orange-inner),var(--mw-orange-outer);
+  }
+  .tab-pill.is-active,
+  .glass-navbar .tab-pill[aria-current="page"],
+  .glass-navbar .nav-pill.is-active{
+    @apply font-extrabold;
+    border-color:rgba(255,122,26,.55);
+    background:rgba(255,122,26,.10);
+    box-shadow:var(--mw-orange-strong);
+  }
+
+  /* ---------- Inputs / fields (orange on focus) ---------- */
+  .glass-input{
+    @apply w-full px-4 py-3 rounded-xl border
+           bg-white/60 dark:bg-white/10
+           text-brand-text dark:text-white
+           placeholder-zinc-500 dark:placeholder-white/60
+           backdrop-blur-md
+           border-zinc-300/60 dark:border-white/30
+           transition-all duration-200;
+    box-shadow:0 10px 30px rgba(0,0,0,.06);
+  }
+  .glass-input:focus{
+    outline:none;
+    border-color:rgba(255,122,26,.48);
+    background-color:rgba(255,122,26,.06);
+    box-shadow:var(--mw-orange-inner),var(--mw-orange-outer);
+  }
+
+  /* Generic inputs too (for pages not using .glass-input) */
+  input[type="text"],input[type="number"],input[type="email"],input[type="search"],select,textarea{
+    @apply rounded-xl border border-zinc-300/60 dark:border-zinc-700/40 bg-white/70 dark:bg-zinc-800/40
+           text-brand-text dark:text-white px-3 py-2 transition;
+  }
+  input:focus,select:focus,textarea:focus{
+    outline:none;
+    border-color:rgba(255,122,26,.48);
+    background-color:rgba(255,122,26,.06);
+    box-shadow:var(--mw-orange-inner),var(--mw-orange-outer);
+  }
+
+  /* ---------- Buttons (GREEN ring; readable in light) ---------- */
+  .btn{
+    @apply inline-flex h-10 items-center justify-center gap-2 px-4 rounded-full font-extrabold
+           text-brand-text dark:text-white transition duration-150;
+    border:1px solid rgba(66,255,161,.35);
+    background:rgba(66,255,161,.10);
+  }
+  .btn:hover{
+    transform:translateY(-1px);
+    border-color:rgba(66,255,161,.48);
+    box-shadow:var(--mw-green-inner),var(--mw-green-outer);
+  }
+  .btn:active{
+    transform:translateY(0);
+    box-shadow:var(--mw-green-strong);
+  }
+  .btn:disabled{
+    @apply opacity-60;
+    filter:grayscale(.2);
+    cursor:not-allowed;
+  }
+  .btn--ghost{
+    border-color:rgba(66,255,161,.28);
+    background:rgba(66,255,161,.06);
+  }
+  /* explicit neon variant used by Browse */
+  .btn--neon{
+    border-color:rgba(66,255,161,.45);
+    background:rgba(66,255,161,.10);
+    box-shadow:var(--mw-green-inner),var(--mw-green-outer);
+  }
+  .btn--neon:hover{
+    border-color:rgba(66,255,161,.60);
+    box-shadow:inset 0 0 18px rgba(66,255,161,.35),
+               inset 0 0 4px  rgba(66,255,161,.58),
+               0 0 18px rgba(66,255,161,.35),
+               0 0 60px rgba(66,255,161,.16);
+  }
+
+  /* ====== NEW: smaller buttons ====== */
+  /* Reusable small variant */
+  .btn--sm{
+    @apply h-8 px-3 text-sm;
+    border-radius:9999px;
+  }
+  /* Model-card buttons smaller by default */
+  .card .btn{
+    @apply h-8 px-3 text-sm;
+  }
+  .card .btn svg{ @apply w-4 h-4; }
+  /* ====== /NEW ====== */
+
+  /* Light-mode stronger green punch */
+  :root .btn,
+  :root .btn--neon{
+    border-color:rgba(0,179,95,.55);
+    background:rgba(0,179,95,.10);
+    box-shadow:var(--mw-green-stronger-inner),var(--mw-green-stronger-outer);
+  }
+  :root .btn:hover,
+  :root .btn--neon:hover{
+    border-color:rgba(0,179,95,.70);
+    box-shadow:inset 0 0 18px rgba(0,179,95,.38),
+               inset 0 0 4px  rgba(0,179,95,.62),
+               0 0 18px rgba(0,179,95,.38),
+               0 0 60px rgba(0,179,95,.18);
+  }
+  /* keep dark mode balanced with original vars */
+  .dark .btn,
+  .dark .btn--neon{
+    border-color:rgba(66,255,161,.45);
+    background:rgba(66,255,161,.12);
+    box-shadow:var(--mw-green-inner),var(--mw-green-outer);
+  }
+  .dark .btn:hover,
+  .dark .btn--neon:hover{
+    box-shadow:var(--mw-green-strong);
+  }
+
+  /* ---------- Cards (subtle orange rim for model tiles) ---------- */
+  .card{
+    @apply rounded-2xl border backdrop-blur bg-white/80 dark:bg-zinc-800/60 transition;
+    border-color:rgba(0,0,0,.06);
+    box-shadow:0 18px 60px rgba(0,0,0,.10);
+  }
+  .card--rim-orange{
+    border-color:rgba(255,122,26,.30);
+    box-shadow:var(--mw-orange-outer);
+  }
+  .card--rim-orange:hover{
+    border-color:rgba(255,122,26,.46);
+    box-shadow:var(--mw-orange-strong);
+  }
+
+  /* ---------- Sections (streamlined spacing) ---------- */
+  .section{
+    @apply rounded-2xl border;
+    border-color:rgba(0,0,0,.06);
+    background:rgba(255,255,255,.60);
+    box-shadow:0 16px 54px rgba(0,0,0,.08);
+    padding:clamp(12px,2vw,18px);
+  }
+  .section + .section{margin-top:clamp(12px,1.8vw,16px);}
+
+  /* ---------- Kept bits ---------- */
+  .glass-card{
+    @apply rounded-xl border border-zinc-300/60 dark:border-zinc-700/40
            backdrop-blur bg-white/70 dark:bg-zinc-800/60 transition-all;
   }
 
-  .filament-slot-glow {
+  .filament-slot-glow{
     @apply relative w-8 h-8 rounded-full flex items-center justify-center transition-transform hover:scale-105 ring-2;
+    box-shadow:var(--mw-orange-inner),var(--mw-orange-outer);
+    border-color:rgba(255,122,26,.45);
   }
 
-  .glass-puddle {
+  .glass-puddle{
     @apply absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-3 w-16 h-3 rounded-full blur-md opacity-70 pointer-events-none;
-    animation: puddleGlow 2s ease-in-out infinite;
+    animation:puddleGlow 2s ease-in-out infinite;
   }
 }
 
-@keyframes puddleGlow {
-  0%, 100% {
-    transform: translateY(0) scale(1);
-    opacity: 0.7;
+/* ===========================
+   COMPACT VARIANT (page-level)
+   Add `compact-page` to the page root to shrink everything elegantly
+   =========================== */
+@layer components{
+  .compact-page .page-title{
+    font-size:clamp(18px,1.8vw,26px);
+    margin:10px 2px 8px;
+    text-shadow:0 1px 1px rgba(0,0,0,.18);
   }
-  50% {
-    transform: translateY(2px) scale(1.1);
-    opacity: 1;
+  .compact-page .page-title .title-chip{
+    @apply px-2.5 py-1 rounded-full;
+    box-shadow:var(--mw-orange-chip-inner),var(--mw-orange-chip-outer);
   }
+
+  .compact-page .tab-pill{ @apply h-8 px-3; border-radius:9999px; }
+
+  .compact-page .glass-input,
+  .compact-page input[type="text"],
+  .compact-page input[type="number"],
+  .compact-page input[type="email"],
+  .compact-page input[type="search"],
+  .compact-page select,
+  .compact-page textarea{
+    @apply px-3 py-2;
+    border-radius:12px;
+  }
+
+  .compact-page .btn{ @apply h-9 px-3.5; }
+  .compact-page .btn--ghost{ @apply px-3; }
+
+  .compact-page .card{
+    border-radius:16px;
+    box-shadow:0 12px 40px rgba(0,0,0,.08);
+  }
+
+  .compact-page .section{
+    border-radius:16px;
+    padding:clamp(10px,1.4vw,14px);
+  }
+
+  /* optional: slightly tighter grid gaps */
+  .compact-page .grid{ gap:clamp(12px,1.6vw,18px); }
+}
+
+/* ================
+   Utilities (custom)
+   ================ */
+@layer utilities{
+  .shadow-vision{ box-shadow:0 12px 40px rgba(0,0,0,.12); }
+}
+
+/* ---------- Tiny polish for light-mode card previews ---------- */
+.card .aspect-\[4\/3\]{ background:rgba(255,255,255,.72); }
+
+@keyframes puddleGlow{
+  0%,100%{ transform:translateY(0) scale(1); opacity:.7; }
+  50%{ transform:translateY(2px) scale(1.1); opacity:1; }
 }

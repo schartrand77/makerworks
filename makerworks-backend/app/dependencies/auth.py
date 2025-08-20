@@ -97,7 +97,7 @@ async def get_current_user(
     Order:
       1) Authorization: Bearer <JWT>  → use 'sub' (or 'email') claim
       2) access_token cookie          → same JWT, set by signup/signin
-      3) X-User-Id header             → temporary transition support
+      3) X-User-Id header (debug only)
       4) 'session' cookie             → legacy Redis session lookup
     """
     user_ident: Optional[str] = None
@@ -129,12 +129,12 @@ async def get_current_user(
         except Exception as e:
             logger.warning(f"[AUTH] Cookie token decode error: {e}")
 
-    # 3) Transitional: X-User-Id
-    if not user_ident:
+    # 3) Debug-only: X-User-Id
+    if not user_ident and settings.DEBUG_ALLOW_USER_HEADER:
         header_uid = request.headers.get("X-User-Id")
         if header_uid:
             user_ident = header_uid
-            logger.debug("[AUTH] Using X-User-Id header")
+            logger.debug("[AUTH] Using X-User-Id header (debug)")
 
     # 4) Legacy: session cookie
     if not user_ident:

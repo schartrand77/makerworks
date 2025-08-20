@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = Field(default="MakerWorks", env="PROJECT_NAME")
     API_V1_STR: str = Field(default="/api/v1", env="API_V1_STR")
     ENV: str = Field(default="development", env="ENV")
+    DEBUG_ALLOW_USER_HEADER: bool = Field(default=False, env="DEBUG_ALLOW_USER_HEADER")
 
     # ── Secrets / auth ────────────────────────────────────────────────────────
     SECRET_KEY: str = Field(default=DEFAULT_SECRET, env="SECRET_KEY")

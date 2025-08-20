@@ -4,6 +4,7 @@ from typing import Optional, Union
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from passlib.context import CryptContext
 
 from app.models.models import User, AuditLog  # Assuming AuditLog model exists
@@ -21,7 +22,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 async def authenticate_user(db: AsyncSession, email_or_username: str, password: str) -> Optional[User]:
-    stmt = select(User).where((User.email == email_or_username) | (User.username == email_or_username))
+    lowered = email_or_username.lower()
+    stmt = select(User).where(
+        (func.lower(User.email) == lowered) | (func.lower(User.username) == lowered)
+    )
     result = await db.execute(stmt)
     user = result.scalars().first()
     if not user:

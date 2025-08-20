@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Robust STL/3MF -> PNG thumbnail renderer.
+Robust STL/3MF/OBJ -> PNG thumbnail renderer.
 
 Side-profile, orthographic, tight-frame, neutral grey on white.
 
@@ -38,8 +38,8 @@ def _env_truthy(key: str, default: str = "1") -> bool:
     return (os.getenv(key, default) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Render STL/3MF to square PNG (orthographic, 1:1).")
-    p.add_argument("input", help="Input .stl or .3mf")
+    p = argparse.ArgumentParser(description="Render STL/3MF/OBJ to square PNG (orthographic, 1:1).")
+    p.add_argument("input", help="Input .stl, .3mf, or .obj")
     p.add_argument("output", help="Output .png")
 
     # View presets

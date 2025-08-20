@@ -1,261 +1,155 @@
-// src/components/nav/UserDropdown.tsx
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAuthStore } from '@/store/useAuthStore'
-import getAbsoluteUrl from '@/lib/getAbsoluteUrl'
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuthStore } from '@/store/useAuthStore';
+import api from '@/api/client';
+import clsx from 'clsx';
 
-type UserLike = {
-  id?: string
-  username?: string | null
-  email?: string | null
-  avatar_url?: string | null
-  thumbnail_url?: string | null
-  role?: string | null
-  is_admin?: boolean
-  is_staff?: boolean
-  is_superuser?: boolean
-  isOwner?: boolean
-  permissions?: string[] | null
-  roles?: Array<string | { name?: string }>
-  role_id?: number | string
+/**
+ * Robustly detect admin across varied user payloads.
+ */
+function useIsAdmin(user: any) {
+  return useMemo(() => {
+    if (!user) return false;
+    const roleLike =
+      user.role === 'admin' ||
+      (Array.isArray(user.roles) && user.roles.includes('admin')) ||
+      (Array.isArray(user.permissions) && user.permissions.includes('admin')) ||
+      (Array.isArray(user.claims) && user.claims.includes('admin'));
+    const flags = Boolean(user.is_admin || user.isAdmin || user.admin === true);
+    return Boolean(roleLike || flags);
+  }, [user]);
 }
 
-/** Resolve a stable avatar URL */
-function resolveAvatarUrl(path?: string | null): string {
-  const p = (path || '').trim()
-  if (!p) return '/default-avatar.png'
-  if (/^https?:\/\//i.test(p)) return p
-  if (p === '/default-avatar.png' || /\/default-avatar\.png$/i.test(p)) return '/default-avatar.png'
-  if (p.startsWith('/uploads') || p.startsWith('/avatar') || p.startsWith('/api/')) {
-    return getAbsoluteUrl(p)
-  }
-  return p.startsWith('/') ? p : `/${p}`
-}
+export default function UserDropdown() {
+  const { user, setUser } = useAuthStore();
+  const isAdmin = useIsAdmin(user);
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
-/** Broad admin check that works across backends */
-function hasAdminPrivileges(u: any): boolean {
-  if (!u) return false
-
-  // role can be string or object { name }
-  const rawRole = u.role
-  const role =
-    typeof rawRole === 'string'
-      ? rawRole.toLowerCase()
-      : String(rawRole?.name ?? '').toLowerCase()
-
-  // roles array support
-  const rolesArr = Array.isArray(u.roles)
-    ? u.roles.map((r: any) => String(r?.name ?? r).toLowerCase())
-    : []
-
-  if (['admin', 'owner', 'superuser', 'staff'].includes(role)) return true
-  if (rolesArr.includes('admin')) return true
-
-  if (u.is_admin || u.isOwner || u.is_staff || u.is_superuser) return true
-  if (Number(u.role_id) === 1) return true
-
-  if (Array.isArray(u.permissions) && u.permissions.some((p: any) => String(p).toLowerCase().includes('admin'))) {
-    return true
-  }
-
-  return false
-}
-
-type Props = { user: UserLike }
-
-const UserDropdown = ({ user }: Props) => {
-  const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [adminProbe, setAdminProbe] = useState<boolean | null>(null)
-  const popRef = useRef<HTMLDivElement | null>(null)
-  const navigate = useNavigate()
-
-  // Zustand store (source of truth)
-  const { user: storeUser, logout, isAdmin: isAdminStore, resolved, fetchUser } = useAuthStore() as any
-
-  // Ensure /auth/me is hydrated (cookie-based sessions)
   useEffect(() => {
-    if (!resolved) {
-      fetchUser?.().catch(() => {})
-    }
-  }, [resolved, fetchUser])
+    const onDocClick = (e: MouseEvent) => {
+      if (!open) return;
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
 
-  // Compute display user (store > prop)
-  const displayUser: UserLike = useMemo(() => {
-    return (storeUser as UserLike) ?? user ?? {}
-  }, [storeUser, user])
-
-  const avatarSrc = useMemo(
-    () =>
-      resolveAvatarUrl(displayUser.avatar_url) ||
-      resolveAvatarUrl(displayUser.thumbnail_url) ||
-      '/default-avatar.png',
-    [displayUser.avatar_url, displayUser.thumbnail_url]
-  )
-
-  // Robust admin detection from store + payload
-  const storeAdminFlag: boolean | null = useMemo(() => {
-    if (typeof isAdminStore === 'function') {
-      try {
-        const v = isAdminStore()
-        if (typeof v === 'boolean') return v
-      } catch {}
-      return null
-    }
-    if (typeof isAdminStore === 'boolean') return isAdminStore
-    return null
-  }, [isAdminStore])
-
-  const payloadAdmin = useMemo(
-    () =>
-      hasAdminPrivileges(storeUser) ||
-      hasAdminPrivileges(user) ||
-      hasAdminPrivileges(displayUser),
-    [storeUser, user, displayUser]
-  )
-
-  // Seed fallback (dev/demo)
-  const seedAdmin = useMemo(() => {
-    const email = String(displayUser.email ?? '').toLowerCase()
-    const uname = String(displayUser.username ?? '').toLowerCase()
-    return email === 'admin@example.com' || uname === 'admin'
-  }, [displayUser.email, displayUser.username])
-
-  // If store/payload don’t confirm admin, probe a real admin-only endpoint once
   useEffect(() => {
-    const looksAdmin = (storeAdminFlag === true) || payloadAdmin || seedAdmin
-    if (looksAdmin) {
-      setAdminProbe(true)
-      return
-    }
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch('/api/v1/admin/me', {
-          credentials: 'include',
-          headers: { 'Accept': 'application/json' },
-        })
-        if (!cancelled) setAdminProbe(res.status === 200)
-      } catch {
-        if (!cancelled) setAdminProbe(false)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [storeAdminFlag, payloadAdmin, seedAdmin])
-
-  const showAdmin = (storeAdminFlag === true) || payloadAdmin || seedAdmin || adminProbe === true
+    // helpful gating log
+    // eslint-disable-next-line no-console
+    console.debug('[UserDropdown] gate', {
+      hasUser: !!user,
+      id: user?.id,
+      username: user?.username,
+      role: user?.role,
+      roles: user?.roles,
+      is_admin: user?.is_admin,
+      isAdminProp: user?.isAdmin,
+      adminBool: user?.admin,
+      resolvedIsAdmin: isAdmin,
+    });
+  }, [user, isAdmin]);
 
   const handleSignOut = async () => {
-    if (loading) return
-    setLoading(true)
-    setOpen(false)
     try {
-      await fetch('/api/v1/auth/signout', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      }).catch(() => {})
+      await api.post('/api/v1/auth/signout');
+    } catch (e) {
+      // ignore; we’ll clear client state regardless
     } finally {
-      await logout?.()
-      setLoading(false)
-      navigate('/auth/signin?signedout=1', { replace: true })
+      setUser(null);
+      navigate('/signin');
     }
-  }
+  };
 
-  const handleGoTo = (path: string) => {
-    setOpen(false)
-    navigate(path)
-  }
-
-  // Close on outside click / ESC
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (!open) return
-      if (popRef.current && !popRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onClick)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  const avatarUrl =
+    user?.avatar_url ||
+    user?.avatar ||
+    '/static/default-avatar.png';
 
   return (
-    <div className="relative" ref={popRef}>
+    <div className="relative">
       <button
+        ref={btnRef}
+        type="button"
         onClick={() => setOpen((v) => !v)}
+        className={clsx(
+          'inline-flex items-center gap-2 rounded-full px-2 py-1.5',
+          'border border-white/20 dark:border-white/20',
+          'bg-white/20 dark:bg-black/20 backdrop-blur-sm',
+          'text-brand-text dark:text-white',
+          'hover:shadow-[0_0_12px_rgba(255,122,26,.22),0_0_36px_rgba(255,122,26,.08)]',
+          'transition'
+        )}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="rounded-full overflow-hidden border border-white/20 w-10 h-10 bg-white/10 backdrop-blur shadow"
-        title={showAdmin ? 'Admin' : 'User'}
       >
         <img
-          src={avatarSrc}
-          alt={String(displayUser.username || displayUser.email || 'user')}
-          className="w-full h-full object-cover"
+          src={avatarUrl}
+          alt="avatar"
+          className="w-7 h-7 rounded-full object-cover"
           onError={(e) => {
-            if (!e.currentTarget.src.endsWith('/default-avatar.png')) {
-              e.currentTarget.onerror = null
-              e.currentTarget.src = '/default-avatar.png'
-            }
+            (e.currentTarget as HTMLImageElement).src = '/static/default-avatar.png';
           }}
         />
+        <span className="text-sm font-semibold">{user?.username ?? 'Account'}</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" className="opacity-70">
+          <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
       </button>
 
       {open && (
         <div
+          ref={menuRef}
           role="menu"
-          className="absolute right-0 mt-2 w-56 bg-white/80 dark:bg-black/80 backdrop-blur-md rounded-lg shadow-lg z-50 p-2 space-y-2"
+          className={clsx(
+            'absolute right-0 mt-2 w-56 z-50',
+            'rounded-xl border border-white/20 dark:border-white/20',
+            'bg-white/70 dark:bg-zinc-900/80 backdrop-blur-md',
+            'shadow-xl p-1.5'
+          )}
         >
-          <div className="px-4 py-2 text-sm text-gray-800 dark:text-gray-200">
-            <div className="font-medium truncate">{displayUser.username || 'User'}</div>
-            {displayUser.email && (
-              <div className="text-xs text-gray-500 truncate max-w-[12rem]" title={displayUser.email || ''}>
-                {displayUser.email}
-              </div>
-            )}
+          <div className="px-2 py-2">
+            <div className="text-[12px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Account</div>
           </div>
 
-          <hr className="border-gray-300 dark:border-gray-600" />
-
-          <button
-            onClick={() => handleGoTo('/settings')}
-            className="w-full text-center py-2 px-4 text-sm rounded-full backdrop-blur bg-white/20 dark:bg-zinc-800/30 border border-white/20 dark:border-zinc-700/30 text-blue-800 dark:text-blue-200 shadow hover:bg-white/30 dark:hover:bg-zinc-700/50 hover:shadow-md transition"
+          <Link
+            to="/profile"
+            role="menuitem"
+            className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition text-sm text-brand-text"
+            onClick={() => setOpen(false)}
           >
-            Settings
-          </button>
+            Profile
+            <span className="text-[11px] text-zinc-500">{user?.email}</span>
+          </Link>
 
-          {showAdmin && (
-            <button
-              onClick={() => handleGoTo('/admin')}
-              data-testid="admin-link"
-              className="w-full text-center py-2 px-4 text-sm rounded-full backdrop-blur bg-red-500/20 dark:bg-red-700/30 border border-red-500/30 dark:border-red-700/40 text-red-800 dark:text-red-200 shadow hover:bg-red-500/30 dark:hover:bg-red-700/50 hover:shadow-md transition"
+          {isAdmin && (
+            <Link
+              to="/admin"
+              role="menuitem"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition text-sm text-brand-text"
+              onClick={() => setOpen(false)}
             >
-              Admin Panel
-            </button>
+              <span className="inline-block w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_8px_rgba(255,122,26,.6)]" />
+              Admin
+            </Link>
           )}
 
-          <hr className="border-gray-300 dark:border-gray-600" />
+          <div className="h-px my-1 bg-white/30 dark:bg-white/10" />
 
           <button
+            role="menuitem"
             onClick={handleSignOut}
-            disabled={loading}
-            className={`w-full text-center py-2 px-4 text-sm rounded-full backdrop-blur bg-white/20 dark:bg-zinc-800/30 border border-white/20 dark:border-zinc-700/30 text-red-600 dark:text-red-300 shadow hover:bg-white/30 dark:hover:bg-zinc-700/50 hover:shadow-md transition ${
-              loading ? 'opacity-50 cursor-not-allowed' : ''
-            }`}
+            className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 transition text-sm text-brand-text"
           >
-            {loading ? 'Signing out…' : 'Sign Out'}
+            Sign out
           </button>
         </div>
       )}
     </div>
-  )
+  );
 }
-
-export default UserDropdown

@@ -58,5 +58,24 @@ with:
 docker-compose up prometheus grafana
 ```
 
+## Updating Dependencies
+
+Python packages are fully pinned in `requirements.txt` for reproducible
+builds. To bump a dependency:
+
+1. Edit `requirements.txt` with the new version.
+2. Rebuild the images so Docker picks up the change:
+
+   ```bash
+   make build-base && make fast-backend && make fast-worker
+   ```
+3. Run the test suite:
+
+   ```bash
+   pytest
+   ```
+
+No separate lockfile or hash file is used in this project.
+
 ## License
 MIT

@@ -26,6 +26,7 @@ MakerWorks is an open source 3D printing platform that pairs a Python backend wi
 - **Stripe payments** for secure checkout.
 - **Prometheus metrics** and Grafana dashboards for monitoring.
 - **End-to-end tests** powered by Cypress and unit tests using Vitest and Pytest.
+- **Mobile clients** for iOS (SwiftUI) and Android (Jetpack Compose) with barcode scanning to add new filaments.
 
 ## Architecture
 The repository is a monorepo containing both the API service and the web client:
@@ -39,7 +40,9 @@ Docker Compose can spin up the entire stack, including PostgreSQL, Redis, Promet
 ```
 .
 ├─ makerworks-backend/   # FastAPI service with Celery workers, PostgreSQL and Redis integration
-└─ makerworks-frontend/  # React + Vite application providing the web interface
+├─ makerworks-frontend/  # React + Vite application providing the web interface
+├─ MakerWorks-iOS/       # SwiftUI client with barcode scanning
+└─ MakerWorks-Android/   # Jetpack Compose client with visionOS-style glass UI and barcode scanning
 ```
 
 ## Prerequisites

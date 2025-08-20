@@ -86,6 +86,8 @@ The app will be available at `http://localhost:5173` by default.
 ## Environment Variables
 Each service includes a `.env.example` file listing all required variables. Copy it to `.env` and adjust values for your environment. Key settings include API URLs, database connection strings, Stripe keys and Redis configuration.
 
+For production deployments, the backend must define `SESSION_SECRET`; the server will refuse to start without it.
+
 ## Testing
 Run the test suites before submitting changes:
 

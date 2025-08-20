@@ -87,9 +87,9 @@ try:
 
     # prefer new location, fall back to legacy
     try:
-        from app.core.config import settings  # preferred
+        from app.core.config import settings, DEFAULT_SECRET  # preferred
     except Exception:
-        from app.config.settings import settings  # legacy
+        from app.config.settings import settings, DEFAULT_SECRET  # legacy
 
     try:
         from app.db.session import async_engine
@@ -322,7 +322,9 @@ app.add_middleware(
     max_age=CORS_MAX_AGE,
 )
 
-SESSION_SECRET = os.getenv("SESSION_SECRET", "supersecretkey")
+SESSION_SECRET = os.getenv("SESSION_SECRET") or DEFAULT_SECRET
+if getattr(settings, "env", "development") == "production" and SESSION_SECRET == DEFAULT_SECRET:
+    raise RuntimeError("SESSION_SECRET must be set in production")
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
@@ -545,7 +547,7 @@ async def lifespan(_: _FastAPI):
 
         # Quick sanity logs for auth config (no secrets)
         logger.info(f"🔐 JWT_SECRET present: {bool(os.getenv('JWT_SECRET'))}")
-        logger.info(f"🔐 SESSION_SECRET present: {bool(os.getenv('SESSION_SECRET'))}")
+        logger.info(f"🔐 SESSION_SECRET present: {SESSION_SECRET != DEFAULT_SECRET}")
         logger.info(f"🔐 SECRET_KEY present: {bool(os.getenv('SECRET_KEY'))}")
 
         # Admin seed visibility (no secrets)

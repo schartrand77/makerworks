@@ -4,5 +4,6 @@ set -eu
 # Bump patch version in VERSION and stage it, every commit.
 # Requires Python 3. If you insist on suffering, rewrite in bash.
 
+npm --prefix makerworks-frontend run lint
 python3 .githooks/bump_version.py
 git add VERSION

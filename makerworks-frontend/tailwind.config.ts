@@ -13,9 +13,9 @@ export default {
       colors: {
         'brand-white': '#FFFFFF',
         'brand-black': '#000000',
-        'brand-red': '#FF4F00',
-        'brand-blue': '#003366',
-        'brand-text': '#333333',
+        'brand-orange': '#FF7A1A',
+        'brand-green': '#42FFA1',
+        'brand-text': '#2B2D31',
       },
       // boxShadow: { vision: '0 4px 30px rgba(0,0,0,0.1)' },
     },

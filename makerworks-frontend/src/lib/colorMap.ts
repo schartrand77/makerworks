@@ -4,15 +4,15 @@
 // to a neutral gray so that non-brand colors don't clash with UI brand colors.
 
 // Tailwind safelist: these classes are referenced dynamically via the helpers below.
-// bg-brand-red bg-brand-blue bg-brand-black bg-brand-white bg-brand-text bg-zinc-400
-// fill-brand-red fill-brand-blue fill-brand-black fill-brand-white fill-brand-text fill-zinc-400
+// bg-brand-orange bg-brand-green bg-brand-black bg-brand-white bg-brand-text bg-zinc-400
+// fill-brand-orange fill-brand-green fill-brand-black fill-brand-white fill-brand-text fill-zinc-400
 
 const palette = [
-  { token: 'brand-red', hex: '#FF4F00' },
-  { token: 'brand-blue', hex: '#003366' },
+  { token: 'brand-orange', hex: '#FF7A1A' },
+  { token: 'brand-green', hex: '#42FFA1' },
   { token: 'brand-black', hex: '#000000' },
   { token: 'brand-white', hex: '#FFFFFF' },
-  { token: 'brand-text', hex: '#333333' },
+  { token: 'brand-text', hex: '#2B2D31' },
 ] as const
 
 const fallbackToken = 'zinc-400'
@@ -61,5 +61,5 @@ export function fillClassFromHex(hex: string) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _tw = ['bg-brand-red','bg-brand-blue','bg-brand-black','bg-brand-white','bg-brand-text','bg-zinc-400','fill-brand-red','fill-brand-blue','fill-brand-black','fill-brand-white','fill-brand-text','fill-zinc-400']
+const _tw = ['bg-brand-orange','bg-brand-green','bg-brand-black','bg-brand-white','bg-brand-text','bg-zinc-400','fill-brand-orange','fill-brand-green','fill-brand-black','fill-brand-white','fill-brand-text','fill-zinc-400']
 void _tw

@@ -103,21 +103,14 @@ const UserDashboardCard = () => {
         <button
           type="button"
           onClick={() => navigate('/settings')}
-          className="px-4 py-1.5 rounded-full bg-brand-red/90 text-zinc-900 dark:text-white shadow-sm hover:bg-brand-red transition text-sm font-medium ring-1 ring-black/5 dark:ring-white/10"
+          className="px-4 py-1.5 rounded-full bg-brand-orange/90 text-zinc-900 dark:text-white shadow-sm hover:bg-brand-orange transition text-sm font-medium ring-1 ring-black/5 dark:ring-white/10"
         >
           Edit Profile
         </button>
         <button
           type="button"
           onClick={handleSignOut}
-          className="
-            px-4 py-1.5 rounded-full
-            bg-brand-destructive
-            text-zinc-900 dark:text-white
-            hover:bg-brand-destructive/90
-            shadow-sm transition text-sm font-medium
-            ring-1 ring-black/10 dark:ring-white/10
-          "
+          className="px-4 py-1.5 rounded-full bg-brand-orange/90 text-zinc-900 dark:text-white hover:bg-brand-orange transition shadow-sm text-sm font-medium ring-1 ring-black/10 dark:ring-white/10"
         >
           Log Out
         </button>

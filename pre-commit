@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-# Bump patch version in VERSION and stage it, every commit.
-# Requires Python 3. If you insist on suffering, rewrite in bash.
+command -v pre-commit >/dev/null 2>&1 || {
+  echo "pre-commit is not installed. Please install it." >&2
+  exit 1
+}
 
-npm --prefix makerworks-frontend run lint
-python3 .githooks/bump_version.py
-git add VERSION
+pre-commit run --files "$@"

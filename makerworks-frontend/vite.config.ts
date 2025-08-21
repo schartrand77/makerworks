@@ -2,9 +2,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import path from 'node:path'
+import fs from 'node:fs'
 
 // Allow overriding the backend origin, but default to local dev backend.
 const BACKEND = process.env.VITE_BACKEND_URL?.replace(/\/$/, '') || 'http://localhost:8000'
+
+// Inject app version from repository root VERSION file
+const APP_VERSION = fs
+  .readFileSync(path.resolve(__dirname, '../VERSION'), 'utf8')
+  .trim()
 
 // Helpful note:
 // Vite proxies only apply to the dev server. In production you should serve absolute URLs
@@ -19,6 +25,9 @@ export default defineConfig({
   },
   css: {
     postcss: path.resolve(__dirname, './postcss.config.js'),
+  },
+  define: {
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
   },
   server: {
     host: true,          // '0.0.0.0' for Docker/LAN

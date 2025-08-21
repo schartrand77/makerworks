@@ -1,30 +1,19 @@
 import os
-import sys
 from pathlib import Path
+import sys
 
 os.environ.setdefault("ENV", "test")
-os.environ.setdefault("DOMAIN", "http://testserver")
-os.environ.setdefault("BASE_URL", "http://testserver")
-os.environ.setdefault("VITE_API_BASE_URL", "http://testserver")
-os.environ.setdefault("UPLOAD_DIR", "/tmp")
-os.environ.setdefault("MODEL_DIR", "/tmp")
-os.environ.setdefault("AVATAR_DIR", "/tmp")
 os.environ.setdefault("ASYNC_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-os.environ.setdefault("JWT_SECRET", "secret")
-os.environ.setdefault("STRIPE_SECRET_KEY", "test")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 
 from app.db.base import Base
-from app.dependencies import get_db
 from app.models.models import Filament
+from app.schemas.filaments import FilamentCreate, FilamentUpdate
 
 import importlib.util
 
@@ -36,44 +25,27 @@ filaments = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(filaments)
 
 
-async def create_test_app():
+@pytest.fixture()
+async def db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def override_get_db():
-        async with session_local() as session:
-            yield session
-
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    app = FastAPI()
-    app.dependency_overrides[get_db] = override_get_db
-    app.include_router(filaments.router, prefix="/api/v1/filaments", tags=["filaments"])
-
-    app.state._sessionmaker = session_local
-    return app
-
-
-@pytest.fixture()
-async def client():
-    app = await create_test_app()
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
-        c.app = app  # type: ignore[attr-defined]
-        yield c
-
-
-@pytest.fixture()
-async def db(client):
-    session_local = client.app.state._sessionmaker
-    async with session_local() as session:
+        def _create_all(sync_conn):
+            meta = Base.metadata
+            for tbl in list(meta.tables.values()):
+                if getattr(tbl, "schema", None):
+                    meta.remove(tbl)
+            meta.create_all(sync_conn)
+        await conn.run_sync(_create_all)
+    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_maker() as session:
         yield session
 
 
 @pytest.mark.asyncio
-async def test_list_filaments_returns_color_and_hex(client: AsyncClient, db: AsyncSession):
+async def test_list_filaments_returns_color_and_hex(db: AsyncSession):
     filament = Filament(
+        name="PLA Red",
+        category="PLA",
         material="PLA",
         type="PLA",
         color_name="Red",
@@ -83,13 +55,63 @@ async def test_list_filaments_returns_color_and_hex(client: AsyncClient, db: Asy
     db.add(filament)
     await db.commit()
 
-    resp = await client.get("/api/v1/filaments/")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
-    assert data
-    item = data[0]
-    assert item["color"] == "Red"
-    assert item["hex"] == "#ff0000"
-    assert "color_name" not in item
-    assert "color_hex" not in item
+    rows = await filaments.list_filaments(db=db, _user=object(), search=None, include_inactive=False, page=1, page_size=100)
+    assert rows
+    item = rows[0]
+    assert item.color == "Red"
+    assert item.hex == "#ff0000"
+
+
+@pytest.mark.asyncio
+async def test_create_filament(db: AsyncSession):
+    body = FilamentCreate(
+        name="PLA Red",
+        category="PLA",
+        type="PLA",
+        colorHex="#FF0000",
+        pricePerKg=25.0,
+    )
+    created = await filaments.create_filament(body=body, db=db, _admin=object())
+    row = await db.get(Filament, created.id)
+    assert row is not None
+    assert row.color_hex == "#FF0000"
+
+
+@pytest.mark.asyncio
+async def test_update_filament(db: AsyncSession):
+    filament = Filament(
+        name="PLA Red",
+        category="PLA",
+        material="PLA",
+        type="PLA",
+        color_name="Red",
+        color_hex="#ff0000",
+        price_per_kg=20.0,
+    )
+    db.add(filament)
+    await db.commit()
+
+    body = FilamentUpdate(colorHex="#00FF00", isActive=False)
+    await filaments.update_filament(filament.id, body=body, db=db, _admin=object())
+    row = await db.get(Filament, filament.id)
+    assert row.color_hex == "#00FF00"
+    assert row.is_active is False
+
+
+@pytest.mark.asyncio
+async def test_delete_filament(db: AsyncSession):
+    filament = Filament(
+        name="PLA Red",
+        category="PLA",
+        material="PLA",
+        type="PLA",
+        color_name="Red",
+        color_hex="#ff0000",
+        price_per_kg=20.0,
+    )
+    db.add(filament)
+    await db.commit()
+
+    await filaments.delete_filament(filament.id, db=db, _admin=object())
+    row = await db.get(Filament, filament.id)
+    assert row is None

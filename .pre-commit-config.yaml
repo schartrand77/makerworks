@@ -1,0 +1,30 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        language_version: python3
+        files: ^makerworks-backend/
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.1.1
+    hooks:
+      - id: flake8
+        files: ^makerworks-backend/
+  - repo: local
+    hooks:
+      - id: frontend-lint
+        name: frontend lint
+        entry: npm --prefix makerworks-frontend run lint
+        language: system
+        pass_filenames: false
+      - id: bump-version
+        name: bump version
+        entry: python3 .githooks/bump_version.py
+        language: system
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: pytest
+        language: system
+        pass_filenames: false
+        args: [makerworks-backend]

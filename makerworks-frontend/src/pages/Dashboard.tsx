@@ -169,7 +169,7 @@ const Dashboard: React.FC = () => {
                     <li key={m.id} className="truncate">
                       <a
                         href={`/models/${m.id}`}
-                        className="hover:underline text-brand-blue"
+                        className="hover:underline text-brand-orange"
                         title={m.name || 'Untitled'}
                       >
                         {m.name || 'Untitled'}

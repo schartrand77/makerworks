@@ -16,7 +16,7 @@ export default function PageNotFound({ to = "/" }: { to?: string }) {
         transition={{ duration: 0.6, ease: "easeOut" }}
         className="backdrop-blur-md bg-white/30 dark:bg-zinc-800/30 rounded-3xl shadow-xl p-10 max-w-md"
       >
-        <h1 className="text-6xl font-extrabold text-red-500 drop-shadow-sm">
+        <h1 className="text-6xl font-extrabold text-brand-orange drop-shadow-sm">
           404 🚧
         </h1>
 
@@ -27,7 +27,7 @@ export default function PageNotFound({ to = "/" }: { to?: string }) {
         <Link
           to={to}
           aria-label="Go to Home"
-          className="mt-6 inline-block px-6 py-2 bg-brand-red text-brand-black rounded-full shadow-md hover:shadow-lg hover:scale-105 transition-transform"
+          className="mt-6 inline-block px-6 py-2 bg-brand-orange text-brand-black rounded-full shadow-md hover:shadow-lg hover:scale-105 transition-transform"
         >
           ⬅ Go Home
         </Link>

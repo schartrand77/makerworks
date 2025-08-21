@@ -75,7 +75,7 @@ const SignIn: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-7 text-xs text-brand-blue hover:text-brand-red"
+            className="absolute right-3 top-7 text-xs text-brand-orange hover:text-brand-green"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
@@ -93,7 +93,7 @@ const SignIn: React.FC = () => {
 
         <p className="text-center text-sm mt-2">
           Not a member?{' '}
-          <Link to="/auth/signup" className="text-brand-blue hover:text-brand-red font-medium underline">
+          <Link to="/auth/signup" className="text-brand-orange hover:text-brand-green font-medium underline">
             Sign up
           </Link>
         </p>

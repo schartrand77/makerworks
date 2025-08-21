@@ -113,4 +113,4 @@ Pull requests are welcome! Please make sure `npm run lint` and `npm run test` pa
 
 ## License
 
-MakerWorks Frontend is released under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE). See the LICENSE file for details.

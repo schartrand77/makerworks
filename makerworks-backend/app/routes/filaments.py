@@ -56,9 +56,12 @@ def _col_required(model, *candidates):
     return col
 
 # Resolve columns once (cheap attributes)
-TYPE_COL = _col_required(Filament, "type", "category", "material_type")
+TYPE_COL = _col_required(Filament, "category", "type", "material_type")
+NAME_COL = _col_or_none(Filament, "name")
+OPTIONAL_TYPE_COL = _col_or_none(Filament, "type") if TYPE_COL.key != "type" else None
 COLOR_COL = _col_or_none(Filament, "color", "color_name", "colour")
 HEX_COL = _col_or_none(Filament, "hex", "color_hex", "hex_color")
+PRICE_COL = _col_or_none(Filament, "price_per_kg", "price")
 IS_ACTIVE_COL = _col_or_none(Filament, "is_active", "active")
 CREATED_AT_COL = _col_or_none(Filament, "created_at", "createdAt", "created")
 UPDATED_AT_COL = _col_or_none(Filament, "updated_at", "updatedAt", "updated")
@@ -155,6 +158,9 @@ async def create_filament(
 ):
     # Normalize incoming values
     type_norm = _norm_str(getattr(body, "type", None)) or ""
+    category_norm = _norm_str(getattr(body, "category", None)) or type_norm
+    name_norm = _norm_str(getattr(body, "name", None)) or f"{category_norm} {_norm_str(getattr(body, 'color_name', None)) or ''}".strip()
+
     # accept both color and color_name from body
     color_in = getattr(body, "color_name", None)
     if color_in is None:
@@ -167,11 +173,21 @@ async def create_filament(
     hex_norm = _norm_hex(hex_in)
 
     # Build value dict with actual column keys that exist
-    values = {TYPE_COL.key: type_norm}
+    values = {TYPE_COL.key: category_norm}
+    if OPTIONAL_TYPE_COL is not None:
+        values[OPTIONAL_TYPE_COL.key] = type_norm
+    if NAME_COL is not None:
+        values[NAME_COL.key] = name_norm
     if COLOR_COL is not None:
         values[COLOR_COL.key] = color_norm
     if HEX_COL is not None:
         values[HEX_COL.key] = hex_norm
+    if PRICE_COL is not None:
+        price_in = getattr(body, "price_per_kg", None)
+        if price_in is None:
+            price_in = getattr(body, "pricePerKg", None)
+        if price_in is not None:
+            values[PRICE_COL.key] = price_in
     if IS_ACTIVE_COL is not None:
         is_active_in = getattr(body, "is_active", None)
         values[IS_ACTIVE_COL.key] = True if is_active_in is None else bool(is_active_in)
@@ -214,8 +230,20 @@ async def update_filament(
 ):
     values = {}
 
-    if getattr(body, "type", None) is not None:
+    if getattr(body, "category", None) is not None:
+        values[TYPE_COL.key] = _norm_str(body.category)
+    elif getattr(body, "type", None) is not None:
         values[TYPE_COL.key] = _norm_str(body.type)
+    if OPTIONAL_TYPE_COL is not None and getattr(body, "type", None) is not None:
+        values[OPTIONAL_TYPE_COL.key] = _norm_str(body.type)
+    if NAME_COL is not None and getattr(body, "name", None) is not None:
+        values[NAME_COL.key] = _norm_str(body.name)
+    if PRICE_COL is not None:
+        price_val = getattr(body, "price_per_kg", None)
+        if price_val is None:
+            price_val = getattr(body, "pricePerKg", None)
+        if price_val is not None:
+            values[PRICE_COL.key] = price_val
 
     # color from color_name or color
     color_val = getattr(body, "color_name", None)

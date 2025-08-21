@@ -12,6 +12,7 @@ const Landing = () => {
   const navigate = useNavigate()
   const { isAuthenticated, resolved } = useAuthStore()
   const [hydrated, setHydrated] = useState(false)
+  const version = (import.meta.env as any).VITE_APP_VERSION
 
   useEffect(() => {
     const t = setTimeout(() => setHydrated(true), 0)
@@ -53,6 +54,9 @@ const Landing = () => {
             >
               Enter Site
             </GlassButton>
+          </div>
+          <div className="absolute bottom-2 right-2 text-xs text-gray-500 dark:text-gray-400 opacity-70">
+            v{version}
           </div>
         </div>
       </GlassCard>

@@ -9,8 +9,6 @@ import { useDropzone } from 'react-dropzone'
 import toast, { Toaster } from 'react-hot-toast'
 import axios from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
-
-const ACCENT = '#FF7A1A'
 const allowedModelExtensions = ['stl', '3mf', 'obj']
 
 type PrintOrder = {
@@ -584,12 +582,12 @@ const UploadPage: React.FC = () => {
 
       <style>{`
         :root{
-          --vo-accent: ${ACCENT};
+          --vo-accent: var(--mw-orange);
           --vo-bg: rgba(255,255,255,0.06);
           --vo-stroke: rgba(255,255,255,0.14);
           --vo-soft: rgba(255,255,255,0.08);
-          --vo-text: #E5E7EB;
-          --vo-muted: #B6BBC6;
+          --vo-text: var(--mw-text-light);
+          --vo-muted: var(--mw-muted);
           --vo-shadow: 0 22px 80px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,0.06);
           --ring-inner: inset 0 0 14px rgba(255,122,26,.18), inset 0 0 3px rgba(255,122,26,.42);
           --ring-outer: 0 0 14px rgba(255,122,26,.24), 0 0 40px rgba(255,122,26,.08);

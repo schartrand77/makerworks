@@ -106,4 +106,4 @@ npm test
 Pull requests are welcome! For major changes, please open an issue first to discuss the proposed improvements. Ensure `npm test`, `npm run lint` and `pytest` pass before submitting.
 
 ## License
-MakerWorks is released under the [MIT License](makerworks-backend/LICENSE).
+MakerWorks is released under the [MIT License](LICENSE).

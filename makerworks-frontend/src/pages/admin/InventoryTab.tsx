@@ -12,10 +12,11 @@ import {
 type LevelEdit = Partial<InventoryLevel>
 type MoveCreate = {
   variant_id: string
+  warehouse_id: string
   qty: number
-  from_warehouse_id?: string | null
+  type: string
   to_warehouse_id?: string | null
-  reason?: string | null
+  note?: string | null
 }
 
 export default function InventoryTab() {
@@ -42,10 +43,11 @@ export default function InventoryTab() {
   const [creatingMove, setCreatingMove] = useState(false)
   const [moveForm, setMoveForm] = useState<MoveCreate>({
     variant_id: '',
+    warehouse_id: '',
     qty: 1,
-    from_warehouse_id: '',
+    type: 'purchase',
     to_warehouse_id: '',
-    reason: '',
+    note: '',
   })
 
   const refreshLevels = async () => {
@@ -112,18 +114,23 @@ export default function InventoryTab() {
   const doCreateMove = async () => {
     if (creatingMove) return
     const variant_id = String(moveForm.variant_id || '').trim()
+    const warehouse_id = String(moveForm.warehouse_id || '').trim()
     const qty = Number(moveForm.qty || 0)
-    if (!variant_id || !qty) { setMvErr('variant_id and qty required'); return }
+    const type = String(moveForm.type || '').trim()
+    const to_warehouse_id = String(moveForm.to_warehouse_id || '').trim()
+    if (!variant_id || !warehouse_id || !qty || !type) { setMvErr('variant_id, warehouse_id, type and qty required'); return }
+    if (type === 'transfer' && !to_warehouse_id) { setMvErr('to_warehouse_id required for transfer'); return }
     setCreatingMove(true); setMvErr(null)
     try {
       await createMove({
         variant_id,
+        warehouse_id,
         qty,
-        from_warehouse_id: String(moveForm.from_warehouse_id || '').trim() || undefined,
-        to_warehouse_id: String(moveForm.to_warehouse_id || '').trim() || undefined,
-        reason: String(moveForm.reason || '').trim() || undefined,
+        type,
+        to_warehouse_id: type === 'transfer' ? to_warehouse_id : undefined,
+        note: String(moveForm.note || '').trim() || undefined,
       })
-      setMoveForm({ variant_id: '', qty: 1, from_warehouse_id: '', to_warehouse_id: '', reason: '' })
+      setMoveForm({ variant_id: '', warehouse_id: '', qty: 1, type: 'purchase', to_warehouse_id: '', note: '' })
       await Promise.all([refreshLevels(), refreshMoves()])
     } catch (e: any) {
       setMvErr(e?.response?.data?.detail ?? e?.message ?? 'Create move failed')
@@ -221,17 +228,26 @@ export default function InventoryTab() {
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-6">
             <input className="rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="Variant ID"
               value={moveForm.variant_id} onChange={(e) => setMoveForm(v => ({ ...v, variant_id: e.target.value }))}/>
-            <input className="rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="From Warehouse (opt)"
-              value={moveForm.from_warehouse_id || ''} onChange={(e) => setMoveForm(v => ({ ...v, from_warehouse_id: e.target.value }))}/>
-            <input className="rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="To Warehouse (opt)"
-              value={moveForm.to_warehouse_id || ''} onChange={(e) => setMoveForm(v => ({ ...v, to_warehouse_id: e.target.value }))}/>
+            <input className="rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="Warehouse ID"
+              value={moveForm.warehouse_id} onChange={(e) => setMoveForm(v => ({ ...v, warehouse_id: e.target.value }))}/>
+            <select className="rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+              value={moveForm.type} onChange={(e) => setMoveForm(v => ({ ...v, type: e.target.value }))}>
+              <option value="purchase">purchase</option>
+              <option value="sale">sale</option>
+              <option value="adjust">adjust</option>
+              <option value="transfer">transfer</option>
+            </select>
+            {moveForm.type === 'transfer' && (
+              <input className="rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="To Warehouse"
+                value={moveForm.to_warehouse_id || ''} onChange={(e) => setMoveForm(v => ({ ...v, to_warehouse_id: e.target.value }))}/>
+            )}
             <input className="rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="Qty" type="number"
               value={moveForm.qty} onChange={(e) => setMoveForm(v => ({ ...v, qty: Number(e.target.value) }))}/>
-            <input className="sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="Reason (opt)"
-              value={moveForm.reason || ''} onChange={(e) => setMoveForm(v => ({ ...v, reason: e.target.value }))}/>
+            <input className="sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60" placeholder="Note (opt)"
+              value={moveForm.note || ''} onChange={(e) => setMoveForm(v => ({ ...v, note: e.target.value }))}/>
             <div className="sm:col-span-6 flex items-center justify-end">
               <button className="rounded px-3 py-1 text-sm border shadow-sm disabled:opacity-50"
-                disabled={creatingMove || !moveForm.variant_id || !moveForm.qty}
+                disabled={creatingMove || !moveForm.variant_id || !moveForm.warehouse_id || !moveForm.qty || (moveForm.type === 'transfer' && !moveForm.to_warehouse_id)}
                 onClick={doCreateMove}>
                 {creatingMove ? 'Creating…' : 'Create Move'}
               </button>
@@ -245,10 +261,10 @@ export default function InventoryTab() {
               <tr>
                 <th className="py-2 pr-4">Created</th>
                 <th className="py-2 pr-4">Variant</th>
-                <th className="py-2 pr-4">From</th>
-                <th className="py-2 pr-4">To</th>
+                <th className="py-2 pr-4">Warehouse</th>
+                <th className="py-2 pr-4">Type</th>
                 <th className="py-2 pr-4">Qty</th>
-                <th className="py-2 pr-4">Reason</th>
+                <th className="py-2 pr-4">Note</th>
               </tr>
             </thead>
             <tbody>
@@ -264,10 +280,10 @@ export default function InventoryTab() {
                 <tr key={r.id} className="border-b last:border-0">
                   <td className="py-2 pr-4">{r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</td>
                   <td className="py-2 pr-4 font-mono text-xs">{r.variant_id}</td>
-                  <td className="py-2 pr-4 font-mono text-xs">{r.from_warehouse_id || '—'}</td>
-                  <td className="py-2 pr-4 font-mono text-xs">{r.to_warehouse_id || '—'}</td>
+                  <td className="py-2 pr-4 font-mono text-xs">{r.warehouse_id}</td>
+                  <td className="py-2 pr-4">{r.type}</td>
                   <td className="py-2 pr-4">{r.qty}</td>
-                  <td className="py-2 pr-4">{r.reason || '—'}</td>
+                  <td className="py-2 pr-4">{r.note || '—'}</td>
                 </tr>
               ))}
             </tbody>

@@ -127,8 +127,8 @@ const SignUp = () => {
             className={`input rounded-full px-4 py-2 pr-12 ${
               confirmPassword
                 ? passwordsMatch
-                  ? 'border-brand-blue focus:ring-brand-blue'
-                  : 'border-brand-red focus:ring-brand-red'
+                  ? 'border-brand-green focus:ring-brand-green'
+                  : 'border-red-500 focus:ring-red-500'
                 : ''
             }`}
             placeholder="••••••••"
@@ -140,7 +140,7 @@ const SignUp = () => {
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-7 text-xs text-brand-blue hover:text-brand-red"
+            className="absolute right-3 top-7 text-xs text-brand-orange hover:text-brand-green"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
@@ -158,9 +158,9 @@ const SignUp = () => {
               autoComplete="new-password"
               className={`input rounded-full px-4 py-2 ${
                 confirmPassword
-                  ? passwordsMatch
-                    ? 'border-brand-blue focus:ring-brand-blue'
-                    : 'border-brand-red focus:ring-brand-red'
+                ? passwordsMatch
+                    ? 'border-brand-green focus:ring-brand-green'
+                    : 'border-red-500 focus:ring-red-500'
                   : ''
               }`}
               placeholder="Confirm your password"

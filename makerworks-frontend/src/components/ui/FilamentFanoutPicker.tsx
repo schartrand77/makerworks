@@ -5,6 +5,7 @@ import { useEstimateStore } from '@/store/useEstimateStore'
 import axios from '@/api/client'
 import GlassCard from '@/components/ui/GlassCard'
 import { X } from 'lucide-react'
+import { bgClassFromHex } from '@/lib/colorMap'
 
 interface Filament {
   id: string
@@ -63,12 +64,10 @@ export default function FilamentFanoutPicker() {
       {selectedColors.length > 0 && (
         <div className="flex flex-wrap gap-3 mb-4">
           {selectedColors.map((hex, idx) => {
-            const colorObj = filaments.find((f) => f.hex === hex)
             return (
               <div
                 key={idx}
-                className="relative w-10 h-10 rounded-full border-2 border-white/20 shadow-inner"
-                style={{ backgroundColor: hex }}
+                className={`relative w-10 h-10 rounded-full border-2 border-white/20 shadow-inner ${bgClassFromHex(hex)}`}
               >
                 <button
                   onClick={() => handleRemoveColor(hex)}
@@ -140,8 +139,7 @@ export default function FilamentFanoutPicker() {
                     className="flex flex-col items-center p-2 rounded-lg hover:scale-105 transition bg-white/5 hover:bg-white/10 border border-white/10"
                   >
                     <div
-                      className="w-8 h-8 rounded-full border-2 shadow-inner"
-                      style={{ backgroundColor: color.hex }}
+                      className={`w-8 h-8 rounded-full border-2 shadow-inner ${bgClassFromHex(color.hex)}`}
                     />
                     <span className="text-xs mt-1 text-zinc-300">{color.color}</span>
                   </button>

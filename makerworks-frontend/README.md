@@ -11,6 +11,7 @@ MakerWorks Frontend is a responsive React application powered by Vite and TypeSc
 - **Admin tools** – manage users, filament types and uploaded models from the Admin panel.
 - **Dark mode** – built in theme toggle persists your preference in `localStorage`.
 - **End‑to‑end tests** – Cypress tests ensure core flows work as expected.
+- **Filament color mapping** – arbitrary filament `color_hex` values are mapped to the closest MakerWorks palette token; unknown colours fall back to a neutral swatch so they don't resemble brand UI colours.
 
 ## Technology Stack
 
@@ -97,6 +98,10 @@ public/            # static files served by Vite
 ```
 
 A small utility script `generate_sample_images.py` can be used to create placeholder images during development.
+
+## Filament Color Mapping
+
+Filament colours returned from the API can be arbitrary hex values. The `src/lib/colorMap.ts` helper converts these values to the nearest MakerWorks palette token. If a colour doesn't match closely, it falls back to a neutral grey (`zinc-400`). Components display these mapped tokens via `bgClassFromHex`/`fillClassFromHex`, rendering off‑palette colours as subdued swatches or badges so they are clearly distinct from core UI brand colours.
 
 ## Testing
 

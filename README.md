@@ -17,6 +17,8 @@ MakerWorks is an open source 3D printing platform that pairs a Python backend wi
 - [Testing](#testing)
 - [Contributing](#contributing)
 - [Code of Conduct](#code-of-conduct)
+- [Terms of Service](#terms-of-service)
+- [Privacy Policy](#privacy-policy)
 - [License](#license)
 
 ## Features
@@ -108,6 +110,12 @@ Pull requests are welcome! For major changes, please open an issue first to disc
 
 ## Code of Conduct
 This project is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+
+## Terms of Service
+Our [Terms of Service](docs/TERMS_OF_SERVICE.md) explain the rules and conditions for using MakerWorks.
+
+## Privacy Policy
+Our [Privacy Policy](docs/PRIVACY_POLICY.md) describes how we collect, store, and use your data and outlines your rights.
 
 ## License
 MakerWorks is released under the [MIT License](makerworks-backend/LICENSE).

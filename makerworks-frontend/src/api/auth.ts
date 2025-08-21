@@ -1,7 +1,8 @@
 // src/api/auth.ts
 // congrats, you pasted a curl into a TypeScript file. here's a real API client instead.
 
-import http from '@/api/axios'
+// Import the same axios instance that tests mock
+import http from '@/api/client'
 import type { AxiosError } from 'axios'
 
 export type ApiUser = {
@@ -15,6 +16,18 @@ export type ApiUser = {
   avatar_url?: string | null
   role?: string | null
   last_login?: string | null
+}
+
+// Backwards-compatible alias used by tests and older code
+// Minimal user shape used by the frontend store and tests
+export interface User {
+  id: string
+  email: string
+  username: string
+  name: string | null
+  role?: string | null
+  is_verified: boolean
+  avatar_url: string | null
 }
 
 export type SignInBody = {
@@ -31,6 +44,12 @@ export type SignUpBody = {
 
 type SignInResponse = { user: ApiUser }
 type SignUpResponse = { user: ApiUser }
+
+// Parameters accepted by the higher-level signIn() helper
+export interface SignInParams {
+  identifier: string
+  password: string
+}
 
 /* ---------------------------- tiny runtime guards --------------------------- */
 
@@ -89,6 +108,49 @@ export async function apiSignUp(body: SignUpBody): Promise<ApiUser> {
 export async function apiMe(): Promise<ApiUser> {
   const res = await http.get<ApiUser>('auth/me')
   return coerceUser(res.data)
+}
+
+/**
+ * Helper used by the app (and tests) that wraps apiSignIn with a friendlier
+ * interface and error codes. It accepts an `identifier` field instead of the
+ * backend's `email_or_username` and normalises empty credentials / 401s to
+ * custom error objects.
+ */
+export async function signIn({ identifier, password }: SignInParams): Promise<User> {
+  const email_or_username = trim(identifier)
+  const pwd = trim(password)
+  if (!email_or_username || !pwd) {
+    throw { code: 'E_BAD_INPUT' }
+  }
+
+  const res = await http.post<SignInResponse>('auth/signin', {
+    email_or_username,
+    password: pwd,
+  })
+
+  if (res.status === 401) {
+    throw { code: 'E_AUTH' }
+  }
+  if (res.status !== 200) {
+    throw new Error('Failed to sign in')
+  }
+
+  const u = coerceUser(res.data.user)
+  return {
+    id: u.id,
+    email: u.email,
+    username: u.username,
+    name: u.name ?? null,
+    role: u.role ?? null,
+    is_verified: u.is_verified,
+    avatar_url: u.avatar_url ?? null,
+  }
+}
+
+/** Fetch the current user using the session cookie. */
+export async function getCurrentUser(): Promise<User> {
+  const res = await http.get<User>('auth/me')
+  return res.data
 }
 
 /** Sign out; try POST first, fall back to GET on 405/404/422. */

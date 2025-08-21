@@ -16,6 +16,7 @@ MakerWorks is an open source 3D printing platform that pairs a Python backend wi
 - [Environment Variables](#environment-variables)
 - [Testing](#testing)
 - [Contributing](#contributing)
+- [Code of Conduct](#code-of-conduct)
 - [License](#license)
 
 ## Features
@@ -103,7 +104,10 @@ npm test
 ```
 
 ## Contributing
-Pull requests are welcome! For major changes, please open an issue first to discuss the proposed improvements. Ensure `npm test`, `npm run lint` and `pytest` pass before submitting.
+Pull requests are welcome! For major changes, please open an issue first to discuss the proposed improvements. Ensure `npm test`, `npm run lint` and `pytest` pass before submitting. Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+
+## Code of Conduct
+This project is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
 
 ## License
 MakerWorks is released under the [MIT License](makerworks-backend/LICENSE).

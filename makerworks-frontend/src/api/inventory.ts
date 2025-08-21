@@ -53,10 +53,10 @@ export interface InventoryLevel {
 export interface StockMove {
   id: string
   variant_id: string
-  from_warehouse_id?: string | null
-  to_warehouse_id?: string | null
+  warehouse_id: string
   qty: number
-  reason?: string | null
+  type: string
+  note?: string | null
   created_at?: string | null
 }
 
@@ -161,8 +161,8 @@ export async function listMoves(params?: {
   page?: number
   page_size?: number
   variant_id?: string
-  from_warehouse_id?: string
-  to_warehouse_id?: string
+  warehouse_id?: string
+  type?: string
 }) {
   const { data } = await http.get('/api/v1/inventory/moves', withQS(params))
   if (Array.isArray(data)) {
@@ -174,15 +174,16 @@ export async function listMoves(params?: {
 /** POST /api/v1/inventory/moves */
 export async function createMove(payload: {
   variant_id: string
+  warehouse_id: string
   qty: number
-  from_warehouse_id?: string | null
+  type: string
   to_warehouse_id?: string | null
-  reason?: string | null
+  note?: string | null
 }) {
   const { data } = await http.post('/api/v1/inventory/moves', payload, {
     withCredentials: true,
   })
-  return data as StockMove
+  return data as { status: string }
 }
 
 /* ──────────────────────────────────────────────

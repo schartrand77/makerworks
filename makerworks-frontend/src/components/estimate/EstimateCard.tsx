@@ -3,6 +3,7 @@ import GlassCard from '@/components/ui/GlassCard'
 import ModelViewer from '@/components/ui/ModelViewer'
 import { fetchAvailableFilaments } from '@/api/filaments'
 import { toast } from 'sonner'
+import { bgClassFromHex } from '@/lib/colorMap'
 
 interface Filament {
   id: string
@@ -110,8 +111,7 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
               key={f.hex}
               type="button"
               onClick={() => handleColorToggle(f.hex)}
-              style={{ backgroundColor: f.hex }}
-              className={`w-6 h-6 rounded-full border-2 ${
+              className={`w-6 h-6 rounded-full border-2 ${bgClassFromHex(f.hex)} ${
                 form.colors.includes(f.hex)
                   ? 'border-black dark:border-white'
                   : 'border-transparent'

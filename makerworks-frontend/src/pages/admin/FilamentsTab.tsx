@@ -7,6 +7,7 @@ import {
   deleteFilament,
   type FilamentDTO,
 } from '@/api/filaments';
+import { bgClassFromHex } from '@/lib/colorMap';
 
 type Filament = {
   id: string;
@@ -360,8 +361,7 @@ export default function FilamentsTab() {
                     ) : (
                       <div className="flex items-center gap-2">
                         <span
-                          className="inline-block h-4 w-4 rounded-full border border-black/10 dark:border-white/15"
-                          style={{ background: displayHex || 'transparent' }}
+                          className={`inline-block h-4 w-4 rounded-full border border-black/10 dark:border-white/15 ${bgClassFromHex(displayHex)}`}
                           title={displayHex || ''}
                         />
                         <span>{f.color || f.name || '—'}</span>

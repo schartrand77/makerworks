@@ -2,6 +2,8 @@
 
 Thank you for your interest in improving MakerWorks! This project uses a mono-repo that powers the backend, frontend and mobile clients. This guide explains how to get your changes merged.
 
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md) to help us maintain a welcoming community.
+
 ## Branching
 - Use short-lived feature branches cut from the stable `main` branch.
 - Prefer descriptive branch names such as `feat/summary-page` or `fix/login-bug`.

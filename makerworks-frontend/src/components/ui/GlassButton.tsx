@@ -8,7 +8,6 @@ interface GlassButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>
     | 'secondary'
     | 'ghost'
     | 'danger'
-    | 'uploadBlue'
     | 'brand'
     | 'success';
   size?: 'sm' | 'md' | 'lg';
@@ -19,19 +18,17 @@ interface GlassButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>
 
 const variants = {
   primary:
-    'bg-transparent text-brand-red ring-1 ring-brand-red/60 hover:ring-brand-red/80 focus:ring-brand-red/80',
+    'bg-transparent text-brand-orange ring-1 ring-brand-orange/60 hover:ring-brand-orange/80 focus:ring-brand-orange/80',
   secondary:
     'bg-transparent text-zinc-800 dark:text-zinc-200 ring-1 ring-zinc-300/60 dark:ring-zinc-600/60 hover:ring-zinc-300/80 dark:hover:ring-zinc-600/80 focus:ring-zinc-300/80 dark:focus:ring-zinc-600/80',
   ghost:
     'bg-transparent text-zinc-800 dark:text-zinc-200 ring-1 ring-zinc-300/60 dark:ring-zinc-700/60 hover:ring-zinc-300/80 dark:hover:ring-zinc-700/80 focus:ring-zinc-300/80 dark:focus:ring-zinc-700/80',
   danger:
     'bg-transparent text-red-600 dark:text-red-400 ring-1 ring-red-500/60 dark:ring-red-600/60 hover:ring-red-500/80 dark:hover:ring-red-600/80 focus:ring-red-500/80 dark:focus:ring-red-600/80',
-  uploadBlue:
-    'bg-transparent text-blue-700 dark:text-blue-300 ring-1 ring-blue-300/60 dark:ring-blue-400/60 backdrop-blur hover:ring-blue-300/80 dark:hover:ring-blue-400/80 focus:ring-blue-300/80 dark:focus:ring-blue-400/80',
   brand:
-    'bg-transparent text-brand-black ring-1 ring-brand-red/60 hover:text-brand-blue hover:ring-brand-blue focus:ring-brand-blue active:ring-brand-blue',
+    'bg-transparent text-brand-black ring-1 ring-brand-orange/60 hover:text-brand-green hover:ring-brand-green focus:ring-brand-green active:ring-brand-green',
   success:
-    'bg-transparent text-white ring-1 ring-emerald-600 hover:ring-emerald-700 active:ring-emerald-800 focus:ring-emerald-700',
+    'bg-transparent text-white ring-1 ring-brand-green hover:ring-brand-green active:ring-brand-green focus:ring-brand-green',
 };
 
 const sizes = {

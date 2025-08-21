@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import { globSync } from 'glob';
 
 const approvedHexes = [
-  '#ff7a1a',
-  '#42ffa1',
-  '#2b2d31',
+  '#ff7a1a', // brand orange
+  '#42ffa1', // brand green
+  '#2b2d31', // brand text
   '#e5e7eb',
   '#b6bbc6',
   '#0b0f1a',
@@ -17,11 +17,7 @@ const approvedHexes = [
   '#fff0f0',
   '#9a9a9a',
   '#2f2f2f',
-  '#ffd7d7',
-  '#003366',
-  '#333333',
-  '#ff4f00',
-  '#ff0000'
+  '#ffd7d7'
 ];
 
 const files = globSync('src/**/*.{ts,tsx,jsx,js}', { nodir: true });

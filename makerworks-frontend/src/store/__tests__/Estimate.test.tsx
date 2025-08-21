@@ -37,7 +37,7 @@ describe('<Estimate />', () => {
 
   it('loads filaments and shows success toast', async () => {
     ;(axios.get as any).mockResolvedValue({
-      data: [{ id: '1', type: 'PLA', color: 'Red', hex: '#ff0000' }]
+      data: [{ id: '1', type: 'PLA', color: 'Orange', hex: '#ff7a1a' }]
     });
     render(
       <MemoryRouter>
@@ -51,7 +51,7 @@ describe('<Estimate />', () => {
 
   it.skip('shows estimate when form is filled', async () => {
     ;(axios.get as any) = vi.fn().mockResolvedValue({
-      data: [{ id: '1', type: 'PLA', color: 'Red', hex: '#ff0000' }]
+      data: [{ id: '1', type: 'PLA', color: 'Orange', hex: '#ff7a1a' }]
     });
     (estimateApi.getEstimate as any).mockResolvedValue({
       estimated_time_minutes: 30,

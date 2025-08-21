@@ -67,7 +67,7 @@ export default function LoginPage() {
         value={usernameOrEmail}
         onChange={(e) => setUsernameOrEmail(e.target.value)}
         onKeyDown={handleKeyPress}
-        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-blue"
+        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-orange"
       />
       <input
         type="password"
@@ -75,7 +75,7 @@ export default function LoginPage() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={handleKeyPress}
-        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-blue"
+        className="border rounded px-3 py-2 bg-white/10 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-orange"
       />
         <GlassButton
           onClick={handleLogin}

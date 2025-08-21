@@ -287,7 +287,7 @@ export default function Estimate() {
           <h2 className="text-lg font-semibold mb-2">Live Estimate</h2>
 
           {loading && (
-            <div className="text-brand-blue animate-pulse py-2">🔄 Calculating…</div>
+            <div className="text-brand-orange animate-pulse py-2">🔄 Calculating…</div>
           )}
 
           {!loading && estimateResult && (

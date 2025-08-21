@@ -23,7 +23,7 @@ export default function SettingsTabs({ currentTab, onTabChange }: Props) {
             'px-4 py-2 rounded-full font-medium backdrop-blur-sm border bg-transparent',
             'transition-all duration-300 ease-in-out',
             currentTab === tab
-              ? 'border-brand-red text-black dark:text-white'
+              ? 'border-brand-orange text-black dark:text-white'
               : 'border-transparent text-gray-500 hover:text-black dark:hover:text-white'
           )}
         >

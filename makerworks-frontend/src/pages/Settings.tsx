@@ -55,7 +55,7 @@ export default function Settings() {
       <div
         className="
           relative w-full max-w-md overflow-hidden rounded-[22px]
-          bg-white/65 dark:bg-[#0b0f1a]/55 backdrop-blur-2xl
+          bg-white/65 dark:bg-[var(--mw-navy)]/55 backdrop-blur-2xl
           shadow-[0_10px_40px_-10px_rgba(0,0,0,0.35)]
           ring-1 ring-white/25 dark:ring-white/10
           border border-white/25 dark:border-white/10
@@ -122,7 +122,7 @@ export default function Settings() {
           onClick={() => setShowAvatarEditor(false)}
         >
           <div
-            className="relative w-full max-w-sm overflow-hidden rounded-2xl bg-white/90 p-4 shadow-2xl ring-1 ring-white/40 backdrop-blur-2xl dark:bg-[#0b0f1a]/70 dark:ring-white/10"
+          className="relative w-full max-w-sm overflow-hidden rounded-2xl bg-white/90 p-4 shadow-2xl ring-1 ring-white/40 backdrop-blur-2xl dark:bg-[var(--mw-navy)]/70 dark:ring-white/10"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="absolute right-2 top-2">

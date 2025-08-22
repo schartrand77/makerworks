@@ -240,3 +240,31 @@ export async function deleteFilament(id: string, opts: DeleteOptions = {}) {
   await http<void>('DELETE', `/filaments/${id}`, undefined, opts.signal);
   return;
 }
+
+// ---------------------------------------------------------
+// Convenience helpers
+// ---------------------------------------------------------
+
+/**
+ * Fetch a simplified list of active filaments for public consumption.
+ *
+ * The Estimate page only needs a small subset of the filament fields, so this
+ * helper normalises the API response into the legacy `{ id, type, color, hex }`
+ * shape expected by older components.
+ */
+export async function fetchAvailableFilaments(): Promise<{
+  id: string
+  type: string
+  color: string
+  hex: string
+}[]> {
+  const rows = await getFilaments({ includeInactive: false });
+
+  return rows.map((f) => ({
+    id: String(f.id ?? ''),
+    // Prefer new `name`/`category` fields but fall back to legacy ones
+    type: String(f.type ?? f.category ?? ''),
+    color: String(f.color ?? f.colorName ?? ''),
+    hex: String(f.hex ?? f.colorHex ?? '#000000'),
+  }));
+}

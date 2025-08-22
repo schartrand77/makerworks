@@ -326,17 +326,18 @@ class EstimateSettings(Base):
 class Filament(Base):
     __tablename__ = "filaments"
     __table_args__ = (
+        # allow multiple NULLs; still dedupe real entries
         UniqueConstraint("name", "category", "color_hex", name="uq_public_filaments_name_category_colorhex"),
         Index("ix_public_filaments_type_color_hex", "type", "color_name", "color_hex"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Canonical
-    name = Column(String(128), nullable=False)
-    category = Column(String(64), nullable=False)
-    color_hex = Column(String(16), nullable=False)
-    price_per_kg = Column(Float, nullable=False, default=0.0)
+    # Canonical (now tolerant / nullable to avoid 500s on partial input)
+    name = Column(String(128), nullable=True)
+    category = Column(String(64), nullable=True)
+    color_hex = Column(String(16), nullable=True)
+    price_per_kg = Column(Float, nullable=True, default=0.0)
 
     # Legacy (kept nullable)
     material = Column(String, nullable=True)
@@ -378,7 +379,52 @@ class Filament(Base):
         return func.concat_ws(" ", func.coalesce(cls.category, cls.type), cls.color_name)
 
     def __repr__(self) -> str:
-        return f"<Filament {self.category or self.type}/{self.color_name} #{self.color_hex} ${self.price_per_kg}/kg>"
+        cat = self.category or self.type or "?"
+        col = self.color_name or "?"
+        hx = self.color_hex or "??????"
+        price = self.price_per_kg if self.price_per_kg is not None else 0.0
+        return f"<Filament {cat}/{col} #{hx} ${price}/kg>"
+
+
+def _norm_hex(v: str | None) -> str | None:
+    if not v:
+        return v
+    v = v.strip()
+    if not v:
+        return None
+    if not v.startswith("#"):
+        v = "#" + v
+    return v
+
+
+@event.listens_for(Filament, "before_insert")
+@event.listens_for(Filament, "before_update")
+def normalize_and_derive_filament(mapper, connection, target: "Filament"):
+    """
+    Make the model resilient to partial/legacy payloads:
+    - ensure hex fields start with '#'
+    - derive category/type/name when missing
+    - default price_per_kg to 0.0 if None
+    """
+    target.color_hex = _norm_hex(target.color_hex)
+    # keep legacy alias in sync if only one is present
+    if target.hex and not target.color_hex:
+        target.color_hex = _norm_hex(target.hex)  # type: ignore[attr-defined]
+    if target.color_hex and not target.hex:
+        target.hex = target.color_hex  # hybrid_property allows assignment on instance
+
+    # Derive category from legacy 'type'
+    if not (target.category or "").strip() and (target.type or "").strip():
+        target.category = (target.type or "").strip()
+
+    # Derive display-ish name if empty
+    if not (target.name or "").strip():
+        derived = " ".join(x for x in [(target.category or target.type or "").strip(), (target.color_name or "").strip()] if x)
+        target.name = derived or None
+
+    # Price default
+    if target.price_per_kg is None:
+        target.price_per_kg = 0.0
 
 
 class FilamentPricing(Base):

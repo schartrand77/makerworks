@@ -5,71 +5,27 @@ import { handleCartCheckout } from '@/lib/checkout';
 import PageLayout from '@/components/layout/PageLayout';
 import PageHeader from '@/components/ui/PageHeader';
 import { useCartStore } from '@/store/useCartStore';
-import {
-  ShoppingCart,
-  XCircle,
-  Minus,
-  Plus,
-  Trash2,
-  Loader2,
-  Sparkles,
-  Star,
-} from 'lucide-react';
+import { ShoppingCart, Minus, Plus, Trash2, Loader2, Sparkles, Star } from 'lucide-react';
 
-interface CartItem {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-}
+interface CartItem { id: string; name: string; price: number; quantity: number; }
+type Suggestion = { id: string; name: string; blurb?: string; price?: number; thumbnail?: string | null; };
 
-type Suggestion = {
-  id: string;
-  name: string;
-  blurb?: string;
-  price?: number;
-  thumbnail?: string | null;
-};
-
-/** Glass-pill utility (navbar/model-pill vibe). */
+/** LED buttons everywhere; keep sizes/disabled state consistent */
 function pillClasses(
-  tone: 'amber' | 'emerald' | 'red' | 'zinc',
+  _tone: 'amber' | 'emerald' | 'red' | 'zinc',
   size: 'sm' | 'md' = 'md',
   disabled = false
-) {
-  const pad = size === 'sm' ? 'h-9 px-3 text-sm' : 'h-10 px-4 text-sm';
-  const base =
-    'relative inline-flex items-center justify-center rounded-full ' +
-    'backdrop-blur-xl bg-white/40 dark:bg-white/10 ' +
-    'border border-white/30 dark:border-white/15 ring-1 ring-black/5 dark:ring-white/15 ' +
-    'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] ' +
-    'text-zinc-900 dark:text-white hover:bg-white/50 dark:hover:bg-white/15 ' +
-    'before:content-[""] before:absolute before:inset-[1px] before:rounded-[999px] before:pointer-events-none before:opacity-0 ' +
-    'after:content-[""] after:absolute after:inset-0 after:rounded-[999px] after:pointer-events-none after:opacity-0 ' +
-    'hover:before:opacity-100 hover:after:opacity-100 focus-visible:outline-none';
-
-  const toneGlow =
-    tone === 'amber'
-      ? 'before:shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_10px_rgba(251,146,60,0.12)] ' +
-        'after:shadow-[0_0_0_1px_rgba(251,146,60,0.16),0_0_10px_rgba(251,146,60,0.14),0_0_18px_rgba(251,146,60,0.10)]'
-      : tone === 'emerald'
-      ? 'before:shadow-[inset_0_0_6px_rgba(16,185,129,0.18),inset_0_0_10px_rgba(16,185,129,0.12)] ' +
-        'after:shadow-[0_0_0_1px_rgba(16,185,129,0.16),0_0_10px_rgba(16,185,129,0.14),0_0_18px_rgba(16,185,129,0.10)]'
-      : tone === 'red'
-      ? 'before:shadow-[inset_0_0_6px_rgba(239,68,68,0.20),inset_0_0_10px_rgba(239,68,68,0.14)] ' +
-        'after:shadow-[0_0_0_1px_rgba(239,68,68,0.16),0_0_10px_rgba(239,68,68,0.12),0_0_18px_rgba(239,68,68,0.10)]'
-      : // zinc (neutral)
-        'before:shadow-[inset_0_0_6px_rgba(113,113,122,0.18),inset_0_0_10px_rgba(113,113,122,0.12)] ' +
-        'after:shadow-[0_0_0_1px_rgba(113,113,122,0.14),0_0_10px_rgba(113,113,122,0.10),0_0_18px_rgba(113,113,122,0.08)]';
-
-  const state = disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer';
-  return [base, toneGlow, pad, state].join(' ');
+){
+  const sizeCls = size === 'sm' ? 'mw-btn-sm' : 'mw-btn-md';
+  const state   = disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer';
+  // LED ring + default text color; transparent background so amber rings elsewhere stay amber.
+  return ['mw-enter', sizeCls, 'font-medium text-gray-800 dark:text-gray-200', state].join(' ');
 }
 
-/** Card shell with orange outline + subtle outer halo on hover. */
-function cardClasses(extra = '') {
+/** Card shell: keep your amber ring look; add mw-led for button-triggered halo */
+function cardClasses(extra = ''){
   return [
-    'relative overflow-visible rounded-2xl',
+    'relative overflow-visible rounded-2xl mw-led',
     'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
     'border border-amber-300/45 ring-1 ring-amber-300/40 hover:ring-amber-400/55',
     'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
@@ -95,98 +51,93 @@ async function fetchServerCart(): Promise<CartItem[]> {
     .filter((x) => x.quantity > 0);
 }
 
-/** Light suggestions to make the empty page not… empty. */
-async function fetchSuggestions(): Promise<Suggestion[]> {
+/** “Popular” suggestions — actually ask for popular; de-dupe and drop items already in cart. */
+async function fetchSuggestions(excludeIds: string[] = []): Promise<Suggestion[]> {
   try {
-    const res = await fetch('/api/v1/models', { credentials: 'include' });
+    // Adjust query params to match your API’s contract for “popular”
+    const res = await fetch('/api/v1/models?sort=popular&limit=12', { credentials: 'include' });
     if (!res.ok) throw new Error('bad status');
     const models = await res.json();
-    const list = Array.isArray(models) ? models : Array.isArray(models?.items) ? models.items : [];
-    return list.slice(0, 6).map((m: any) => ({
-      id: String(m.id ?? m.model_id ?? crypto.randomUUID()),
-      name: String(m.name ?? m.title ?? 'Model'),
-      blurb: String(m.description ?? m.subtitle ?? '') || undefined,
-      thumbnail: m.thumbnail_url ?? m.image_url ?? null,
-      price: Number(m.price ?? m.base_price ?? 0) || undefined,
-    }));
+    const list = Array.isArray(models?.items) ? models.items : Array.isArray(models) ? models : [];
+
+    const seen = new Set<string>();
+    const out: Suggestion[] = [];
+    for (const m of list) {
+      const id = String(m.id ?? m.model_id ?? crypto.randomUUID());
+      if (seen.has(id) || excludeIds.includes(id)) continue;
+      seen.add(id);
+      out.push({
+        id,
+        name: String(m.name ?? m.title ?? 'Model'),
+        blurb: String(m.description ?? m.subtitle ?? '') || undefined,
+        thumbnail: m.thumbnail_url ?? m.image_url ?? null,
+        price: Number(m.price ?? m.base_price ?? 0) || undefined,
+      });
+      if (out.length >= 6) break;
+    }
+    return out;
   } catch {
-    // Friendly fallback
+    console.info('[suggestions] using fallback list');
     return [
-      { id: 'benchy', name: 'Benchy', blurb: 'The one and only!', price: 0 },
-      { id: 'calicat', name: 'Cali Cat', blurb: 'Calibration with attitude', price: 0 },
-      { id: 'xyzcube', name: 'XYZ Cube', blurb: 'Dimensional sanity check', price: 0 },
-      { id: 'vase', name: 'Spiral Vase', blurb: 'Vase mode goodness', price: 0 },
+      { id: 'benchy',  name: 'Benchy',       blurb: 'The one and only!',            price: 0 },
+      { id: 'calicat', name: 'Cali Cat',     blurb: 'Calibration with attitude',    price: 0 },
+      { id: 'xyzcube', name: 'XYZ Cube',     blurb: 'Dimensional sanity check',     price: 0 },
+      { id: 'vase',    name: 'Spiral Vase',  blurb: 'Vase mode goodness',           price: 0 },
+      { id: 'rook',    name: 'Rook',         blurb: 'Classic print benchmark',      price: 0 },
+      { id: 'frog',    name: 'Frog',         blurb: 'A friendly calibration buddy', price: 0 },
     ];
   }
 }
 
-export default function Cart() {
+export default function Cart(){
   const { items, setItemQuantity, removeItem, clearCart } = useCartStore();
   const navigate = useNavigate();
 
-  // server hydration
   const [serverItems, setServerItems] = useState<CartItem[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // empty-state goodies
+  const [loading, setLoading]       = useState(true);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [recent, setRecent] = useState<Suggestion[]>([]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      try {
+      try{
         const rows = await fetchServerCart();
-        const sugs = await fetchSuggestions();
-        if (alive) {
-          setServerItems(rows);
-          setSuggestions(sugs);
-        }
-      } finally {
-        if (alive) setLoading(false);
-      }
+
+        // Build exclusion list using whichever cart source will display
+        const idsInCart = (items.length ? items : rows).map(i => String(i.id));
+        const sugs = await fetchSuggestions(idsInCart);
+
+        if (alive){ setServerItems(rows); setSuggestions(sugs); }
+      } finally { if (alive) setLoading(false); }
     })();
 
-    // “recently viewed” if you ever store it elsewhere
-    try {
+    try{
       const raw = localStorage.getItem('mw_recent_models');
-      if (raw) {
+      if (raw){
         const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-          setRecent(
-            arr.slice(0, 6).map((m: any) => ({
-              id: String(m.id ?? crypto.randomUUID()),
-              name: String(m.name ?? 'Model'),
-              blurb: m.blurb ?? undefined,
-              price: m.price ?? undefined,
-              thumbnail: m.thumbnail ?? null,
-            }))
-          );
+        if (Array.isArray(arr)){
+          setRecent(arr.slice(0, 6).map((m:any)=>({
+            id: String(m.id ?? crypto.randomUUID()),
+            name: String(m.name ?? 'Model'),
+            blurb: m.blurb ?? undefined,
+            price: m.price ?? undefined,
+            thumbnail: m.thumbnail ?? null,
+          })));
         }
       }
-    } catch {
-      /* ignore */
-    }
+    } catch { /* shrug */ }
 
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
+    // We intentionally don’t include `items` here to keep this an initial-load fetch.
+    // If you want it reactive, add `items` to deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Prefer client store (user interactions), fallback to server cart
-  const displayItems: CartItem[] = useMemo(
-    () => (items.length > 0 ? items : serverItems),
-    [items, serverItems]
-  );
+  const displayItems: CartItem[] = useMemo(() => (items.length > 0 ? items : serverItems), [items, serverItems]);
+  const subtotal = useMemo(() => displayItems.reduce((t,i)=> t + i.price * i.quantity, 0), [displayItems]);
 
-  const subtotal = useMemo(
-    () => displayItems.reduce((total, item) => total + item.price * item.quantity, 0),
-    [displayItems]
-  );
-
-  const handleCheckout = () => {
-    handleCartCheckout(navigate);
-  };
+  const handleCheckout = () => { handleCartCheckout(navigate); };
 
   return (
     <PageLayout>
@@ -198,7 +149,7 @@ export default function Cart() {
         {loading ? (
           <div className="w-full max-w-md p-8 text-center">
             <div className={cardClasses('p-8')}>
-              <Loader2 className="w-6 h-6 animate-spin text-zinc-400 mx-auto mb-3" />
+              <Loader2 className="w-6 h-6 text-zinc-400 mx-auto mb-3" aria-hidden />
               <p className="text-base text-zinc-700 dark:text-zinc-300">Loading your cart…</p>
             </div>
           </div>
@@ -206,9 +157,7 @@ export default function Cart() {
           <>
             {/* Empty-state hero */}
             <div className="w-full max-w-5xl">
-              <div className={cardClasses('p-8 sm:p-10 relative overflow-hidden')}>
-                {/* soft animated accent */}
-                <div className="pointer-events-none absolute -top-20 -right-16 w-80 h-80 rounded-full blur-3xl opacity-25 bg-amber-400/40 animate-pulse" />
+              <div className={cardClasses('p-8 sm:p-10 overflow-hidden')}>
                 <div className="flex items-center gap-3 mb-3">
                   <Sparkles className="w-5 h-5 text-amber-500/80" />
                   <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
@@ -218,53 +167,41 @@ export default function Cart() {
                 <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-5">
                   Warm it up with a few models—try one of these popular starters.
                 </p>
-                <Link to="/browse" className={pillClasses('amber', 'md')}>
+                <Link to="/browse" className="mw-enter mw-btn-md font-semibold text-gray-800 dark:text-gray-200 inline-flex">
                   Browse models
                 </Link>
               </div>
             </div>
 
-            {/* Popular suggestions */}
+            {/* Popular suggestions — identical viewer/halo as Browse */}
             {suggestions.length > 0 && (
               <section className="w-full max-w-5xl">
                 <div className="mb-3 flex items-center gap-2">
                   <Star className="w-4 h-4 text-amber-500/80" />
-                  <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    Popular right now
-                  </h3>
+                  <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Popular right now</h3>
                 </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                   {suggestions.map((s) => (
                     <article key={`sugg-${s.id}`} className={cardClasses('p-4')}>
-                      <div className="aspect-[16/9] rounded-xl bg-white/50 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10 mb-3 grid place-items-center overflow-hidden">
-                        {s.thumbnail ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={s.thumbnail}
-                            alt={s.name}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="text-zinc-400 text-sm">Preview</div>
-                        )}
+                      <div className="mw-thumb aspect-[4/3] rounded-xl mb-3 bg-zinc-900 dark:bg-zinc-900">
+                        <div className="mw-thumb-frame w-full h-full flex items-center justify-center">
+                          {s.thumbnail ? (
+                            <img src={s.thumbnail} alt={`${s.name} preview`} className="mw-thumb-img" loading="lazy" />
+                          ) : (
+                            <div className="text-zinc-400 text-sm">Preview</div>
+                          )}
+                        </div>
                       </div>
+
                       <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{s.name}</h4>
-                      {s.blurb && (
-                        <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5 line-clamp-2">
-                          {s.blurb}
-                        </p>
-                      )}
+                      {s.blurb && <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5 line-clamp-2">{s.blurb}</p>}
 
                       <div className="mt-3 flex gap-2">
-                        <Link to={`/browse`} className={pillClasses('zinc', 'sm')}>
+                        <Link to={`/browse`} className="mw-enter mw-btn-sm text-gray-800 dark:text-gray-200 inline-flex">
                           View details
                         </Link>
-                        <Link
-                          to={`/estimate`}
-                          state={{ modelId: s.id }}
-                          className={pillClasses('amber', 'sm')}
-                        >
+                        <Link to={`/estimate`} state={{ modelId: s.id }} className="mw-enter mw-btn-sm text-gray-800 dark:text-gray-200 inline-flex">
                           Get estimate
                         </Link>
                       </div>
@@ -274,7 +211,7 @@ export default function Cart() {
               </section>
             )}
 
-            {/* Recently viewed (optional, harmless if empty) */}
+            {/* Recently viewed (left as-is) */}
             {recent.length > 0 && (
               <section className="w-full max-w-5xl">
                 <div className="mt-8 mb-3 flex items-center gap-2">
@@ -283,23 +220,15 @@ export default function Cart() {
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                   {recent.map((r) => (
-                    <Link
-                      key={`rec-${r.id}`}
-                      to="/browse"
-                      className={cardClasses('p-3 hover:before:opacity-100')}
-                      title={r.name}
-                    >
+                    <Link key={`rec-${r.id}`} to="/browse" className={cardClasses('p-3 hover:before:opacity-100')} title={r.name}>
                       <div className="aspect-square rounded-lg bg-white/50 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10 mb-2 grid place-items-center overflow-hidden">
                         {r.thumbnail ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={r.thumbnail} alt={r.name} className="w-full h-full object-cover" />
+                          <img src={r.thumbnail} alt={`${r.name} preview`} className="w-full h-full object-cover" />
                         ) : (
                           <div className="text-zinc-400 text-xs">Preview</div>
                         )}
                       </div>
-                      <div className="text-[11px] font-medium text-zinc-900 dark:text-zinc-100 truncate">
-                        {r.name}
-                      </div>
+                      <div className="text-[11px] font-medium text-zinc-900 dark:text-zinc-100 truncate">{r.name}</div>
                     </Link>
                   ))}
                 </div>
@@ -307,30 +236,26 @@ export default function Cart() {
             )}
           </>
         ) : (
-          // ——— Existing filled-cart UI ———
+          /* Filled cart */
           <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Items list */}
             <div className="lg:col-span-2 space-y-4">
               {displayItems.map((item) => {
                 const lineTotal = item.price * item.quantity;
-                const clientBacked = items.length > 0; // controls enabled only for client store rows
+                const clientBacked = items.length > 0;
 
                 return (
                   <div key={`${item.id}-${item.name}`} className={cardClasses('p-4 sm:p-5')}>
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                       <div className="min-w-0">
-                        <h2 className="font-semibold text-lg text-zinc-900 dark:text-zinc-100 truncate">
-                          {item.name}
-                        </h2>
+                        <h2 className="font-semibold text-lg text-zinc-900 dark:text-zinc-100 truncate">{item.name}</h2>
                         <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-0.5">
                           ID: <span className="font-mono">{item.id}</span> • ${item.price.toFixed(2)} each
                         </p>
 
                         <div className="mt-3 flex items-center gap-2">
                           <button
-                            onClick={() =>
-                              clientBacked && setItemQuantity(item.id, Math.max(1, item.quantity - 1))
-                            }
+                            onClick={() => clientBacked && setItemQuantity(item.id, Math.max(1, item.quantity - 1))}
                             className={pillClasses('zinc', 'sm', !clientBacked)}
                             aria-label={`Decrease quantity of ${item.name}`}
                             disabled={!clientBacked}
@@ -338,9 +263,7 @@ export default function Cart() {
                             <Minus className="w-4 h-4" />
                           </button>
 
-                          <span className="min-w-[2.5rem] text-center text-zinc-900 dark:text-zinc-100">
-                            {item.quantity}
-                          </span>
+                          <span className="min-w-[2.5rem] text-center text-zinc-900 dark:text-zinc-100">{item.quantity}</span>
 
                           <button
                             onClick={() => clientBacked && setItemQuantity(item.id, item.quantity + 1)}
@@ -360,12 +283,8 @@ export default function Cart() {
 
                       <div className="flex items-center justify-between sm:flex-col sm:items-end gap-3 sm:gap-2">
                         <div className="text-right">
-                          <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                            Line Total
-                          </div>
-                          <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                            ${lineTotal.toFixed(2)}
-                          </div>
+                          <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Line Total</div>
+                          <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100">${lineTotal.toFixed(2)}</div>
                         </div>
 
                         <button
@@ -397,9 +316,7 @@ export default function Cart() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-600 dark:text-zinc-400">Subtotal</span>
-                    <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                      ${subtotal.toFixed(2)}
-                    </span>
+                    <span className="font-medium text-zinc-900 dark:text-zinc-100">${subtotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-600 dark:text-zinc-400">Taxes &amp; shipping</span>
@@ -417,9 +334,10 @@ export default function Cart() {
                   >
                     Clear Cart
                   </button>
+
                   <button
                     onClick={handleCheckout}
-                    className={pillClasses('amber', 'md')}
+                    className="mw-enter mw-btn-md font-semibold text-gray-800 dark:text-gray-200"
                     aria-label="Proceed to checkout"
                     title="Proceed to checkout"
                   >

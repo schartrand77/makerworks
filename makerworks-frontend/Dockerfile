@@ -23,10 +23,27 @@ RUN --mount=type=cache,target=/root/.npm \
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# ---- Version: belt & suspenders ----
+# Build-arg can be overridden by CI: --build-arg APP_VERSION=$(git describe --tags --always)
+ARG APP_VERSION=dev
+# Make version available to Vite at build time
+ENV APP_VERSION=${APP_VERSION}
+ENV VITE_APP_VERSION=${APP_VERSION}
+
 # Bring in deps
 COPY --from=deps /tmp/node_modules ./node_modules
 COPY package*.json ./
 COPY . .
+
+# Ensure there is always a VERSION file for vite.config.ts to read
+# If repo didn't include one, synthesize it from APP_VERSION.
+RUN set -eux; \
+    if [ -f VERSION ]; then \
+      ver="$(cat VERSION | tr -d '\n\r')"; \
+      if [ -n "$ver" ]; then echo "Using VERSION file: $ver"; else echo "${APP_VERSION}" > VERSION; fi; \
+    else \
+      echo "${APP_VERSION}" > VERSION; \
+    fi
 
 # ---- Env handling for Vite build ----
 # Prefer .env.production → .env, else fall back sensibly.
@@ -67,9 +84,27 @@ CMD ["nginx", "-g", "daemon off;"]
 FROM node:20-alpine AS dev
 WORKDIR /app
 
+# ---- Version: belt & suspenders (runtime) ----
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+# Vite only exposes vars prefixed with VITE_ to the client
+ENV VITE_APP_VERSION=${APP_VERSION}
+
+# Helpful file watching defaults for Docker on macOS/Windows
+ENV CHOKIDAR_USEPOLLING=1
+
 COPY --from=deps /tmp/node_modules ./node_modules
 COPY package*.json ./
 COPY . .
+
+# Ensure VERSION exists for vite.config.ts in dev too
+RUN set -eux; \
+    if [ -f VERSION ]; then \
+      ver="$(cat VERSION | tr -d '\n\r')"; \
+      if [ -z "$ver" ]; then echo "${APP_VERSION}" > VERSION; fi; \
+    else \
+      echo "${APP_VERSION}" > VERSION; \
+    fi
 
 # Dev env is optional; don't crash if missing.
 # Vite reads .env.local/.env.development too, but this keeps parity.

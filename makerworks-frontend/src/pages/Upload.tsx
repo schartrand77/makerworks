@@ -1,5 +1,5 @@
 // src/pages/Upload.tsx
-// Single-card VisionOS-style upload with orange pill/ring accents
+// Single-card VisionOS-style upload with LED green ring/glow accents
 // - No tabs: model + photos in one elegant pane
 // - Per-photo remove + Clear All
 // - Remove selected model file
@@ -582,15 +582,20 @@ const UploadPage: React.FC = () => {
 
       <style>{`
         :root{
-          --vo-accent: var(--mw-orange);
+          /* ===== LED GREEN THEME (replaces orange) ===== */
+          --led: #16a34a; /* emerald-600-ish */
+          --ring-inner: inset 0 0 6px 1px rgba(22,163,74,.35);
+          --ring-outer: 0 0 8px 2px rgba(22,163,74,.32);
+          --ring-inner-strong: inset 0 0 12px 2.5px rgba(22,163,74,.58);
+          --ring-outer-strong: 0 0 16px 5px rgba(22,163,74,.60), 0 0 32px 12px rgba(22,163,74,.24);
+
+          /* Base surfaces/text (fallbacks if app vars missing) */
           --vo-bg: rgba(255,255,255,0.06);
           --vo-stroke: rgba(255,255,255,0.14);
           --vo-soft: rgba(255,255,255,0.08);
-          --vo-text: var(--mw-text-light);
-          --vo-muted: var(--mw-muted);
+          --vo-text: var(--mw-text-light, #e5e7eb);
+          --vo-muted: var(--mw-muted, rgba(229,231,235,0.7));
           --vo-shadow: 0 22px 80px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,0.06);
-          --ring-inner: inset 0 0 14px rgba(255,122,26,.18), inset 0 0 3px rgba(255,122,26,.42);
-          --ring-outer: 0 0 14px rgba(255,122,26,.24), 0 0 40px rgba(255,122,26,.08);
         }
         .vo-root{
           min-height: calc(100dvh - 120px);
@@ -607,7 +612,17 @@ const UploadPage: React.FC = () => {
           border: 1px solid var(--vo-stroke);
           box-shadow: var(--vo-shadow);
           overflow: clip;
+          transition: box-shadow .18s ease;
         }
+        /* Card aura when any LED button is hovered */
+        .vo-window:has(.vo-cta:hover) {
+          box-shadow:
+            0 0 0 1px rgba(22,163,74,.35),
+            0 0 22px 8px rgba(22,163,74,.30),
+            0 0 50px 20px rgba(22,163,74,.18),
+            var(--vo-shadow);
+        }
+
         .vo-header{
           display:flex; align-items:center; justify-content:space-between;
           padding: 18px 22px;
@@ -627,7 +642,16 @@ const UploadPage: React.FC = () => {
           background: rgba(255,255,255,.04);
           border: 1px solid var(--vo-stroke);
           box-shadow: var(--vo-shadow);
+          transition: box-shadow .18s ease;
         }
+        .vo-pane:has(.vo-cta:hover){
+          box-shadow:
+            0 0 0 1px rgba(22,163,74,.35),
+            0 0 22px 8px rgba(22,163,74,.30),
+            0 0 50px 20px rgba(22,163,74,.18),
+            var(--vo-shadow);
+        }
+
         .vo-h3{ margin: 0 0 6px; font-weight: 800; letter-spacing:.2px; }
         .vo-muted{ color: var(--vo-muted); }
 
@@ -643,9 +667,9 @@ const UploadPage: React.FC = () => {
           padding: 18px; margin: 10px 0 14px; transition: all .18s ease;
         }
         .vo-drop.is-drag{
-          border-color: rgba(255,122,26,.55);
+          border-color: rgba(22,163,74,.55);
           box-shadow: var(--ring-inner), var(--ring-outer);
-          background: rgba(255,122,26,.10);
+          background: rgba(22,163,74,.10);
         }
         .vo-drop-inner{ display:flex; gap:12px; align-items:center; justify-content:center; text-align:center; }
         .vo-drop-icon{ font-size: 28px; filter: drop-shadow(0 1px 6px rgba(0,0,0,.25)); }
@@ -661,7 +685,7 @@ const UploadPage: React.FC = () => {
         .vo-file-name{ font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .vo-file-size{ color:var(--vo-muted); font-size:12px; }
         .vo-progress{ grid-column:1/-1; height:8px; background:#2f2f2f; border-radius:999px; overflow:hidden; }
-        .vo-progress-bar{ height:100%; background: var(--vo-accent); box-shadow: var(--ring-outer); }
+        .vo-progress-bar{ height:100%; background: var(--led); box-shadow: var(--ring-outer); }
 
         .vo-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
         @media (max-width: 720px){ .vo-grid{ grid-template-columns: 1fr; } }
@@ -674,9 +698,9 @@ const UploadPage: React.FC = () => {
           transition: box-shadow .18s ease, border-color .18s ease, background .18s ease;
         }
         .vo-field input:focus, .vo-field textarea:focus, .vo-field select:focus{
-          border-color: rgba(255,122,26,.45);
+          border-color: rgba(22,163,74,.45);
           box-shadow: var(--ring-inner), var(--ring-outer);
-          background: rgba(255,122,26,.06);
+          background: rgba(22,163,74,.06);
         }
 
         .vo-check{ display:inline-flex; align-items:center; gap:10px; margin: 6px 0 12px; }
@@ -704,13 +728,13 @@ const UploadPage: React.FC = () => {
 
         .vo-x{
           position:absolute; top:8px; right:8px;
-          border:1px solid rgba(255,122,26,.45);
+          border:1px solid rgba(22,163,74,.45);
           background: rgba(0,0,0,.55);
           color:#fff; width:28px; height:28px; border-radius:999px;
           display:grid; place-items:center; font-weight:900;
           box-shadow: var(--ring-outer); cursor:pointer;
         }
-        .vo-x:hover{ background: rgba(255,122,26,.28); }
+        .vo-x:hover{ background: rgba(22,163,74,.22); }
 
         .vo-chip{
           border:1px solid var(--vo-stroke);
@@ -728,14 +752,16 @@ const UploadPage: React.FC = () => {
 
         .vo-actions{ margin-top:14px; display:flex; justify-content:flex-end; gap:12px; }
         .vo-actions.between{ justify-content:space-between; }
+
+        /* ===== LED BUTTON: transparent base; green ring; inner+outer glow; stronger on hover; text color unchanged ===== */
         .vo-cta{
-          border:1px solid rgba(255,122,26,.45);
-          background: rgba(255,122,26,.12);
+          border:1px solid var(--led);
+          background: transparent;
           color:#fff; font-weight:900; padding:12px 18px; border-radius:999px;
           box-shadow: var(--ring-inner), var(--ring-outer);
           transition: transform .08s ease, box-shadow .18s ease, background .18s ease;
         }
-        .vo-cta:hover{ transform: translateY(-1px); }
+        .vo-cta:hover{ transform: translateY(-1px); background: transparent; box-shadow: var(--ring-inner-strong), var(--ring-outer-strong); }
         .vo-cta:disabled{ opacity:.6; filter: grayscale(.2); cursor:not-allowed; }
 
         .vo-code{ opacity:.85; }

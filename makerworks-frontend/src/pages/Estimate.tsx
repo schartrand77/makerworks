@@ -1,315 +1,340 @@
-// src/pages/Estimate.tsx
-import { useEffect, useMemo, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+// src/pages/Upload.tsx — makerworks
+import { useEffect, useMemo, useRef, useState } from 'react'
 import PageLayout from '@/components/layout/PageLayout'
-import GlassCard from '@/components/ui/GlassCard'
 import PageHeader from '@/components/ui/PageHeader'
+import GlassCard from '@/components/ui/GlassCard'
 import ModelViewer from '@/components/ui/ModelViewer'
-import { Printer, X } from 'lucide-react'
-import { toast } from 'sonner'
-import { useEstimateStore } from '@/store/useEstimateStore'
 import axios from '@/api/client'
-import { getEstimate } from '@/api/estimate'
-import FilamentFanoutPicker from '@/components/ui/FilamentFanoutPicker'
-import getAbsoluteUrl from '@/lib/getAbsoluteUrl'
+import { toast } from 'sonner'
+import clsx from 'clsx'
+import { UploadCloud, X, FileUp } from 'lucide-react'
 
-interface EstimateResult {
-  estimated_time_minutes: number
-  estimated_cost_usd: number
+type LocalModel = {
+  name: string
+  description: string
+  file: File | null
+  objectUrl: string | null
 }
 
-interface Filament {
-  id: string
-  type: string
-  color: string
-  hex: string
-}
+const ACCEPT = [
+  '.stl', '.glb', '.gltf', '.obj', '.3mf'
+].join(',')
 
-// shape we expect from navigation state
-type FromModel = {
-  id?: string | null
-  name?: string | null
-  description?: string | null
-  src?: string | null           // stl/glb/3mf url
-  thumbnail_url?: string | null
-  glb_url?: string | null       // optional
-  stl_url?: string | null       // optional
-}
+export default function Upload() {
+  const [model, setModel] = useState<LocalModel>({
+    name: '',
+    description: '',
+    file: null,
+    objectUrl: null,
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-export default function Estimate() {
-  const location = useLocation()
-  const {
-    form,
-    setForm,
-    activeModel,
-    // optional in your store; we guard its usage
-    setActiveModel,
-    setEstimateResult,
-    estimateResult
-  } = useEstimateStore() as any
-
-  const [filaments, setFilaments] = useState<Filament[]>([])
-  const [loading, setLoading] = useState(false)
-  const [localModel, setLocalModel] = useState<Partial<FromModel> | null>(null)
-
-  // When navigated from "Get estimate", seed model for viewer
+  // Clean up object URL
   useEffect(() => {
-    const fm: FromModel | undefined = (location.state as any)?.fromModel
-    if (!fm) return
-
-    const normalized: FromModel = {
-      id: fm.id ?? null,
-      name: fm.name ?? null,
-      description: fm.description ?? null,
-      thumbnail_url: getAbsoluteUrl(fm.thumbnail_url || '') || fm.thumbnail_url || null,
-      glb_url: getAbsoluteUrl(fm.glb_url || '') || fm.glb_url || null,
-      stl_url: getAbsoluteUrl(fm.stl_url || '') || fm.stl_url || null,
-      src: getAbsoluteUrl(fm.src || '') || fm.src || null,
+    return () => {
+      if (model.objectUrl) URL.revokeObjectURL(model.objectUrl)
     }
-
-    // Prefer store if provided; otherwise hold locally
-    if (typeof setActiveModel === 'function') {
-      setActiveModel(normalized)
-    } else {
-      setLocalModel(normalized)
-    }
-    toast.success('✅ Model loaded into estimator')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state])
-
-  // Load filaments (choices for picker)
-  useEffect(() => {
-    const loadFilaments = async () => {
-      try {
-        const res = await axios.get('/filaments')
-        setFilaments(res.data)
-      } catch (err) {
-        console.error('[Estimate] Failed to load filaments', err)
-        toast.error('⚠️ Failed to load filaments')
-      }
-    }
-    loadFilaments()
   }, [])
 
-  // Recalculate when form changes
-  useEffect(() => {
-    if (!form || !form.filament_type || !form.colors?.length) {
-      if (typeof setEstimateResult === 'function') setEstimateResult(null)
+  const canSubmit = useMemo(() => {
+    return !!model.file && model.name.trim().length > 0
+  }, [model.file, model.name])
+
+  const pickFile = () => inputRef.current?.click()
+
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const f = files[0]
+    // rudimentary filter
+    const ok =
+      f.name.match(/\.(stl|glb|gltf|obj|3mf)$/i) ||
+      ['model/gltf-binary', 'model/gltf+json', 'application/sla', 'application/octet-stream'].includes(f.type)
+
+    if (!ok) {
+      toast.error('Unsupported file. Use .stl, .glb, .gltf, .obj, or .3mf')
       return
     }
 
-    const controller = new AbortController()
-    const run = async () => {
-      setLoading(true)
-      const payload = {
-        ...form,
-        // keep dimensions sane
-        x_mm: Math.max(50, Math.min(256, form.x_mm)),
-        y_mm: Math.max(50, Math.min(256, form.y_mm)),
-        z_mm: Math.max(50, Math.min(256, form.z_mm)),
-      }
-      try {
-        const data: EstimateResult = await getEstimate(payload)
-        if (typeof setEstimateResult === 'function') setEstimateResult(data)
-      } catch (err) {
-        console.error('[Estimate] Estimate API failed:', err)
-        toast.error('❌ Failed to calculate estimate')
-        if (typeof setEstimateResult === 'function') setEstimateResult(null)
-      } finally {
-        setLoading(false)
-      }
-    }
-    run()
+    // Revoke any previous URL
+    if (model.objectUrl) URL.revokeObjectURL(model.objectUrl)
+    const url = URL.createObjectURL(f)
 
-    return () => controller.abort()
-  }, [form, setEstimateResult])
-
-  // pick model data (store if available, else local)
-  const modelForViewer = useMemo(() => {
-    const m = (activeModel as FromModel) ?? localModel ?? {}
-    // prefer explicit glb_url if present; else src; fall back to stl_url
-    const src = m.glb_url || m.src || m.stl_url || null
-    const fallbackSrc = m.stl_url || null
-    return { m, src, fallbackSrc }
-  }, [activeModel, localModel])
-
-  // Clear model from store/local
-  const handleClearModel = () => {
-    try {
-      if (typeof setActiveModel === 'function') {
-        ;(setActiveModel as any)(null)
-      }
-    } catch {
-      // some stores might expect an empty object instead of null
-      try { (setActiveModel as any)({}) } catch {}
-    }
-    setLocalModel(null)
-    toast.success('🧹 Cleared selected model')
+    setModel(m => ({
+      ...m,
+      file: f,
+      objectUrl: url,
+      name: m.name || f.name.replace(/\.[^.]+$/, ''),
+    }))
   }
 
-  if (!form) {
-    return (
-      <PageLayout>
-        <PageHeader icon={<Printer className="w-8 h-8 text-zinc-400" />} title="Estimate Print Job" />
-        <GlassCard className="text-center py-12">
-          <p className="text-zinc-500 dark:text-zinc-300 text-sm">Loading estimate form…</p>
-        </GlassCard>
-      </PageLayout>
-    )
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOver(false)
+    handleFiles(e.dataTransfer.files)
+  }
+
+  const onBrowseChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFiles(e.target.files)
+    // reset so same file can be chosen twice
+    e.currentTarget.value = ''
+  }
+
+  const clearFile = () => {
+    if (model.objectUrl) URL.revokeObjectURL(model.objectUrl)
+    setModel(m => ({ ...m, file: null, objectUrl: null }))
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canSubmit || !model.file) return
+
+    try {
+      setSubmitting(true)
+      const fd = new FormData()
+      fd.append('file', model.file)
+      fd.append('name', model.name.trim())
+      fd.append('description', model.description.trim())
+
+      // Adjust endpoint to your backend if different:
+      const res = await axios.post('/models/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      toast.success('✅ Upload complete')
+      // you might want to navigate to /browse or /model/:id using res.data
+    } catch (err: any) {
+      console.error('[Upload] Failed', err)
+      toast.error('❌ Upload failed')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <PageLayout>
       <div className="space-y-6">
-        <PageHeader icon={<Printer className="w-8 h-8 text-zinc-400" />} title="Estimate Print Job" />
+        <PageHeader icon={<FileUp className="w-8 h-8 text-zinc-400" />} title="Upload Model" />
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <GlassCard className="p-4">
+        <form onSubmit={submit} className="grid lg:grid-cols-2 gap-6">
+          {/* LEFT: Dropzone + Viewer */}
+          <GlassCard
+            className={clsx(
+              'p-4 mw-led relative',
+              dragOver && 'ring-2 ring-emerald-400'
+            )}
+            onDragOver={(e: any) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+          >
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">Selected Model</h2>
-              {(modelForViewer.src || modelForViewer.m?.id) && (
+              <h2 className="text-lg font-semibold">Model File</h2>
+              {model.file && (
                 <button
                   type="button"
-                  onClick={handleClearModel}
-                  className="
-                    inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium
-                    backdrop-blur-xl bg-white/60 dark:bg-white/10
-                    border border-black/10 dark:border-white/15
-                    text-zinc-800 dark:text-zinc-100
-                    hover:bg-white/70 dark:hover:bg-white/15 transition
-                  "
-                  title="Clear selected model"
+                  onClick={clearFile}
+                  className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
+                  title="Remove file"
                 >
-                  <X className="w-3.5 h-3.5" />
-                  Clear
+                  <span className="inline-flex items-center gap-1.5">
+                    <X className="w-3.5 h-3.5" />
+                    Clear
+                  </span>
                 </button>
               )}
             </div>
 
-            {modelForViewer.src ? (
-              <div className="relative w-full">
-                <ModelViewer
-                  src={modelForViewer.src || undefined}
-                  fallbackSrc={modelForViewer.fallbackSrc || undefined}
-                  color="#9a9a9a"
-                  fitMargin={1.6}
-                  // Match ModelPage sizing so it feels consistent
-                  className="h-[36vh] sm:h-[42vh] lg:h-[46vh] rounded-2xl"
-                />
-                {/* tiny hint, same language as ModelPage */}
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] sm:text-xs select-none text-zinc-700 dark:text-zinc-300">
-                  <span className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15">
-                    <strong className="font-medium">Left-drag</strong>
-                    <span className="opacity-70"> · rotate</span>
-                  </span>
-                  <span className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15">
-                    <strong className="font-medium">Right-drag</strong>
-                    <span className="opacity-70"> · pan</span>
-                  </span>
-                  <span className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15">
-                    <strong className="font-medium">Scroll</strong>
-                    <span className="opacity-70"> · zoom</span>
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="text-sm text-zinc-500">No model selected.</div>
-            )}
-
-            {modelForViewer.m?.name && (
-              <div className="mt-3">
-                <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                  {modelForViewer.m.name}
-                </div>
-                {modelForViewer.m.description && (
-                  <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                    {modelForViewer.m.description}
+            {/* Drop area */}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={pickFile}
+              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && pickFile()}
+              className={clsx(
+                'rounded-xl border border-dashed',
+                'border-zinc-300/70 dark:border-zinc-600/70',
+                'bg-white/50 dark:bg-white/10 backdrop-blur',
+                'p-4 grid place-items-center text-center cursor-pointer select-none'
+              )}
+            >
+              {!model.file ? (
+                <div className="flex flex-col items-center gap-2 py-8">
+                  <UploadCloud className="w-8 h-8 opacity-70" />
+                  <div className="text-sm text-zinc-700 dark:text-zinc-300">
+                    Drag & drop a 3D file here, or <span className="underline">browse</span>
                   </div>
-                )}
+                  <div className="text-xs text-zinc-500">Accepted: {ACCEPT.replace(/,/g, ', ')}</div>
+                </div>
+              ) : (
+                <div className="w-full">
+                  {/* Viewer frame matches Browse/Cart: rounded, subtle ring, overflow-hidden */}
+                  <div className="aspect-[16/9] rounded-xl bg-white/50 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10 mb-3 grid place-items-center overflow-hidden">
+                    <ModelViewer
+                      src={model.objectUrl || undefined}
+                      color="#9a9a9a"
+                      fitMargin={1.6}
+                      className="w-full h-full rounded-xl"
+                    />
+                  </div>
+                  <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate">
+                    {model.file.name} • {(model.file.size / (1024 * 1024)).toFixed(2)} MB
+                  </div>
+                </div>
+              )}
+              <input
+                ref={inputRef}
+                type="file"
+                accept={ACCEPT}
+                className="hidden"
+                onChange={onBrowseChange}
+              />
+            </div>
+
+            {/* Viewer controls hint */}
+            {model.file && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] sm:text-xs select-none text-zinc-700 dark:text-zinc-300">
+                <span className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15">
+                  <strong className="font-medium">Left-drag</strong>
+                  <span className="opacity-70"> · rotate</span>
+                </span>
+                <span className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15">
+                  <strong className="font-medium">Right-drag</strong>
+                  <span className="opacity-70"> · pan</span>
+                </span>
+                <span className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15">
+                  <strong className="font-medium">Scroll</strong>
+                  <span className="opacity-70"> · zoom</span>
+                </span>
               </div>
             )}
           </GlassCard>
 
-          <GlassCard className="p-4">
-            <h2 className="text-lg font-semibold mb-2">Print Configuration</h2>
+          {/* RIGHT: Metadata + Submit */}
+          <GlassCard className="p-4 mw-led">
+            <h2 className="text-lg font-semibold mb-3">Details</h2>
+
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  Dimensions (mm) <span className="text-xs">(50–256)</span>
+                <label htmlFor="name" className="block text-sm font-medium mb-1">
+                  Name
                 </label>
-                <div className="flex gap-2">
-                  {(['x_mm', 'y_mm', 'z_mm'] as const).map((dim) => (
-                    <input
-                      key={dim}
-                      id={dim}
-                      type="number"
-                      min={50}
-                      max={256}
-                      required
-                      value={form[dim] ?? ''}
-                      onChange={(e) => setForm({ [dim]: +e.target.value })}
-                      placeholder={dim.toUpperCase()}
-                      className="w-full rounded-md border p-2 dark:bg-zinc-800 bg-white/80 text-center text-zinc-800 dark:text-zinc-100"
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <FilamentFanoutPicker filaments={filaments} />
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Custom Text</label>
                 <input
+                  id="name"
                   type="text"
-                  value={form.custom_text ?? ''}
-                  onChange={(e) => setForm({ custom_text: e.target.value })}
-                  className="w-full rounded-md border p-2 dark:bg-zinc-800 bg-white/80 text-zinc-800 dark:text-zinc-100"
+                  value={model.name}
+                  onChange={(e) => setModel(m => ({ ...m, name: e.target.value }))}
+                  placeholder="e.g., Benchy v2"
+                  className="w-full rounded-full border p-2 px-4 dark:bg-zinc-800 bg-white/80 text-zinc-800 dark:text-zinc-100"
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Print Profile</label>
-                <select
-                  value={form.print_profile ?? 'standard'}
-                  onChange={(e) => setForm({ print_profile: e.target.value })}
-                  className="w-full rounded-md border p-2 dark:bg-zinc-800 bg-white/80 text-zinc-800 dark:text-zinc-100"
-                >
-                  <option value="standard">Standard</option>
-                  <option value="quality">Quality</option>
-                  <option value="elite">Elite</option>
-                </select>
+                <label htmlFor="desc" className="block text-sm font-medium mb-1">
+                  Description <span className="text-xs text-zinc-500">(optional)</span>
+                </label>
+                <textarea
+                  id="desc"
+                  value={model.description}
+                  onChange={(e) => setModel(m => ({ ...m, description: e.target.value }))}
+                  rows={4}
+                  placeholder="What is this model?"
+                  className="w-full rounded-2xl border p-3 dark:bg-zinc-800 bg-white/80 text-zinc-800 dark:text-zinc-100"
+                />
               </div>
+
+              <div className="pt-2 flex flex-wrap gap-3">
+                <button
+                  type="submit"
+                  disabled={!canSubmit || submitting}
+                  className="mw-enter mw-enter--slim rounded-full font-medium text-gray-800 dark:text-gray-200 disabled:opacity-60"
+                >
+                  {submitting ? 'Uploading…' : 'Upload'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearFile()
+                    setModel({ name: '', description: '', file: null, objectUrl: null })
+                  }}
+                  className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
+                >
+                  Reset
+                </button>
+              </div>
+
+              {!canSubmit && (
+                <p className="text-xs text-zinc-500">Pick a file and give it a name to upload.</p>
+              )}
             </div>
           </GlassCard>
-        </div>
-
-        <GlassCard className="mt-6 text-center p-4">
-          <h2 className="text-lg font-semibold mb-2">Live Estimate</h2>
-
-          {loading && (
-            <div className="text-brand-orange animate-pulse py-2">🔄 Calculating…</div>
-          )}
-
-          {!loading && estimateResult && (
-            <div className="flex flex-col sm:flex-row justify-center gap-6 text-base text-zinc-800 dark:text-zinc-200 mt-2">
-              <div className="bg-white/20 dark:bg-zinc-700/30 p-4 rounded-lg shadow backdrop-blur">
-                <strong>Estimated Time</strong>
-                <div>{Math.round(estimateResult.estimated_time_minutes)} minutes</div>
-              </div>
-              <div className="bg-white/20 dark:bg-zinc-700/30 p-4 rounded-lg shadow backdrop-blur">
-                <strong>Estimated Cost</strong>
-                <div>${estimateResult.estimated_cost_usd.toFixed(2)}</div>
-              </div>
-            </div>
-          )}
-
-          {!loading && !estimateResult && (
-            <div className="text-sm text-zinc-500 mt-2">
-              Select filament & at least one color to calculate.
-            </div>
-          )}
-        </GlassCard>
+        </form>
       </div>
+
+      {/* Keep our house style: amber/grey card shell; green LED buttons; card halos on hover */}
+      <style>{`
+        /* --- LED green token --- */
+        .mw-enter { --mw-ring: #16a34a; } /* Tailwind green-600 */
+
+        /* --- Slim, modern pill sizing --- */
+        .mw-enter--slim {
+          padding: 0.56rem 1.95rem !important;
+          font-size: 0.95rem !important;
+          line-height: 1.2 !important;
+          letter-spacing: 0.01em;
+        }
+
+        /* --- Base LED ring look (transparent base; inner+outer glow) --- */
+        .mw-enter {
+          background: transparent !important;            /* never solid */
+          border: 1px solid var(--mw-ring) !important;
+          box-shadow:
+            inset 0 0 8px 1.5px rgba(22,163,74,0.36),
+            0 0 10px 2.5px rgba(22,163,74,0.34);
+          transition: box-shadow .18s ease, transform .12s ease, border-color .18s ease;
+        }
+
+        /* Hover: stronger glow only (no bg fill; NO text-color change) */
+        .mw-enter:hover {
+          background: transparent !important;
+          transform: translateY(-0.5px);
+          box-shadow:
+            inset 0 0 12px 2.5px rgba(22,163,74,0.58),
+            0 0 16px 5px rgba(22,163,74,0.60),
+            0 0 32px 12px rgba(22,163,74,0.24);
+        }
+
+        .mw-enter:focus-visible {
+          outline: none !important;
+          box-shadow:
+            inset 0 0 13px 2.5px rgba(22,163,74,0.58),
+            0 0 0 2px rgba(255,255,255,0.6),
+            0 0 0 4px var(--mw-ring),
+            0 0 20px 5px rgba(22,163,74,0.48);
+        }
+
+        /* Card halo goes green when any .mw-enter inside is hovered */
+        .mw-led { transition: box-shadow .18s ease, border-color .18s ease; }
+        .mw-led:has(.mw-enter:hover){
+          border-color: rgba(22,163,74,0.55) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.14),
+            0 0 12px rgba(22,163,74,0.12),
+            0 0 24px rgba(22,163,74,0.10);
+        }
+        .dark .mw-led:has(.mw-enter:hover){
+          border-color: rgba(22,163,74,0.70) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.22),
+            0 0 24px rgba(22,163,74,0.24),
+            0 0 60px rgba(22,163,74,0.22);
+        }
+      `}</style>
     </PageLayout>
   )
 }

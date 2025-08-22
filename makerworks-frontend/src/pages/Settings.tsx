@@ -1,4 +1,4 @@
-// src/pages/Settings.tsx
+// src/pages/Settings.tsx — makerworks
 import { useEffect, useMemo, useState } from 'react';
 import AvatarSection from '@/components/settings/AvatarSection';
 import ProfileSection from '@/components/settings/ProfileSection';
@@ -45,21 +45,22 @@ export default function Settings() {
 
   return (
     <div className="relative mx-auto flex min-h-[60vh] items-start justify-center p-6">
-      {/* subtle rings */}
+      {/* subtle accent rings */}
       <div className="pointer-events-none absolute inset-0 -z-10">
         <Halo className="absolute -top-24 -right-20 h-48 w-48" strength="md" />
         <Halo className="absolute -bottom-24 -left-24 h-48 w-48" strength="sm" />
       </div>
 
-      {/* single compact card */}
+      {/* unified grey-glass card shell */}
       <div
-        className="
-          relative w-full max-w-md overflow-hidden rounded-[22px]
-          bg-white/65 dark:bg-[var(--mw-navy)]/55 backdrop-blur-2xl
-          shadow-[0_10px_40px_-10px_rgba(0,0,0,0.35)]
-          ring-1 ring-white/25 dark:ring-white/10
-          border border-white/25 dark:border-white/10
-        "
+        className={[
+          'relative w-full max-w-md overflow-hidden rounded-2xl mw-led',
+          'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
+          'border border-amber-300/45 ring-1 ring-amber-300/40',
+          'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+          'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
+          'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
+        ].join(' ')}
       >
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/45 via-transparent to-white/10 dark:from-white/10 dark:to-transparent" />
 
@@ -99,10 +100,11 @@ export default function Settings() {
 
         <Divider />
 
-        {/* body: just Profile details; avatar editor moved to header modal */}
+        {/* body */}
         <div className="relative z-10 space-y-6 p-5 pt-4">
           <Section title="Profile">
-            <div className="rounded-2xl border border-white/20 bg-white/40 p-4 backdrop-blur-xl dark:border-white/10 dark:bg-white/5 ring-1 ring-orange-500/10">
+            {/* ⬇️ make the inner Profile block a halo-able card and scope Save button styling */}
+            <div className="mw-profile-scope mw-led rounded-2xl border border-amber-300/35 bg-white/40 p-4 backdrop-blur-xl dark:border-amber-300/20 dark:bg-white/5 ring-1 ring-amber-300/30">
               <ProfileSection />
             </div>
           </Section>
@@ -122,13 +124,14 @@ export default function Settings() {
           onClick={() => setShowAvatarEditor(false)}
         >
           <div
-          className="relative w-full max-w-sm overflow-hidden rounded-2xl bg-white/90 p-4 shadow-2xl ring-1 ring-white/40 backdrop-blur-2xl dark:bg-[var(--mw-navy)]/70 dark:ring-white/10"
+            className="relative w-full max-w-sm overflow-hidden rounded-2xl bg-white/90 p-4 shadow-2xl ring-1 ring-white/40 backdrop-blur-2xl dark:bg-[var(--mw-navy)]/70 dark:ring-white/10"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="absolute right-2 top-2">
+              {/* ✅ green LED button (glows on hover; card halo is scoped to the modal) */}
               <button
                 onClick={() => setShowAvatarEditor(false)}
-                className="rounded-full bg-white/80 px-2 py-1 text-xs font-semibold text-gray-700 ring-1 ring-gray-300 hover:bg-white dark:bg-white/10 dark:text-gray-200 dark:ring-white/20"
+                className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
               >
                 Close
               </button>
@@ -137,6 +140,110 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {/* local LED styles */}
+      <style>{`
+        .mw-led { transition: box-shadow .18s ease, border-color .18s ease; }
+        .mw-led:has(.mw-enter:hover){
+          border-color: rgba(22,163,74,0.55) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.14),
+            0 0 12px rgba(22,163,74,0.12),
+            0 0 24px rgba(22,163,74,0.10);
+        }
+        .dark .mw-led:has(.mw-enter:hover){
+          border-color: rgba(22,163,74,0.70) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.22),
+            0 0 24px rgba(22,163,74,0.24),
+            0 0 60px rgba(22,163,74,0.22);
+        }
+
+        /* Green button token + sizing (shared) */
+        .mw-enter {
+          --mw-ring:#16a34a;
+          background:transparent!important;
+          border:1px solid var(--mw-ring)!important;
+          box-shadow:
+            inset 0 0 8px 1.5px rgba(22,163,74,.36),
+            0 0 10px 2.5px rgba(22,163,74,.34);
+          transition: box-shadow .18s ease, transform .12s ease, border-color .18s ease;
+          padding: .56rem 1.2rem;
+        }
+        .mw-btn-sm { padding:.38rem .9rem; font-size:.9rem; }
+        .mw-enter:hover{
+          transform: translateY(-.5px);
+          box-shadow:
+            inset 0 0 12px 2.5px rgba(22,163,74,.58),
+            0 0 16px 5px rgba(22,163,74,.60),
+            0 0 32px 12px rgba(22,163,74,.24);
+        }
+        .mw-enter:focus-visible{
+          outline:none!important;
+          box-shadow:
+            inset 0 0 13px 2.5px rgba(22,163,74,.58),
+            0 0 0 2px rgba(255,255,255,.6),
+            0 0 0 4px var(--mw-ring),
+            0 0 20px 5px rgba(22,163,74,.48);
+        }
+
+        /* ——— Save Profile button + card glow, without touching ProfileSection ———
+           We assume ProfileSection uses a <button type="submit"> or a .save-profile-btn.
+           We style both. */
+        .mw-profile-scope button[type="submit"],
+        .mw-profile-scope .save-profile-btn{
+          background: transparent !important;
+          border: 1px solid #16a34a !important;
+          border-radius: 9999px; /* rounded-full */
+          padding: .38rem .9rem;
+          font-size: .9rem;
+          font-weight: 500;
+          color: inherit;
+          box-shadow:
+            inset 0 0 8px 1.5px rgba(22,163,74,.36),
+            0 0 10px 2.5px rgba(22,163,74,.34);
+          transition: box-shadow .18s ease, transform .12s ease, border-color .18s ease;
+        }
+        .mw-profile-scope button[type="submit"]:hover,
+        .mw-profile-scope .save-profile-btn:hover{
+          transform: translateY(-.5px);
+          box-shadow:
+            inset 0 0 12px 2.5px rgba(22,163,74,.58),
+            0 0 16px 5px rgba(22,163,74,.60),
+            0 0 32px 12px rgba(22,163,74,.24);
+        }
+        .mw-profile-scope button[type="submit"]:focus-visible,
+        .mw-profile-scope .save-profile-btn:focus-visible{
+          outline:none !important;
+          box-shadow:
+            inset 0 0 13px 2.5px rgba(22,163,74,.58),
+            0 0 0 2px rgba(255,255,255,.6),
+            0 0 0 4px #16a34a,
+            0 0 20px 5px rgba(22,163,74,.48);
+        }
+
+        /* Green under-glow on the Profile card when hovering Save */
+        .mw-profile-scope:has(button[type="submit"]:hover),
+        .mw-profile-scope:has(.save-profile-btn:hover){
+          border-color: rgba(22,163,74,0.55) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.14),
+            0 0 12px rgba(22,163,74,0.12),
+            0 0 24px rgba(22,163,74,0.10);
+        }
+        .dark .mw-profile-scope:has(button[type="submit"]:hover),
+        .dark .mw-profile-scope:has(.save-profile-btn:hover){
+          border-color: rgba(22,163,74,0.70) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.22),
+            0 0 24px rgba(22,163,74,0.24),
+            0 0 60px rgba(22,163,74,0.22);
+        }
+      `}</style>
     </div>
   );
 }
@@ -254,7 +361,7 @@ function DangerDelete({ userId }: { userId?: string }) {
   }
 
   return (
-    <div className="flex items-center justify-between rounded-2xl border border-red-300/40 bg-red-50/70 p-4 backdrop-blur-xl dark:border-red-400/30 dark:bg-red-400/10">
+    <div className="mw-danger-scope relative overflow-visible flex items-center justify-between rounded-2xl border border-red-300/40 bg-white/50 p-4 backdrop-blur-xl dark:border-red-400/30 dark:bg-white/5">
       <div>
         <p className="text-sm font-semibold text-red-900/90 dark:text-red-200">Delete account</p>
         <p className="text-xs text-red-900/70 dark:text-red-300/80">
@@ -265,7 +372,7 @@ function DangerDelete({ userId }: { userId?: string }) {
         {!confirming ? (
           <button
             onClick={() => setConfirming(true)}
-            className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-red-700 ring-1 ring-red-300/60 hover:bg-white dark:bg-white/10 dark:text-red-300 dark:ring-red-400/60"
+            className="mw-danger mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
           >
             Delete…
           </button>
@@ -273,12 +380,60 @@ function DangerDelete({ userId }: { userId?: string }) {
           <button
             onClick={nuke}
             disabled={busy}
-            className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-red-700/40 hover:bg-red-700 disabled:opacity-60"
+            className="mw-danger mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200 disabled:opacity-60"
           >
             {busy ? 'Deleting…' : 'Confirm delete'}
           </button>
         )}
       </div>
+
+      {/* Scoped red ring/glow + red halo on hover (same as Sign out) */}
+      <style>{`
+        .mw-danger-scope .mw-danger{
+          border: 1px solid rgba(239,68,68,0.70);
+          box-shadow: none; /* no glow at rest */
+          transition: box-shadow .18s ease, transform .12s ease, border-color .18s ease;
+        }
+        .mw-danger-scope .mw-danger:hover{
+          transform: translateY(-0.5px);
+          border-color: rgba(239,68,68,0.90);
+          box-shadow:
+            inset 0 0 12px 3px rgba(239,68,68,0.70),
+            0 0 18px 8px rgba(239,68,68,0.70),
+            0 0 44px 18px rgba(239,68,68,0.28);
+        }
+        .mw-danger-scope .mw-danger:focus-visible{
+          outline: none;
+          box-shadow:
+            0 0 0 2px rgba(239,68,68,0.45),
+            inset 0 0 0 1px rgba(239,68,68,0.55);
+        }
+
+        /* red under-glow on the danger card while hovering the red button */
+        .mw-danger-scope:has(.mw-danger:hover){
+          border-color: rgba(239,68,68,0.65) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+        }
+        .mw-danger-scope:has(.mw-danger:hover)::before{
+          content: "";
+          position: absolute;
+          inset: 0;
+          border-radius: 16px;
+          pointer-events: none;
+          box-shadow:
+            0 0 0 1px rgba(239,68,68,0.26),
+            0 2px 20px rgba(239,68,68,0.22),
+            0 8px 42px rgba(239,68,68,0.20),
+            0 12px 68px rgba(239,68,68,0.16);
+        }
+        .dark .mw-danger-scope:has(.mw-danger:hover)::before{
+          box-shadow:
+            0 0 0 1px rgba(239,68,68,0.34),
+            0 0 24px rgba(239,68,68,0.28),
+            0 0 56px rgba(239,68,68,0.24),
+            0 0 96px rgba(239,68,68,0.18);
+        }
+      `}</style>
     </div>
   );
 }

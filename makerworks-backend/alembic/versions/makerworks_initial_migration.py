@@ -1,4 +1,5 @@
-"""initial_clean_squash (BASE SCHEMA)
+# alembic/versions/makerworks_initial_migration.py
+"""makerworks_initial_migration (BASE SCHEMA)
 
 This is a full base migration that creates the current schema from scratch:
 - All core tables (users, model_uploads, model_metadata, favorites, estimates, estimate_settings,
@@ -177,16 +178,19 @@ def upgrade() -> None:
         "filaments",
         sa.Column("id", UUID, primary_key=True, nullable=False),
 
-        # Canonical (required by API)
-        sa.Column("name", sa.String(length=128), nullable=False),
-        sa.Column("category", sa.String(length=64), nullable=False),
-        sa.Column("color_hex", sa.String(length=16), nullable=False),
-        sa.Column("price_per_kg", sa.Float(), nullable=False),
+        # Canonical (now tolerant/nullable so UI partials don't 500)
+        sa.Column("name", sa.String(length=128), nullable=True),
+        sa.Column("category", sa.String(length=64), nullable=True),
+        sa.Column("color_hex", sa.String(length=16), nullable=True),
+        sa.Column("price_per_kg", sa.Float(), nullable=True),
 
         # Legacy (kept for compatibility; nullable so new API writes succeed)
         sa.Column("material", sa.String(), nullable=True),
         sa.Column("type", sa.String(), nullable=True),          # legacy alias of category
         sa.Column("color_name", sa.String(), nullable=True),    # legacy alias of color/name
+        # Extra legacy helpers to accept older payloads directly
+        sa.Column("hex", sa.String(length=16), nullable=True),
+        sa.Column("color", sa.String(length=64), nullable=True),
 
         sa.Column("attributes", sa.Text(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
@@ -203,7 +207,7 @@ def upgrade() -> None:
         unique=False,
         schema="public",
     )
-    # Canonical uniqueness
+    # Canonical uniqueness (allows NULLs; only active when all three present)
     op.create_unique_constraint(
         "uq_public_filaments_name_category_colorhex",
         "filaments",

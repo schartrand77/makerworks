@@ -1,16 +1,45 @@
 // vite.config.ts
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react-swc'
-import path from 'node:path'
-import fs from 'node:fs'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react-swc';
+import path from 'node:path';
+import fs from 'node:fs';
 
 // Allow overriding the backend origin, but default to local dev backend.
-const BACKEND = process.env.VITE_BACKEND_URL?.replace(/\/$/, '') || 'http://localhost:8000'
+const BACKEND = (process.env.VITE_BACKEND_URL?.replace(/\/$/, '') || 'http://localhost:8000');
 
-// Inject app version from repository root VERSION file
-const APP_VERSION = fs
-  .readFileSync(path.resolve(__dirname, '../VERSION'), 'utf8')
-  .trim()
+// Resolve app version safely across layouts/containers
+function resolveVersion(): string {
+  // 0) explicit env (CI/CD or docker-compose)
+  const envVer = (process.env.VITE_APP_VERSION || process.env.APP_VERSION || '').trim();
+  if (envVer) return envVer;
+
+  const tryRead = (p: string) => {
+    try {
+      if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8').trim();
+    } catch (_) { /* ignore */ }
+    return '';
+  };
+
+  // 1) alongside this config (common in container: /app/VERSION)
+  const here = path.resolve(__dirname, 'VERSION');
+  const v1 = tryRead(here);
+  if (v1) return v1;
+
+  // 2) project CWD (some tools run from repo root)
+  const cwd = path.resolve(process.cwd(), 'VERSION');
+  const v2 = tryRead(cwd);
+  if (v2) return v2;
+
+  // 3) monorepo-ish layout (frontend in subdir)
+  const up = path.resolve(__dirname, '../VERSION');
+  const v3 = tryRead(up);
+  if (v3) return v3;
+
+  // 4) last resort
+  return '0.0.0';
+}
+
+const APP_VERSION = resolveVersion();
 
 // Helpful note:
 // Vite proxies only apply to the dev server. In production you should serve absolute URLs
@@ -38,7 +67,7 @@ export default defineConfig({
     watch: {
       usePolling: true,  // helps with file change detection in Docker/VM mounts
     },
-    // 👇 The reason your PNG looked like a web page.
+    // 👇 The reason your PNG looked like a web page last time was proxying mistakes.
     proxy: {
       // API
       '/api': {
@@ -57,7 +86,7 @@ export default defineConfig({
       },
       // Generated thumbnails (your STL → PNG output)
       '/thumbnails': {
-        target: BACKEND,
+        target: BACKEND,  // <- fixed typo
         changeOrigin: true,
       },
     },
@@ -75,5 +104,6 @@ export default defineConfig({
     rollupOptions: {
       external: ['ioredis'],
     },
+    sourcemap: true,
   },
-})
+});

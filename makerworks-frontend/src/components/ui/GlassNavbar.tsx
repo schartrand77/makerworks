@@ -97,6 +97,7 @@ const GlassNavbar = () => {
     return () => clearInterval(interval)
   }, [])
 
+  /** Routes — fixed; NO admin tab, no admin awareness */
   const navRoutes = useMemo(
     () => [
       { path: '/dashboard', label: 'Dashboard' },
@@ -130,45 +131,14 @@ const GlassNavbar = () => {
   // ✅ Return based on hideNav AFTER all hooks are declared
   if (hideNav) return null
 
-  /**
-   * Shared pill classes — glass base + thin inner orange halo (before)
-   * AND a matching soft outer halo (after). Hover/focus fade them in.
-   */
-  const pillBase =
-    // layout + glass base
-    'relative overflow-visible inline-flex h-9 items-center justify-center rounded-full px-3 text-sm ' +
-    'backdrop-blur-xl bg-white/60 dark:bg-white/10 ' +
-    // subtle baseline border + ring + top highlight
-    'border border-white/30 dark:border-white/15 ring-1 ring-black/5 dark:ring-white/15 ' +
-    'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] ' +
-    // text & base hover
-    'text-zinc-900 dark:text-zinc-100 transition hover:bg-white/65 dark:hover:bg-white/15 ' +
-    // warm the border slightly on hover
-    'hover:border-amber-300/40 ' +
-    // INNER halo (before): thin, soft, stays off the label
-    'before:content-[""] before:absolute before:inset-[1px] before:rounded-[999px] before:pointer-events-none ' +
-    'before:opacity-0 hover:before:opacity-100 focus-visible:before:opacity-100 before:transition-opacity ' +
-    'before:shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_10px_rgba(251,146,60,0.12)] ' +
-    // OUTER halo (after): soft orange aura around the pill, balanced with inner
-    'after:content-[""] after:absolute after:inset-0 after:rounded-[999px] after:pointer-events-none ' +
-    'after:opacity-0 hover:after:opacity-100 focus-visible:after:opacity-100 after:transition-opacity ' +
-    'after:shadow-[0_0_0_1px_rgba(251,146,60,0.16),0_0_10px_rgba(251,146,60,0.14),0_0_18px_rgba(251,146,60,0.10)] ' +
-    // a11y: keep focus ring internal to the pill glows
-    'focus-visible:outline-none focus-visible:ring-0'
-
-  /**
-   * Active tab gets the same glow TURNED UP and ALWAYS ON.
-   * We bump ring/border a touch, force before/after visible, and slightly increase glow strength.
-   */
-  const pillActive =
-    'ring-2 ring-amber-400/55 border-amber-300/60 ' +
-    'before:opacity-100 after:opacity-100 ' +
-    'before:shadow-[inset_0_0_8px_rgba(251,146,60,0.26),inset_0_0_16px_rgba(251,146,60,0.16)] ' +
-    'after:shadow-[0_0_0_1px_rgba(251,146,60,0.22),0_0_14px_rgba(251,146,60,0.18),0_0_26px_rgba(251,146,60,0.14)]'
+  /** Green-LED button base for navbar items (matches system .mw-enter) */
+  const ledBtnBase =
+    'mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200 inline-flex'
 
   return (
     <nav
       className={`
+        mw-nav
         fixed ${isStandalone ? 'bottom-4' : 'top-4'} left-1/2 -translate-x-1/2
         flex justify-between items-center gap-6
         px-6 py-2 rounded-full
@@ -189,12 +159,11 @@ const GlassNavbar = () => {
 
         {navRoutes.map((item) => {
           const isActive = path === item.path
-          const classes = [pillBase, isActive ? pillActive : ''].join(' ')
           return (
             <Link
               key={item.path}
               to={item.path}
-              className={classes}
+              className={ledBtnBase}
               aria-current={isActive ? 'page' : undefined}
             >
               {item.label}
@@ -207,11 +176,25 @@ const GlassNavbar = () => {
         {isAuthenticated ? (
           <UserDropdown user={resolvedUser} />
         ) : (
-          <Link to="/auth/signin" className={pillBase}>
+          <Link to="/auth/signin" className={ledBtnBase}>
             Sign In
           </Link>
         )}
       </div>
+
+      {/* Navbar-local intensifier for the active tab (keeps green LED, just turns it up) */}
+      <style>{`
+        .mw-nav .mw-enter[aria-current="page"]{
+          border-color: #16a34a !important; /* reinforce the ring */
+          box-shadow:
+            inset 0 0 12px 2.5px rgba(22,163,74,0.60),
+            0 0 18px 6px rgba(22,163,74,0.65),
+            0 0 36px 14px rgba(22,163,74,0.28);
+        }
+        .mw-nav .mw-enter[aria-current="page"]:hover{
+          transform: none; /* keep it steady when active */
+        }
+      `}</style>
     </nav>
   )
 }

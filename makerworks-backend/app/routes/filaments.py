@@ -2,21 +2,20 @@
 from __future__ import annotations
 
 from typing import Optional, List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, update, delete, func, insert
+from sqlalchemy import select, update, delete, func, insert, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_user, admin_required
+# use the async session dependency directly
+from app.db.database import get_async_db as get_db
+from app.dependencies import optional_user, admin_required
 from app.schemas.filaments import FilamentCreate, FilamentUpdate, FilamentOut
+from app.models.models import Filament  # adjust if your model lives elsewhere
 
-# Adjust import path if your model lives elsewhere
-from app.models.models import Filament
-
-router = APIRouter()
-
+router = APIRouter(prefix="/api/v1/filaments", tags=["Filaments"])
 
 # ──────────────────────────────────────────────────────────────────────────────
 # helpers
@@ -55,7 +54,7 @@ def _col_required(model, *candidates):
         )
     return col
 
-# Resolve columns once (cheap attributes)
+# Resolve columns once (tolerant to legacy aliases)
 TYPE_COL = _col_required(Filament, "category", "type", "material_type")
 NAME_COL = _col_or_none(Filament, "name")
 OPTIONAL_TYPE_COL = _col_or_none(Filament, "type") if TYPE_COL.key != "type" else None
@@ -64,29 +63,29 @@ HEX_COL = _col_or_none(Filament, "hex", "color_hex", "hex_color")
 PRICE_COL = _col_or_none(Filament, "price_per_kg", "price")
 IS_ACTIVE_COL = _col_or_none(Filament, "is_active", "active")
 CREATED_AT_COL = _col_or_none(Filament, "created_at", "createdAt", "created")
-UPDATED_AT_COL = _col_or_none(Filament, "updated_at", "updatedAt", "updated")
 
 def _unique_select(type_: str, color: Optional[str], hex_: Optional[str]):
-    """
-    Build a SELECT that mirrors your uniqueness semantics with whatever columns exist.
-    Typical: (type, color, hex) or (type, hex) or (type, color).
-    """
     stmt = select(Filament).where(func.lower(TYPE_COL) == func.lower(type_))
-
     if COLOR_COL is not None:
         if color is not None:
             stmt = stmt.where(func.lower(COLOR_COL) == func.lower(color))
         else:
             stmt = stmt.where(COLOR_COL.is_(None))
-
     if HEX_COL is not None:
         if hex_ is not None:
             stmt = stmt.where(func.upper(HEX_COL) == func.upper(hex_))
         else:
             stmt = stmt.where(HEX_COL.is_(None))
-
     return stmt
 
+# Pydantic v1/v2 friendly conversion
+def _to_out(obj: Filament) -> FilamentOut:
+    try:
+        # v2
+        return FilamentOut.model_validate(obj)  # type: ignore[attr-defined]
+    except Exception:
+        # v1
+        return FilamentOut.from_orm(obj)  # type: ignore[attr-defined]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # routes
@@ -95,8 +94,8 @@ def _unique_select(type_: str, color: Optional[str], hex_: Optional[str]):
 @router.get("", response_model=List[FilamentOut])
 async def list_filaments(
     db: AsyncSession = Depends(get_db),
-    _user=Depends(get_current_user),  # make public by switching to optional_user
-    search: Optional[str] = Query(None, description="Filter by type/color/hex (case-insensitive)"),
+    _user=Depends(optional_user),  # public-friendly
+    search: Optional[str] = Query(None, description="Filter by type/name/color/hex (case-insensitive)"),
     include_inactive: bool = Query(False, alias="include_inactive"),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
@@ -109,42 +108,39 @@ async def list_filaments(
     if search:
         term = f"%{search.strip().lower()}%"
         pieces = [func.lower(TYPE_COL).like(term)]
+        if NAME_COL is not None:
+            pieces.append(func.lower(NAME_COL).like(term))
         if COLOR_COL is not None:
             pieces.append(func.lower(COLOR_COL).like(term))
         if HEX_COL is not None:
             pieces.append(func.upper(HEX_COL).like(term.upper()))
-        # OR across whatever exists
         cond = pieces[0]
         for p in pieces[1:]:
             cond = cond | p
         q = q.where(cond)
 
-    # Order by type, then color if present, then created desc if present
     order_by = [func.lower(TYPE_COL)]
+    if NAME_COL is not None:
+        order_by.append(func.lower(NAME_COL))
     if COLOR_COL is not None:
-        try:
-            order_by.append(COLOR_COL.asc().nulls_last())
-        except Exception:
-            order_by.append(func.lower(COLOR_COL))
+        order_by.append(func.lower(COLOR_COL))
     if CREATED_AT_COL is not None:
         order_by.append(CREATED_AT_COL.desc())
 
     q = q.order_by(*order_by).offset((page - 1) * page_size).limit(page_size)
     rows = (await db.execute(q)).scalars().all()
-    return rows
-
+    return [_to_out(r) for r in rows]
 
 @router.get("/{filament_id}", response_model=FilamentOut)
 async def get_filament(
     filament_id: UUID,
     db: AsyncSession = Depends(get_db),
-    _user=Depends(get_current_user),
+    _user=Depends(optional_user),
 ):
     row = await db.get(Filament, filament_id)
     if not row:
         raise HTTPException(status_code=404, detail="Filament not found")
-    return row
-
+    return _to_out(row)
 
 @router.post(
     "",
@@ -161,18 +157,16 @@ async def create_filament(
     category_norm = _norm_str(getattr(body, "category", None)) or type_norm
     name_norm = _norm_str(getattr(body, "name", None)) or f"{category_norm} {_norm_str(getattr(body, 'color_name', None)) or ''}".strip()
 
-    # accept both color and color_name from body
     color_in = getattr(body, "color_name", None)
     if color_in is None:
         color_in = getattr(body, "color", None)
     color_norm = _norm_str(color_in)
-    # accept both color_hex and hex
+
     hex_in = getattr(body, "color_hex", None)
     if hex_in is None:
         hex_in = getattr(body, "hex", None)
     hex_norm = _norm_hex(hex_in)
 
-    # Build value dict with actual column keys that exist
     values = {TYPE_COL.key: category_norm}
     if OPTIONAL_TYPE_COL is not None:
         values[OPTIONAL_TYPE_COL.key] = type_norm
@@ -192,34 +186,57 @@ async def create_filament(
         is_active_in = getattr(body, "is_active", None)
         values[IS_ACTIVE_COL.key] = True if is_active_in is None else bool(is_active_in)
 
-    # Try simple INSERT first; on unique violation, fallback to select existing
     try:
         stmt = insert(Filament).values(**values).returning(Filament)
         created = (await db.execute(stmt)).scalar_one()
         await db.commit()
-        return created
+        created_out = _to_out(created)
     except IntegrityError:
         await db.rollback()
+        existing = (await db.execute(_unique_select(category_norm or type_norm, color_norm, hex_norm))).scalar_one_or_none()
+        if not existing:
+            raise HTTPException(status_code=409, detail="filament_exists")
+        if IS_ACTIVE_COL is not None and getattr(existing, IS_ACTIVE_COL.key, True) is False:
+            upd = (
+                update(Filament)
+                .where(Filament.id == existing.id)
+                .values({IS_ACTIVE_COL.key: True})
+                .returning(Filament)
+            )
+            existing = (await db.execute(upd)).scalar_one()
+            await db.commit()
+        created_out = _to_out(existing)
 
-    # Duplicate: fetch existing
-    existing = (await db.execute(_unique_select(type_norm, color_norm, hex_norm))).scalar_one_or_none()
-    if not existing:
-        # if uniqueness doesn't match exactly, at least tell the truth
-        raise HTTPException(status_code=409, detail="filament_exists")
+    # Optional: attach a barcode if caller provided any barcode-ish fields.
+    code = _norm_str(getattr(body, "barcode", None)) or _norm_str(getattr(body, "code", None))
+    if code:
+        symb = _norm_str(getattr(body, "symbology", None))
+        is_primary = getattr(body, "is_primary_barcode", True)
+        try:
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.barcodes (id, code, symbology, type, is_primary, filament_id, created_at)
+                    VALUES (:id, :code, :symbology, :type, :is_primary, :fid, now())
+                    ON CONFLICT (code) DO UPDATE
+                      SET filament_id = EXCLUDED.filament_id
+                      WHERE public.barcodes.filament_id IS NULL
+                    """
+                ),
+                {
+                    "id": str(uuid4()),
+                    "code": code,
+                    "symbology": symb or None,
+                    "type": "consumer",
+                    "is_primary": bool(is_primary),
+                    "fid": str(getattr(created_out, "id")),
+                },
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
 
-    # If duplicate exists but is inactive, reactivate it
-    if IS_ACTIVE_COL is not None and getattr(existing, IS_ACTIVE_COL.key, True) is False:
-        upd = (
-            update(Filament)
-            .where(Filament.id == existing.id)
-            .values({IS_ACTIVE_COL.key: True})
-            .returning(Filament)
-        )
-        existing = (await db.execute(upd)).scalar_one()
-
-    await db.commit()
-    return existing
-
+    return created_out
 
 @router.patch("/{filament_id}", response_model=FilamentOut)
 async def update_filament(
@@ -234,10 +251,13 @@ async def update_filament(
         values[TYPE_COL.key] = _norm_str(body.category)
     elif getattr(body, "type", None) is not None:
         values[TYPE_COL.key] = _norm_str(body.type)
+
     if OPTIONAL_TYPE_COL is not None and getattr(body, "type", None) is not None:
         values[OPTIONAL_TYPE_COL.key] = _norm_str(body.type)
+
     if NAME_COL is not None and getattr(body, "name", None) is not None:
         values[NAME_COL.key] = _norm_str(body.name)
+
     if PRICE_COL is not None:
         price_val = getattr(body, "price_per_kg", None)
         if price_val is None:
@@ -245,14 +265,12 @@ async def update_filament(
         if price_val is not None:
             values[PRICE_COL.key] = price_val
 
-    # color from color_name or color
     color_val = getattr(body, "color_name", None)
     if color_val is None:
         color_val = getattr(body, "color", None)
     if color_val is not None and COLOR_COL is not None:
         values[COLOR_COL.key] = _norm_str(color_val)
 
-    # hex from color_hex or hex
     hex_val = getattr(body, "color_hex", None)
     if hex_val is None:
         hex_val = getattr(body, "hex", None)
@@ -263,11 +281,10 @@ async def update_filament(
         values[IS_ACTIVE_COL.key] = bool(body.is_active)
 
     if not values:
-        # Nothing to update
         row = await db.get(Filament, filament_id)
         if not row:
             raise HTTPException(status_code=404, detail="Filament not found")
-        return row
+        return _to_out(row)
 
     stmt = (
         update(Filament)
@@ -276,13 +293,45 @@ async def update_filament(
         .returning(Filament)
     )
 
-    res = await db.execute(stmt)
-    row = res.scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Filament not found")
-    await db.commit()
-    return row
+    try:
+        res = await db.execute(stmt)
+        row = res.scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=404, detail="Filament not found")
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="filament_exists")
 
+    code = _norm_str(getattr(body, "barcode", None)) or _norm_str(getattr(body, "code", None))
+    if code:
+        symb = _norm_str(getattr(body, "symbology", None))
+        is_primary = getattr(body, "is_primary_barcode", True)
+        try:
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO public.barcodes (id, code, symbology, type, is_primary, filament_id, created_at)
+                    VALUES (:id, :code, :symbology, :type, :is_primary, :fid, now())
+                    ON CONFLICT (code) DO UPDATE
+                      SET filament_id = EXCLUDED.filament_id
+                      WHERE public.barcodes.filament_id IS NULL
+                    """
+                ),
+                {
+                    "id": str(uuid4()),
+                    "code": code,
+                    "symbology": symb or None,
+                    "type": "consumer",
+                    "is_primary": bool(is_primary),
+                    "fid": str(filament_id),
+                },
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
+    return _to_out(row)
 
 @router.delete("/{filament_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_filament(

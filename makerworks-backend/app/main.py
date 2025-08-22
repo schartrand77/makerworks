@@ -9,7 +9,7 @@ import sys
 import traceback
 import inspect
 import time
-import re  # ← added for duplicate error parsing
+import re  # ← for duplicate error parsing
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Sequence
@@ -51,17 +51,14 @@ def _load_env_file(path: str) -> int:
                 if line.startswith("export "):
                     line = line[len("export "):].strip()
                 if "=" not in line:
-                    # tolerate junk; don't crash
                     continue
                 key, val = line.split("=", 1)
                 key = key.strip()
                 val = val.strip()
                 if not key:
                     continue
-                # Strip matching quotes only (do NOT split on ':', allow URLs)
                 if (len(val) >= 2) and ((val[0] == val[-1]) and val[0] in ("'", '"')):
                     val = val[1:-1]
-                # Don't overwrite already-present env vars (e.g., docker-compose)
                 if key not in os.environ:
                     os.environ[key] = val
                     count += 1
@@ -72,7 +69,6 @@ def _load_env_file(path: str) -> int:
         safe_stderr("📦 Env load error:\n" + "".join(traceback.format_exc()))
     return count
 
-# Pick env file: ENV_FILE if set, else .env.dev, else .env
 ENV_FILE = os.getenv("ENV_FILE") or ".env.dev"
 if Path(ENV_FILE).exists():
     _load_env_file(ENV_FILE)
@@ -107,7 +103,7 @@ try:
     from app.routes import (
         admin, auth, avatar, cart, checkout, filaments, models,
         metrics, system, upload, users,
-        inventory_levels, inventory_moves, user_inventory,  # ← new inventory routes
+        inventory_levels, inventory_moves, user_inventory,
     )
 
     try:
@@ -132,13 +128,12 @@ try:
         def startup_banner() -> None:
             logging.getLogger("uvicorn").info("🚀 Backend startup (fallback banner)")
 
-    # Celery hooks (optional: worker may not be installed in dev)
+    # Celery hooks (optional)
     try:
         from app.worker.tasks import generate_model_previews  # Celery task
     except Exception:
         generate_model_previews = None  # type: ignore
     try:
-        # Prefer a shared Celery() instance if you expose it
         from app.worker import celery_app as celery_app_instance  # type: ignore
     except Exception:
         celery_app_instance = None  # type: ignore
@@ -154,13 +149,14 @@ logger = logging.getLogger("uvicorn")
 # Small helper: call a fn whether it's sync or async
 # ──────────────────────────────────────────────────────────────────────────────
 async def _run_maybe_async(fn, *args, **kwargs):
+    if fn is None:
+        return None
     try:
         res = fn(*args, **kwargs)
         if inspect.isawaitable(res):
             return await res
         return res
     except TypeError:
-        # fn might already be a coroutine function
         if inspect.iscoroutinefunction(fn):
             return await fn(*args, **kwargs)  # type: ignore
         raise
@@ -169,13 +165,11 @@ async def _run_maybe_async(fn, *args, **kwargs):
 # CORS helpers (robust parsing, credential-safe)
 # ──────────────────────────────────────────────────────────────────────────────
 def _clean_origin_token(token: str | None) -> Optional[str]:
-    """Normalize a single origin token to 'scheme://host[:port]' or None."""
     if token is None:
         return None
     t = str(token).strip()
     if not t:
         return None
-    # tolerate stray brackets/quotes/commas from bad env formatting
     t = t.strip(", ").strip().strip("[]").strip().strip("'").strip('"')
     if not t:
         return None
@@ -187,8 +181,6 @@ def _clean_origin_token(token: str | None) -> Optional[str]:
     return f"{u.scheme}://{u.netloc}"
 
 def _parse_cors_env(raw: str) -> list[str]:
-    """Parse CORS_ORIGINS from JSON list, single string, or CSV with weird quotes."""
-    # 1) strict JSON
     try:
         parsed = _json.loads(raw)
         if isinstance(parsed, list):
@@ -199,7 +191,6 @@ def _parse_cors_env(raw: str) -> list[str]:
             return [c] if c else []
     except Exception:
         pass
-    # 2) single-quoted JSON list -> swap quotes and retry
     try:
         s = raw.strip()
         if s.startswith("[") and "'" in s and '"' not in s:
@@ -209,19 +200,15 @@ def _parse_cors_env(raw: str) -> list[str]:
                 return [c for c in cleaned if c]
     except Exception:
         pass
-    # 3) CSV (with or without brackets)
     parts = [p for p in raw.split(",")]
     cleaned = [_clean_origin_token(p) for p in parts]
     return [c for c in cleaned if c]
 
 def _normalize_origin(o: str | None) -> Optional[str]:
-    """Normalize an Origin header value so it can be compared to allowlist."""
     return _clean_origin_token(o)
 
 def resolve_allowed_origins() -> list[str]:
     origins: list[str] = []
-
-    # 1) settings.cors_origins when present
     try:
         from_settings = getattr(settings, "cors_origins", None)
         if isinstance(from_settings, (list, tuple)):
@@ -231,12 +218,10 @@ def resolve_allowed_origins() -> list[str]:
     except Exception:
         pass
 
-    # 2) env CORS_ORIGINS (robust parsing)
     env_raw = os.getenv("CORS_ORIGINS", "")
     if env_raw:
         parsed = _parse_cors_env(env_raw)
         origins.extend(parsed)
-        # warn if env looked malformed but we recovered
         try:
             _json.loads(env_raw)
             parsed_ok = True
@@ -245,7 +230,6 @@ def resolve_allowed_origins() -> list[str]:
         if not parsed_ok and any(ch in env_raw for ch in "[]'"):
             logger.warning("⚠️ CORS_ORIGINS looked malformed; parsed defensively: %r -> %s", env_raw, parsed)
 
-    # 3) common localhost devs
     origins.extend([
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -254,14 +238,12 @@ def resolve_allowed_origins() -> list[str]:
         "http://localhost:8000",
     ])
 
-    # 4) FRONTEND_ORIGIN override (single value)
     fe = os.getenv("FRONTEND_ORIGIN", "").strip()
     if fe:
         c = _clean_origin_token(fe)
         if c:
             origins.append(c)
 
-    # normalize + dedupe while preserving order
     seen: set[str] = set()
     norm: list[str] = []
     for o in origins:
@@ -278,7 +260,6 @@ def _redact_dsn(dsn: Optional[str]) -> str:
     if not dsn:
         return "(unset)"
     try:
-        # e.g. postgresql+asyncpg://user:pass@host:5432/db
         before_at, after_at = dsn.split("@", 1)
         proto, user_and_pass = before_at.split("://", 1)
         user = user_and_pass.split(":", 1)[0]
@@ -287,7 +268,6 @@ def _redact_dsn(dsn: Optional[str]) -> str:
         return "(redacted)"
 
 def _active_db_dsn() -> Optional[str]:
-    # Prefer settings if present, else env fallbacks
     for key in ("database_url", "ASYNCPG_URL", "DATABASE_URL"):
         try:
             val = getattr(settings, key) if hasattr(settings, key) else os.getenv(key)
@@ -313,7 +293,6 @@ ALLOWED_HEADERS: Sequence[str] = ["*"]
 EXPOSED_HEADERS: Sequence[str] = ["set-cookie", "content-type"]
 CORS_MAX_AGE = 86400  # 24h
 
-# IMPORTANT: do NOT use allow_origin_regex when credentials=True
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -353,20 +332,17 @@ async def http_exc_handler(request: Request, exc: StarletteHTTPException):
     headers = _cors_headers_for_request(request)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
 
-# Detailed dev errors + generic prod fallback
 @app.exception_handler(Exception)
 async def unhandled_exc_handler(request: Request, exc: Exception):
     headers = _cors_headers_for_request(request)
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
 
-    # Force verbosity for common auth/signup endpoints (wildcards)
     p = request.url.path
     force_verbose = (
         p.startswith(("/api/v1/auth", "/api/v1/users"))
         or p.endswith(("/signup", "/register", "/login"))
     )
 
-    # In dev or when EXPOSE_ERRORS=1, return detail + stack to frontend
     env_name = os.getenv("ENV") or getattr(settings, "env", "development")
     dev_mode = (env_name.lower() != "production") or os.getenv("EXPOSE_ERRORS", "0") == "1"
 
@@ -385,18 +361,13 @@ async def unhandled_exc_handler(request: Request, exc: Exception):
         )
     return JSONResponse({"detail": "Internal server error"}, status_code=500, headers=headers)
 
-# ── smarter duplicate payloads (so frontend gets the right hint) ──────────────
+# ── smarter duplicate payloads ────────────────────────────────────────────────
 _DUP_RE = re.compile(r"Key \((?P<cols>.+?)\)=\((?P<vals>.+?)\) already exists")
 
 def _dup_payload_from_exc(exc: IntegrityError) -> dict:
-    """
-    Parse Postgres unique violation into a stable JSON payload the UI can act on.
-    Keeps the old auth hints for users; adds specific hints for filaments/SKU/etc.
-    """
     payload: dict = {"detail": "duplicate", "hint": "duplicate"}
     orig = getattr(exc, "orig", None)
 
-    # psycopg diag (when available)
     diag = getattr(orig, "diag", None)
     constraint = getattr(diag, "constraint_name", None)
     table = getattr(diag, "table_name", None)
@@ -406,7 +377,6 @@ def _dup_payload_from_exc(exc: IntegrityError) -> dict:
     if table:      payload["table"] = str(table)
     if schema:     payload["schema"] = str(schema)
 
-    # Parse textual message
     msg = str(orig or exc)
     m = _DUP_RE.search(msg)
     if m:
@@ -419,36 +389,26 @@ def _dup_payload_from_exc(exc: IntegrityError) -> dict:
     low_t = (table or "").lower() if table else ""
     fields = [f.lower() for f in payload.get("fields", [])]
 
-    # users.*
     if "user" in low_t:
         if "email" in low_c or "email" in fields:
-            payload["hint"] = "email_taken"
-            return payload
+            payload["hint"] = "email_taken"; return payload
         if "username" in low_c or "username" in fields:
-            payload["hint"] = "username_taken"
-            return payload
-        payload["hint"] = "user_duplicate"
-        return payload
+            payload["hint"] = "username_taken"; return payload
+        payload["hint"] = "user_duplicate"; return payload
 
-    # filaments.*
     if "filament" in low_t or "uq_filament" in low_c or "filaments" in low_t:
-        payload["hint"] = "filament_exists"
-        return payload
+        payload["hint"] = "filament_exists"; return payload
 
-    # product/catalog-ish
     if any(k in low_t for k in ("product", "variant", "sku")) or "sku" in fields:
-        payload["hint"] = "sku_taken"
-        return payload
+        payload["hint"] = "sku_taken"; return payload
 
     return payload
 
-# Map DB unique violations to 409 Conflict (e.g., email/username taken, filament exists)
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError):
     headers = _cors_headers_for_request(request)
     return JSONResponse(_dup_payload_from_exc(exc), status_code=409, headers=headers)
 
-# Bubble pydantic validation as 422 with field errors
 @app.exception_handler(ValidationError)
 async def validation_error_handler(request: Request, exc: ValidationError):
     headers = _cors_headers_for_request(request)
@@ -485,9 +445,6 @@ async def any_options(full_path: str, request: Request) -> Response:
 # Alembic + bootstrap helpers
 # ──────────────────────────────────────────────────────────────────────────────
 async def wait_for_db(timeout_sec: int = 45) -> bool:
-    """
-    Poll the DB until it's reachable or timeout. Returns True if reachable.
-    """
     if not async_engine:
         logger.warning("⚠️ Async engine not available; skipping DB wait.")
         return False
@@ -505,15 +462,29 @@ async def wait_for_db(timeout_sec: int = 45) -> bool:
     logger.warning("[bootstrap] DB not reachable after %ss: %s", timeout_sec, last_err)
     return False
 
+def _find_alembic_ini() -> Path:
+    candidates = [
+        Path(os.getenv("ALEMBIC_INI", "")),
+        Path("alembic.ini"),
+        Path("/app/alembic.ini"),
+    ]
+    for c in candidates:
+        if c and str(c) and c.exists():
+            return c
+    return Path("alembic.ini")  # harmless default; alembic will complain if missing
+
+def _detect_script_location() -> str:
+    for cand in ("alembic", "app/migrations", "migrations"):
+        if Path(cand).exists():
+            return cand
+    return "alembic"
+
 def run_alembic_upgrade() -> bool:
-    """
-    Try to apply Alembic migrations. Returns True on success.
-    """
     try:
-        cfg_path = Path(os.getenv("ALEMBIC_INI", "/app/alembic.ini"))
+        cfg_path = _find_alembic_ini()
         alembic_cfg = AlembicConfig(str(cfg_path))
         if not alembic_cfg.get_main_option("script_location"):
-            alembic_cfg.set_main_option("script_location", "app/migrations")
+            alembic_cfg.set_main_option("script_location", _detect_script_location())
         alembic_command.upgrade(alembic_cfg, "head")
         return True
     except Exception as e:
@@ -521,10 +492,6 @@ def run_alembic_upgrade() -> bool:
         return False
 
 async def create_all_fallback() -> None:
-    """
-    Fallback: create tables directly from ORM metadata.
-    This keeps first-time installers unblocked if Alembic isn't configured.
-    """
     try:
         try:
             from app.db.base import Base  # newer layout
@@ -574,7 +541,6 @@ async def verify_celery_workers() -> None:
     if isinstance(res, Exception):
         logger.warning(f"⚠️ Celery ping failed: {res}")
     else:
-        # res is a list of {hostname: "pong"} dicts; empty if no workers
         if res:
             logger.info(f"✅ Celery workers responding: {res}")
         else:
@@ -598,12 +564,10 @@ async def lifespan(_: _FastAPI):
         logger.info(f"✅ CORS (list): {ALLOWED_ORIGINS}")
         logger.info(f"🎬 Boot Message: {random_boot_message()}")
 
-        # Quick sanity logs for auth config (no secrets)
         logger.info(f"🔐 JWT_SECRET present: {bool(os.getenv('JWT_SECRET'))}")
         logger.info(f"🔐 SESSION_SECRET present: {bool(os.getenv('SESSION_SECRET'))}")
         logger.info(f"🔐 SECRET_KEY present: {bool(os.getenv('SECRET_KEY'))}")
 
-        # Admin seed visibility (no secrets)
         try:
             admin_email = os.getenv("ADMIN_EMAIL") or getattr(settings, "admin_email", None) or "(unset)"
             force_update_raw = os.getenv("ADMIN_FORCE_UPDATE") or getattr(settings, "admin_force_update", "")
@@ -613,10 +577,10 @@ async def lifespan(_: _FastAPI):
         except Exception as _e:
             logger.warning(f"⚠️ Admin config log failed: {_e}")
 
-        # 1) Ensure DB reachable (handles container startup races)
+        # 1) Ensure DB reachable
         await wait_for_db()
 
-        # 2) Apply migrations; if that fails, fallback to create_all
+        # 2) Apply migrations; fallback to create_all if needed
         upgraded = run_alembic_upgrade()
         if upgraded:
             logger.info("✅ Alembic migrations applied at startup")
@@ -624,7 +588,7 @@ async def lifespan(_: _FastAPI):
             logger.warning("⚠️ Alembic failed — falling back to ORM create_all()")
             await create_all_fallback()
 
-        # 3) Log current revision (best-effort)
+        # 3) Log current revision
         await verify_alembic_revision()
 
         # 4) Redis startup tasks (non-fatal)
@@ -634,20 +598,19 @@ async def lifespan(_: _FastAPI):
         except Exception as e:
             logger.error(f"❌ Redis startup tasks failed: {e}")
 
-        # 5) Run any app-specific DB initialization
+        # 5) App-specific DB initialization
         try:
-            # works whether init_db is sync or async
             await _run_maybe_async(init_db)
         except Exception as e:
             logger.warning(f"⚠️ init_db failed/skipped: {e}")
 
-        # 6) Ensure admin user exists (or rotate if forced) — ALWAYS call directly here.
+        # 6) Ensure admin user exists (handles sync/async)
         try:
             if ensure_admin_user is None:
                 logger.warning("⚠️ ensure_admin_user not available; skipping admin seed.")
             else:
                 logger.info("[admin_seed] ensure_admin_user() starting…")
-                await ensure_admin_user()
+                await _run_maybe_async(ensure_admin_user)
                 logger.info("[admin_seed] ensure_admin_user() finished.")
         except Exception as e:
             logger.exception("[admin_seed] ensure_admin_user crashed: %s", e)
@@ -721,7 +684,6 @@ async def celery_health():
 async def legacy_avatar_redirect():
     return RedirectResponse(url="/api/v1/avatar", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
-# default avatar helper (redirect to static file)
 @app.get("/api/v1/avatar/default", include_in_schema=False)
 async def default_avatar_default():
     return RedirectResponse(url="/static/default-avatar.png", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
@@ -735,7 +697,6 @@ def _resolve_path(*candidates: Optional[str], default: str) -> Path:
             return Path(c).resolve()
     return Path(default).resolve()
 
-# Prefer settings.* when present; fall back to env; then hard defaults.
 uploads_path = _resolve_path(
     getattr(settings, "UPLOAD_DIR", None),
     getattr(settings, "upload_dir_raw", None),
@@ -757,25 +718,20 @@ models_path = _resolve_path(
     getattr(settings, "models_path", None),
     default="/models",
 )
-
-# static assets path (serves default-avatar.png)
 static_path = _resolve_path(
     os.getenv("STATIC_DIR"),
     getattr(settings, "STATIC_DIR", None),
-    "app/static",      # preferred inside backend
-    "./static",        # if you dropped it here
+    "app/static",
+    "./static",
     default="app/static",
 )
 
-# Backfill env so subprocesses / libraries see the same values
 os.environ.setdefault("UPLOAD_DIR", str(uploads_path))
 os.environ.setdefault("THUMBNAILS_DIR", str(thumbnails_path))
 os.environ.setdefault("MODELS_DIR", str(models_path))
 os.environ.setdefault("STATIC_DIR", str(static_path))
-# Make Celery task's default THUMBNAIL_ROOT follow our thumbnails mount
 os.environ.setdefault("THUMBNAIL_ROOT", str(thumbnails_path))
 
-# Ensure dirs exist & are writable; log mount status
 for label, path in (
     ("Uploads", uploads_path),
     ("Thumbnails", thumbnails_path),
@@ -795,13 +751,11 @@ logger.info(f"📂 Using thumbnails path: {thumbnails_path}")
 logger.info(f"📂 Using models path: {models_path}")
 logger.info(f"📂 Using static path: {static_path}")
 
-# Expose canonical roots to routes
 app.state.uploads_root = uploads_path
 app.state.thumbnails_root = thumbnails_path
 app.state.models_root = models_path
 app.state.static_root = static_path
 
-# Mount static directories
 app.mount("/uploads", StaticFiles(directory=str(uploads_path), html=False, check_dir=True), name="uploads")
 app.mount("/thumbnails", StaticFiles(directory=str(thumbnails_path), html=False, check_dir=True), name="thumbnails")
 app.mount("/models", StaticFiles(directory=str(models_path), html=False, check_dir=True), name="models")
@@ -828,12 +782,11 @@ async def enqueue_thumbnail(job: ThumbnailJob):
 async def thumbnail_status(task_id: str):
     if celery_app_instance is None:
         raise HTTPException(status_code=503, detail="Celery worker not available.")
-    # Avoid importing AsyncResult directly; use app instance for consistency
     result = celery_app_instance.AsyncResult(task_id)  # type: ignore[attr-defined]
     payload = {"task_id": task_id, "status": result.status}
     if result.ready():
         try:
-            payload["result"] = result.result  # may be dict from the task
+            payload["result"] = result.result
         except Exception:
             payload["result"] = None
     return payload
@@ -841,21 +794,35 @@ async def thumbnail_status(task_id: str):
 # ──────────────────────────────────────────────────────────────────────────────
 # Mount helper + API routers
 # ──────────────────────────────────────────────────────────────────────────────
-def mount(router_module, prefix: str, tags: list[str]) -> None:
+def mount(router_module, prefix: str | None, tags: list[str] | None = None) -> None:
+    """
+    Include a router without accidentally double-prefixing.
+    If the router already has a prefix (e.g., '/api/v1/filaments') and you
+    also pass a prefix that overlaps, we drop the extra prefix.
+    """
     router = getattr(router_module, "router", None)
     if router is None:
         logger.warning(f"⚠️ Router missing on module {router_module!r} ({prefix}); skipping mount.")
         return
-    app.include_router(router, prefix=prefix, tags=tags)
-    logger.info(f"🔌 Mounted: {prefix or '/'} — Tags: {', '.join(tags)}")
+
+    effective_prefix = prefix or ""
+    try:
+        existing = getattr(router, "prefix", "") or ""
+        if existing and effective_prefix:
+            # same, or overlapping? don't stack.
+            if effective_prefix == existing or existing.startswith(effective_prefix) or effective_prefix.startswith(existing):
+                effective_prefix = ""
+    except Exception:
+        pass
+
+    app.include_router(router, prefix=effective_prefix, tags=tags)
+    shown = existing if effective_prefix == "" else (effective_prefix or existing or "/")
+    logger.info(f"🔌 Mounted: {shown} — Tags: {', '.join(tags or getattr(router, 'tags', []) or [])}")
 
 if health_router:
     app.include_router(health_router)
 
-# ⚠️ IMPORTANT: Mount specific prefixes BEFORE any broad “/api/v1” catch-all to avoid shadowing.
-# The upload router was previously mounted at "/api/v1" which could capture "/api/v1/filaments".
-# Reorder so specific routes win, then mount upload LAST (and isolate it under /api/v1/upload).
-
+# Specific first; broad later; upload LAST.
 mount(auth,      "/api/v1/auth",      ["auth"])
 mount(users,     "/api/v1/users",     ["users"])
 mount(avatar,    "/api/v1/avatar",    ["avatar"])
@@ -864,7 +831,8 @@ mount(filaments, "/api/v1/filaments", ["filaments"])
 mount(admin,     "/api/v1/admin",     ["admin"])
 mount(cart,      "/api/v1/cart",      ["cart"])
 
-# New inventory routes (mounted under /api/v1 to honor internal prefixes)
+# Inventory routes (these modules commonly define sub-prefixes themselves;
+# the mount() helper will de-dupe if so)
 mount(inventory_levels, "/api/v1", ["inventory"])
 mount(inventory_moves,  "/api/v1", ["inventory"])
 mount(user_inventory,   "/api/v1", ["user-inventory"])
@@ -877,7 +845,6 @@ else:
 mount(models,    "/api/v1/models",    ["models"])
 mount(metrics,   "/metrics",          ["metrics"])
 
-# ⬇️ Mount upload LAST and isolate it so it can't shadow other /api/v1/* routes.
 UPLOAD_PREFIX = os.getenv("UPLOAD_API_PREFIX") or "/api/v1/upload"
 if UPLOAD_PREFIX.rstrip("/") == "/api/v1":
     logger.warning("⚠️ UPLOAD_API_PREFIX is '/api/v1' which can shadow other routes; switching to '/api/v1/upload'.")
@@ -910,13 +877,19 @@ def _dump_routes_inventory() -> None:
     else:
         logger.info("✅ No duplicate method/path combos detected.")
 
-# Log inventory at startup (non-fatal)
 try:
     _dump_routes_inventory()
 except Exception as e:
     logger.debug("route inventory failed: %s", e)
 
-# Optional endpoint to view routes in dev
+# quick dev helper to confirm filaments is mounted
+@app.get("/api/v1/_has_filaments", include_in_schema=False)
+async def has_filaments():
+    return {
+        "count": sum(1 for r in app.routes if getattr(r, "path", "").startswith("/api/v1/filaments")),
+        "paths": [getattr(r, "path", "") for r in app.routes if "filament" in getattr(r, "path", "")],
+    }
+
 @app.get("/api/v1/_routes", include_in_schema=False)
 async def routes_debug():
     items = []

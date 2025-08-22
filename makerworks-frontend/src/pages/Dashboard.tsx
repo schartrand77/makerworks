@@ -1,7 +1,7 @@
 // src/pages/Dashboard.tsx
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import PageLayout from '@/components/layout/PageLayout';
-import DashboardCard from '@/components/ui/DashboardCard';
 import UserDashboardCard from '@/components/ui/UserDashboardCard';
 import PageHeader from '@/components/ui/PageHeader';
 import { useUser } from '@/hooks/useUser';
@@ -23,13 +23,11 @@ function firstTruthy<T = any>(obj: Record<string, any>, keys: string[]): T | nul
 
 function normalizeDate(input: unknown): string | null {
   if (input == null) return null;
-  // numeric epoch (ms or s)
   if (typeof input === 'number') {
     const ms = input > 1e12 ? input : input * 1000;
     const d = new Date(ms);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
-  // ISO-ish string
   if (typeof input === 'string') {
     const d = new Date(input);
     return isNaN(d.getTime()) ? null : d.toISOString();
@@ -38,18 +36,9 @@ function normalizeDate(input: unknown): string | null {
 }
 
 function extractUploadedAt(model: any): string | null {
-  // try common server keys (snake & camel), then fall back to updated*
   const raw =
-    firstTruthy(model, [
-      'created_at',
-      'createdAt',
-      'uploaded_at',
-      'uploadedAt',
-      'created',
-      'timestamp',
-    ]) ??
+    firstTruthy(model, ['created_at', 'createdAt', 'uploaded_at', 'uploadedAt', 'created', 'timestamp']) ??
     firstTruthy(model, ['updated_at', 'updatedAt']);
-
   return normalizeDate(raw);
 }
 
@@ -62,6 +51,19 @@ function formatUploadedDate(dateStr?: string | null) {
     day: 'numeric',
     year: 'numeric',
   });
+}
+
+/** Match the Cart/Browse card shell (grey glass, amber/red-orange ring, glossy top). */
+function cardClasses(extra = '') {
+  return [
+    'relative overflow-visible rounded-2xl mw-led',
+    'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
+    'border border-amber-300/45 ring-1 ring-amber-300/40 hover:ring-amber-400/55',
+    'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+    'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none before:opacity-0 hover:before:opacity-100 before:transition-opacity',
+    'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
+    extra,
+  ].join(' ');
 }
 
 const Dashboard: React.FC = () => {
@@ -100,7 +102,6 @@ const Dashboard: React.FC = () => {
               created_at,
             };
           })
-          // newest first (client-side safety)
           .sort((a, b) => {
             const ta = a.created_at ? Date.parse(a.created_at) : 0;
             const tb = b.created_at ? Date.parse(b.created_at) : 0;
@@ -125,9 +126,7 @@ const Dashboard: React.FC = () => {
   if (loading || !resolved) {
     return (
       <PageLayout>
-        <div className="text-center text-zinc-500 dark:text-zinc-400 py-8">
-          Loading your dashboard…
-        </div>
+        <div className="text-center text-zinc-500 dark:text-zinc-400 py-8">Loading your dashboard…</div>
       </PageLayout>
     );
   }
@@ -135,9 +134,7 @@ const Dashboard: React.FC = () => {
   if (!user) {
     return (
       <PageLayout>
-        <div className="text-center text-red-600 dark:text-red-400 py-8">
-          🚫 Please sign in to access your dashboard.
-        </div>
+        <div className="text-center text-red-600 dark:text-red-400 py-8">🚫 Please sign in to access your dashboard.</div>
       </PageLayout>
     );
   }
@@ -148,15 +145,16 @@ const Dashboard: React.FC = () => {
         <PageHeader icon={<LayoutDashboard className="w-8 h-8 text-zinc-400" />} title="Dashboard" />
 
         <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+          {/* User profile card already matches the look */}
           <UserDashboardCard />
 
-          <div className="p-4 rounded-xl glass-card shadow backdrop-blur">
+          {/* Your Recent Uploads — apply amber/red-orange ring shell */}
+          <div className={cardClasses('p-4')}>
             <div className="flex items-center gap-2 mb-2">
-              <Upload />
-              <h2 className="text-lg font-semibold">Your Recent Uploads</h2>
+              <Upload className="w-5 h-5 text-amber-500/80" />
+              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Your Recent Uploads</h2>
             </div>
 
-            {/* Text-only list of recent models + uploaded date (not a table) */}
             {modelsLoading ? (
               <div className="text-sm text-zinc-500">Loading…</div>
             ) : modelsError ? (
@@ -167,13 +165,13 @@ const Dashboard: React.FC = () => {
                   const dateLabel = formatUploadedDate(m.created_at);
                   return (
                     <li key={m.id} className="truncate">
-                      <a
-                        href={`/models/${m.id}`}
-                        className="hover:underline text-brand-orange"
+                      <Link
+                        to={`/models/${m.id}`}
+                        className="hover:underline text-amber-600 dark:text-amber-400"
                         title={m.name || 'Untitled'}
                       >
                         {m.name || 'Untitled'}
-                      </a>
+                      </Link>
                       <span
                         className="ml-2 text-xs text-zinc-500 dark:text-zinc-400"
                         title={m.created_at ?? undefined}
@@ -189,21 +187,24 @@ const Dashboard: React.FC = () => {
             )}
           </div>
 
-          <DashboardCard
-            title="Favorites"
-            description="See models you&apos;ve bookmarked."
-            icon={<Star />}
-            to="/favorites"
-          />
+          {/* Favorites — replace DashboardCard with exact shell */}
+          <Link to="/favorites" className={cardClasses('p-4 hover:before:opacity-100 block')}>
+            <div className="flex items-center gap-2 mb-1">
+              <Star className="w-5 h-5 text-amber-500/80" />
+              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Favorites</h2>
+            </div>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">See models you&apos;ve bookmarked.</p>
+          </Link>
 
+          {/* Admin Panel — same shell, only if admin */}
           {isAdmin && (
-            <DashboardCard
-              title="Admin Panel"
-              description="Manage users, models, and pricing."
-              icon={<Shield />}
-              to="/admin"
-              className="text-red-500"
-            />
+            <Link to="/admin" className={cardClasses('p-4 hover:before:opacity-100 block')}>
+              <div className="flex items-center gap-2 mb-1">
+                <Shield className="w-5 h-5 text-amber-500/80" />
+                <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Admin Panel</h2>
+              </div>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">Manage users, models, and pricing.</p>
+            </Link>
           )}
         </div>
       </div>

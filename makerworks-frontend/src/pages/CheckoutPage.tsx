@@ -157,28 +157,27 @@ export default function CheckoutPage() {
   }
 
   if (!me) {
-    // Signed-out prompt — stays on-page (no random 404s).
+    // Signed-out prompt — our standard grey card with green LED button
     return (
       <div className="max-w-3xl mx-auto p-6">
-        <div className="rounded-xl border border-white/25 ring-1 ring-black/5 dark:ring-white/10 bg-white/70 dark:bg-white/10 backdrop-blur-xl p-6">
+        <div
+          className={[
+            'relative overflow-visible rounded-2xl mw-led',
+            'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
+            'border border-amber-300/45 ring-1 ring-amber-300/40',
+            'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+            'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
+            'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
+            'p-6',
+          ].join(' ')}
+        >
           <h1 className="text-xl font-semibold mb-2">Please sign in</h1>
           <p className="text-neutral-600 dark:text-neutral-300 mb-5">You need an account to complete your purchase.</p>
           <Link
             to="/signin"
-            className="
-              relative inline-flex items-center justify-center rounded-full px-5 py-2.5
-              bg-white/40 dark:bg-white/10 backdrop-blur-xl
-              border border-white/30 dark:border-white/15 ring-1 ring-black/5 dark:ring-white/15
-              shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]
-              text-zinc-900 dark:text-white hover:bg-white/50 dark:hover:bg-white/15
-              before:content-[''] before:absolute before:inset-[1px] before:rounded-[999px] before:pointer-events-none before:opacity-0
-              before:shadow-[inset_0_0_6px_rgba(16,185,129,0.18),inset_0_0_10px_rgba(16,185,129,0.12)]
-              after:content-[''] after:absolute after:inset-0 after:rounded-[999px] after:pointer-events-none after:opacity-0
-              after:shadow-[0_0_0_1px_rgba(16,185,129,0.16),0_0_10px_rgba(16,185,129,0.14),0_0_18px_rgba(16,185,129,0.10)]
-              hover:before:opacity-100 hover:after:opacity-100
-            "
+            className="mw-enter mw-enter--slim rounded-full font-medium text-gray-800 dark:text-gray-200 inline-flex"
           >
-            Sign in
+            Sign In
           </Link>
         </div>
       </div>
@@ -193,7 +192,17 @@ export default function CheckoutPage() {
         {/* LEFT: Forms */}
         <div className="lg:col-span-2 space-y-6">
           {/* Contact */}
-          <section className="rounded-2xl border border-white/25 ring-1 ring-black/5 dark:ring-white/10 bg-white/70 dark:bg-white/10 backdrop-blur-xl p-6">
+          <section
+            className={[
+              'relative overflow-visible rounded-2xl mw-led',
+              'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
+              'border border-amber-300/45 ring-1 ring-amber-300/40',
+              'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
+              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
+              'p-6',
+            ].join(' ')}
+          >
             <h2 className="text-lg font-medium mb-4">Contact</h2>
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
@@ -227,22 +236,25 @@ export default function CheckoutPage() {
           </section>
 
           {/* Delivery */}
-          <section className="rounded-2xl border border-white/25 ring-1 ring-black/5 dark:ring-white/10 bg-white/70 dark:bg-white/10 backdrop-blur-xl p-6">
+          <section
+            className={[
+              'relative overflow-visible rounded-2xl mw-led',
+              'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
+              'border border-amber-300/45 ring-1 ring-amber-300/40',
+              'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
+              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
+              'p-6',
+            ].join(' ')}
+          >
             <h2 className="text-lg font-medium mb-4">Delivery</h2>
 
             <div className="flex gap-3 mb-4">
               <button
                 type="button"
                 onClick={() => setDelivery((d) => ({ ...d, method: 'pickup' }))}
-                className={[
-                  'relative inline-flex h-10 items-center rounded-full px-4 text-sm font-medium',
-                  'bg-white/40 dark:bg-white/10 border border-white/30 dark:border-white/15 ring-1 ring-black/5 dark:ring-white/15',
-                  delivery.method === 'pickup' ? 'before:opacity-100 after:opacity-100' : 'before:opacity-0 after:opacity-0',
-                  "before:content-[''] before:absolute before:inset-[1px] before:rounded-[999px] before:pointer-events-none",
-                  "before:shadow-[inset_0_0_6px_rgba(16,185,129,0.18),inset_0_0_10px_rgba(16,185,129,0.12)]",
-                  "after:content-[''] after:absolute after:inset-0 after:rounded-[999px] after:pointer-events-none",
-                  "after:shadow-[0_0_0_1px_rgba(16,185,129,0.16),0_0_10px_rgba(16,185,129,0.14),0_0_18px_rgba(16,185,129,0.10)]",
-                ].join(' ')}
+                data-active={delivery.method === 'pickup'}
+                className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
               >
                 Pick up
               </button>
@@ -250,15 +262,8 @@ export default function CheckoutPage() {
               <button
                 type="button"
                 onClick={() => setDelivery((d) => ({ ...d, method: 'ship' }))}
-                className={[
-                  'relative inline-flex h-10 items-center rounded-full px-4 text-sm font-medium',
-                  'bg-white/40 dark:bg-white/10 border border-white/30 dark:border-white/15 ring-1 ring-black/5 dark:ring-white/15',
-                  delivery.method === 'ship' ? 'before:opacity-100 after:opacity-100' : 'before:opacity-0 after:opacity-0',
-                  "before:content-[''] before:absolute before:inset-[1px] before:rounded-[999px] before:pointer-events-none",
-                  "before:shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_10px_rgba(251,146,60,0.12)]",
-                  "after:content-[''] after:absolute after:inset-0 after:rounded-[999px] after:pointer-events-none",
-                  "after:shadow-[0_0_0_1px_rgba(251,146,60,0.16),0_0_10px_rgba(251,146,60,0.14),0_0_18px_rgba(251,146,60,0.10)]",
-                ].join(' ')}
+                data-active={delivery.method === 'ship'}
+                className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
               >
                 Ship to me
               </button>
@@ -321,7 +326,17 @@ export default function CheckoutPage() {
           </section>
 
           {/* Notes */}
-          <section className="rounded-2xl border border-white/25 ring-1 ring-black/5 dark:ring-white/10 bg-white/70 dark:bg-white/10 backdrop-blur-xl p-6">
+          <section
+            className={[
+              'relative overflow-visible rounded-2xl mw-led',
+              'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
+              'border border-amber-300/45 ring-1 ring-amber-300/40',
+              'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
+              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
+              'p-6',
+            ].join(' ')}
+          >
             <h2 className="text-lg font-medium mb-4">Notes</h2>
             <textarea
               rows={4}
@@ -344,7 +359,17 @@ export default function CheckoutPage() {
 
         {/* RIGHT: Summary */}
         <aside className="space-y-6">
-          <section className="rounded-2xl border border-white/25 ring-1 ring-black/5 dark:ring-white/10 bg-white/70 dark:bg-white/10 backdrop-blur-xl p-6">
+          <section
+            className={[
+              'relative overflow-visible rounded-2xl mw-led',
+              'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
+              'border border-amber-300/45 ring-1 ring-amber-300/40',
+              'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
+              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
+              'p-6',
+            ].join(' ')}
+          >
             <h2 className="text-lg font-medium mb-4">Order summary</h2>
 
             <ul className="space-y-3 mb-4">
@@ -401,25 +426,84 @@ export default function CheckoutPage() {
               type="button"
               onClick={handlePay}
               disabled={submitting}
-              className="
-                relative mt-6 w-full inline-flex items-center justify-center rounded-full px-5 py-2.5
-                bg-white/40 dark:bg-white/10 backdrop-blur-xl
-                border border-white/30 dark:border-white/15 ring-1 ring-black/5 dark:ring-white/15
-                shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]
-                text-zinc-900 dark:text-white hover:bg-white/50 dark:hover:bg-white/15
-                before:content-[''] before:absolute before:inset-[1px] before:rounded-[999px] before:pointer-events-none before:opacity-0
-                before:shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_10px_rgba(251,146,60,0.12)]
-                after:content-[''] after:absolute after:inset-0 after:rounded-[999px] after:pointer-events-none after:opacity-0
-                after:shadow-[0_0_0_1px_rgba(251,146,60,0.16),0_0_10px_rgba(251,146,60,0.14),0_0_18px_rgba(251,146,60,0.10)]
-                hover:before:opacity-100 hover:after:opacity-100
-                disabled:opacity-60
-              "
+              className="mt-6 w-full mw-enter mw-enter--slim rounded-full font-medium text-gray-800 dark:text-gray-200 disabled:opacity-60 inline-flex justify-center"
             >
               {submitting ? 'Creating session…' : 'Pay with Stripe'}
             </button>
           </section>
         </aside>
       </div>
+
+      {/* Local LED styles for consistency */}
+      <style>{`
+        /* Green LED token */
+        .mw-enter { --mw-ring: #16a34a; } /* Tailwind green-600 */
+
+        /* Slim, modern pill sizing */
+        .mw-enter--slim {
+          padding: 0.56rem 1.95rem !important;
+          font-size: 0.95rem !important;
+          line-height: 1.2 !important;
+          letter-spacing: 0.01em;
+        }
+
+        /* Base LED ring look (transparent base; inner+outer glow) */
+        .mw-enter {
+          background: transparent !important;            /* never solid */
+          border: 1px solid var(--mw-ring) !important;
+          box-shadow:
+            inset 0 0 8px 1.5px rgba(22,163,74,0.36),
+            0 0 10px 2.5px rgba(22,163,74,0.34);
+          transition: box-shadow .18s ease, transform .12s ease, border-color .18s ease;
+        }
+
+        /* Hover: stronger glow only (no bg fill; NO text-color change) */
+        .mw-enter:hover {
+          background: transparent !important;
+          transform: translateY(-0.5px);
+          box-shadow:
+            inset 0 0 12px 2.5px rgba(22,163,74,0.58),
+            0 0 16px 5px rgba(22,163,74,0.60),
+            0 0 32px 12px rgba(22,163,74,0.24);
+        }
+
+        .mw-enter:focus-visible {
+          outline: none !important;
+          box-shadow:
+            inset 0 0 13px 2.5px rgba(22,163,74,0.58),
+            0 0 0 2px rgba(255,255,255,0.6),
+            0 0 0 4px var(--mw-ring),
+            0 0 20px 5px rgba(22,163,74,0.48);
+        }
+
+        /* Card halo: green under-glow when any .mw-enter inside is hovered */
+        .mw-led { transition: box-shadow .18s ease, border-color .18s ease; }
+        .mw-led:has(.mw-enter:hover){
+          border-color: rgba(22,163,74,0.55) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.14),
+            0 0 12px rgba(22,163,74,0.12),
+            0 0 24px rgba(22,163,74,0.10);
+        }
+        .dark .mw-led:has(.mw-enter:hover){
+          border-color: rgba(22,163,74,0.70) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.65),
+            0 0 0 1px rgba(22,163,74,0.22),
+            0 0 24px rgba(22,163,74,0.24),
+            0 0 60px rgba(22,163,74,0.22);
+        }
+
+        /* Delivery toggle: intensify the active one a bit */
+        .mw-led .mw-enter[data-active="true"]{
+          box-shadow:
+            inset 0 0 12px 2.5px rgba(22,163,74,0.62),
+            0 0 16px 6px rgba(22,163,74,0.62),
+            0 0 36px 14px rgba(22,163,74,0.24);
+          border-color: rgba(22,163,74,0.9) !important;
+        }
+      `}</style>
     </div>
   );
 }

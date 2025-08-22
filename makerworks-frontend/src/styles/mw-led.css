@@ -1,0 +1,162 @@
+/* === MakerWorks LED system (global) ====================================== */
+
+/* ——— Green LED button (default) ——— */
+.mw-enter{ --mw-ring:#16a34a; }
+.mw-enter{
+  background:transparent !important;                 /* never solid */
+  color:inherit !important;                           /* ignore framework text colors */
+  border:1px solid var(--mw-ring) !important;
+  box-shadow:
+    inset 0 0 8px 1.5px rgba(22,163,74,.36),
+    0 0 10px 2.5px rgba(22,163,74,.34);
+  transition: box-shadow 180ms ease, transform 80ms ease, border-color 180ms ease;
+}
+.mw-enter:hover{
+  background:transparent !important;
+  transform:translateY(-1px);
+  box-shadow:
+    inset 0 0 12px 2.5px rgba(22,163,74,.58),
+    0 0 16px 5px rgba(22,163,74,.60),
+    0 0 32px 12px rgba(22,163,74,.24);
+}
+.mw-enter:focus-visible{
+  outline:none !important;
+  box-shadow:
+    inset 0 0 13px 2.5px rgba(22,163,74,.58),
+    0 0 0 2px rgba(255,255,255,.6),
+    0 0 0 4px var(--mw-ring),
+    0 0 20px 5px rgba(22,163,74,.48);
+}
+.mw-enter:disabled{ opacity:.6; cursor:not-allowed; }
+
+/* size helpers (don’t force colors) */
+.mw-btn-sm{ display:inline-flex; align-items:center; justify-content:center; height:2.25rem; padding:0 .75rem; font-size:.875rem; border-radius:9999px; }
+.mw-btn-md{ display:inline-flex; align-items:center; justify-content:center; height:2.5rem;  padding:0 1rem;   font-size:.875rem; border-radius:9999px; }
+
+/* ——— Danger (red) button ———
+   Ring at rest, NO glow until hover. Mirrors Sign Out/Delete behavior. */
+.mw-danger{
+  background:transparent !important;
+  color:inherit !important;
+  border:1px solid rgba(239,68,68,.70) !important;    /* red-500 */
+  box-shadow:none;
+  transition: box-shadow 180ms ease, transform 80ms ease, border-color 180ms ease;
+}
+.mw-danger:hover{
+  transform:translateY(-1px);
+  border-color:rgba(239,68,68,.90) !important;
+  box-shadow:
+    inset 0 0 12px 3px rgba(239,68,68,.70),
+    0 0 18px 8px rgba(239,68,68,.70),
+    0 0 44px 18px rgba(239,68,68,.28);
+}
+.mw-danger:focus-visible{
+  outline:none !important;
+  box-shadow:
+    0 0 0 2px rgba(239,68,68,.45),
+    inset 0 0 0 1px rgba(239,68,68,.55);
+}
+
+/* ——— LED card halo container ———
+   Any card with .mw-led halos ONLY when a LED button inside is hovered. */
+.mw-led{ position:relative; transition: box-shadow 180ms ease, border-color 180ms ease; }
+
+/* green button hovering -> green under-glow on the card */
+.mw-led:has(.mw-enter:hover){
+  border-color:rgba(22,163,74,.55) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 0 0 1px rgba(22,163,74,.14),
+    0 0 12px rgba(22,163,74,.12),
+    0 0 24px rgba(22,163,74,.10);
+}
+.dark .mw-led:has(.mw-enter:hover){
+  border-color:rgba(22,163,74,.70) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 0 0 1px rgba(22,163,74,.22),
+    0 0 24px rgba(22,163,74,.24),
+    0 0 60px rgba(22,163,74,.22);
+}
+
+/* red button hovering -> red under-glow on the card */
+.mw-led:has(.mw-danger:hover){
+  border-color:rgba(239,68,68,.65) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 0 0 1px rgba(239,68,68,.26),
+    0 2px 20px rgba(239,68,68,.22),
+    0 8px 42px rgba(239,68,68,.20),
+    0 12px 68px rgba(239,68,68,.16);
+}
+.dark .mw-led:has(.mw-danger:hover){
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 0 0 1px rgba(239,68,68,.34),
+    0 0 24px rgba(239,68,68,.28),
+    0 0 56px rgba(239,68,68,.24),
+    0 0 96px rgba(239,68,68,.18);
+}
+
+/* ——— Browse/Cart thumbnail frame (rounded, no-fill) ——— */
+.mw-thumb{ border:0 !important; box-shadow:none !important; overflow:visible; }
+.mw-thumb-frame{
+  background:transparent;
+  border-radius:12px;
+  overflow:hidden;
+  -webkit-mask-image:-webkit-radial-gradient(white, black);
+  mask-image: radial-gradient(#fff 99.9%, transparent 100%);
+}
+.mw-thumb-img{
+  display:block; max-width:92%; max-height:92%;
+  object-fit:contain; object-position:center; margin:0 auto;
+}
+
+/* ——— Profile page glue ———
+   Your Save Profile was blue because it didn’t have .mw-enter and
+   framework classes were winning. This forces the LED style for any
+   button inside the profile card scope and gives the card the green halo. */
+.mw-profile-scope button{
+  background:transparent !important;
+  color:inherit !important;
+  border:1px solid #16a34a !important;
+  border-radius:9999px;
+  padding:.38rem .9rem;
+  font-size:.9rem;
+  font-weight:500;
+  box-shadow:
+    inset 0 0 8px 1.5px rgba(22,163,74,.36),
+    0 0 10px 2.5px rgba(22,163,74,.34);
+  transition: box-shadow 180ms ease, transform 80ms ease, border-color 180ms ease;
+}
+.mw-profile-scope button:hover{
+  transform:translateY(-.5px);
+  box-shadow:
+    inset 0 0 12px 2.5px rgba(22,163,74,.58),
+    0 0 16px 5px rgba(22,163,74,.60),
+    0 0 32px 12px rgba(22,163,74,.24);
+}
+.mw-profile-scope button:focus-visible{
+  outline:none !important;
+  box-shadow:
+    inset 0 0 13px 2.5px rgba(22,163,74,.58),
+    0 0 0 2px rgba(255,255,255,.6),
+    0 0 0 4px #16a34a,
+    0 0 20px 5px rgba(22,163,74,.48);
+}
+.mw-profile-scope:has(button:hover){
+  border-color:rgba(22,163,74,.55) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 0 0 1px rgba(22,163,74,.14),
+    0 0 12px rgba(22,163,74,.12),
+    0 0 24px rgba(22,163,74,.10);
+}
+.dark .mw-profile-scope:has(button:hover){
+  border-color:rgba(22,163,74,.70) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.65),
+    0 0 0 1px rgba(22,163,74,.22),
+    0 0 24px rgba(22,163,74,.24),
+    0 0 60px rgba(22,163,74,.22);
+}

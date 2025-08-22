@@ -9,6 +9,14 @@ import {
 } from '@/api/filaments';
 import { bgClassFromHex } from '@/lib/colorMap';
 
+type BarcodeLite = {
+  code?: string | null;
+  symbology?: string | null;
+  is_primary?: boolean | null;
+  isPrimary?: boolean | null;
+  is_primary_barcode?: boolean | null;
+};
+
 type Filament = {
   id: string;
   // legacy fields
@@ -23,6 +31,13 @@ type Filament = {
   pricePerKg?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
+
+  // barcode-ish fields (backend may return none, one, or a list)
+  barcode?: string | null;
+  code?: string | null;
+  symbology?: string | null;
+  is_primary_barcode?: boolean | null;
+  barcodes?: BarcodeLite[] | null;
 };
 
 function normalizeItems(body: any): Filament[] {
@@ -73,6 +88,25 @@ function toNumberOr<T extends number | undefined>(v: any, fallback: T): number |
   return Number.isFinite(num) ? num : fallback;
 }
 
+function ensureHashHex(v: string | null | undefined): string | undefined {
+  if (!v) return undefined;
+  const s = v.trim();
+  if (!s) return undefined;
+  return s.startsWith('#') ? s : `#${s}`;
+}
+
+function primaryBarcodeOf(f: Filament | undefined | null): string | undefined {
+  if (!f) return undefined;
+  const direct = f.barcode || f.code;
+  if (direct) return direct || undefined;
+  const list = f.barcodes;
+  if (Array.isArray(list) && list.length > 0) {
+    const prim = list.find(b => b.is_primary === true || b.isPrimary === true || b.is_primary_barcode === true) ?? list[0];
+    return prim?.code || undefined;
+  }
+  return undefined;
+}
+
 type EditState = Partial<Filament> & { id?: string };
 
 export default function FilamentsTab() {
@@ -88,6 +122,9 @@ export default function FilamentsTab() {
     hex: '',
     pricePerKg: 0,
     is_active: true,
+    barcode: '',
+    symbology: '',
+    is_primary_barcode: true,
   });
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -146,6 +183,9 @@ export default function FilamentsTab() {
       hex: f.hex ?? f.colorHex ?? '',
       pricePerKg: typeof f.pricePerKg === 'number' ? f.pricePerKg : 0,
       is_active: f.is_active !== false,
+      barcode: primaryBarcodeOf(f) ?? '',
+      symbology: f.symbology ?? '',
+      is_primary_barcode: true,
     });
   };
   const cancelEdit = () => {
@@ -157,9 +197,14 @@ export default function FilamentsTab() {
   const compatPayloadFrom = (src: EditState) => {
     const type = (src.type ?? '').toString().trim();
     const color = (src.color ?? '').toString().trim();
-    const hex = (src.hex ?? '').toString().trim();
+    const hex = ensureHashHex(src.hex ?? '') ?? '';
     const pricePerKg = toNumberOr(src.pricePerKg, 0);
     const is_active = !!src.is_active;
+
+    // barcode fields (optional)
+    const barcode = (src.barcode ?? src.code ?? '').toString().trim();
+    const symbology = (src.symbology ?? '').toString().trim();
+    const is_primary_barcode = src.is_primary_barcode != null ? !!src.is_primary_barcode : true;
 
     // derive new schema fields
     const category = type;
@@ -171,6 +216,10 @@ export default function FilamentsTab() {
       type, color, hex, is_active,
       // new keys
       name, category, colorHex, pricePerKg,
+      // barcode keys (backend accepts 'barcode' and optional 'symbology'/'is_primary_barcode')
+      barcode,
+      symbology,
+      is_primary_barcode,
     });
 
     return superset as unknown as FilamentDTO;
@@ -184,7 +233,16 @@ export default function FilamentsTab() {
       const payload = compatPayloadFrom(createVal);
       const created = await createFilament(payload);
       setFilaments((prev) => [{ ...(payload as any), ...(created as any) } as Filament, ...prev]);
-      setCreateVal({ type: '', color: '', hex: '', pricePerKg: 0, is_active: true });
+      setCreateVal({
+        type: '',
+        color: '',
+        hex: '',
+        pricePerKg: 0,
+        is_active: true,
+        barcode: '',
+        symbology: '',
+        is_primary_barcode: true,
+      });
     } catch (e: any) {
       console.error('[FilamentsTab] create failed', e);
       const st = e?.response?.status;
@@ -247,7 +305,7 @@ export default function FilamentsTab() {
         </div>
       )}
 
-      {/* Create row — simplified */}
+      {/* Create row — now supports barcode (optional). Default "Active" true. */}
       <div className="mb-4 rounded-md border p-3 backdrop-blur-xl shadow-sm">
         <div className="mb-2 text-sm font-medium">Add Filament</div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
@@ -264,10 +322,16 @@ export default function FilamentsTab() {
             onChange={(e) => setCreateVal((v) => ({ ...v, color: e.target.value }))}
           />
           <input
-            className="col-span-12 sm:col-span-3 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
             placeholder="Color hex (#000000)"
             value={createVal.hex ?? ''}
             onChange={(e) => setCreateVal((v) => ({ ...v, hex: e.target.value }))}
+          />
+          <input
+            className="col-span-12 sm:col-span-3 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+            placeholder="Barcode (optional)"
+            value={createVal.barcode ?? ''}
+            onChange={(e) => setCreateVal((v) => ({ ...v, barcode: e.target.value }))}
           />
           <input
             className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
@@ -277,14 +341,6 @@ export default function FilamentsTab() {
             value={createVal.pricePerKg ?? 0}
             onChange={(e) => setCreateVal((v) => ({ ...v, pricePerKg: Number(e.target.value) }))}
           />
-          <label className="col-span-12 sm:col-span-2 flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={!!createVal.is_active}
-              onChange={(e) => setCreateVal((v) => ({ ...v, is_active: e.target.checked }))}
-            />
-            Active
-          </label>
 
           <div className="col-span-12 sm:col-span-1 flex items-center justify-end">
             <button
@@ -309,6 +365,7 @@ export default function FilamentsTab() {
               <th className="py-2 pr-4">Type</th>
               <th className="py-2 pr-4">Color</th>
               <th className="py-2 pr-4">Value</th>
+              <th className="py-2 pr-4">Barcode</th>
               <th className="py-2 pr-4">Price/kg</th>
               <th className="py-2 pr-4">Active</th>
               <th className="py-2 pr-4">Created</th>
@@ -320,7 +377,7 @@ export default function FilamentsTab() {
             {loading &&
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={`skeleton-${i}`} className="border-b last:border-0">
-                  {[24, 28, 40, 24, 16, 36, 36, 24].map((w, j) => (
+                  {[24, 28, 40, 40, 24, 16, 36, 36, 24].map((w, j) => (
                     <td key={j} className="py-2 pr-4">
                       <div className="h-3" style={{ width: w }} />
                     </td>
@@ -330,7 +387,7 @@ export default function FilamentsTab() {
 
             {!loading && !err && sorted.length === 0 && (
               <tr>
-                <td colSpan={8} className="py-3 pr-4 text-zinc-500">No filaments found.</td>
+                <td colSpan={9} className="py-3 pr-4 text-zinc-500">No filaments found.</td>
               </tr>
             )}
 
@@ -338,6 +395,7 @@ export default function FilamentsTab() {
               const isEditing = editingId === f.id;
               const displayHex = f.colorHex ?? f.hex ?? '';
               const displayPrice = typeof f.pricePerKg === 'number' ? f.pricePerKg : undefined;
+              const displayBarcode = primaryBarcodeOf(f) ?? '—';
 
               return (
                 <tr key={f.id} className="border-b last:border-0">
@@ -377,6 +435,17 @@ export default function FilamentsTab() {
                         onChange={(e) => setEditVal((v) => ({ ...v, hex: e.target.value }))}
                       />
                     ) : (displayHex || '—')}
+                  </td>
+
+                  <td className="py-2 pr-4">
+                    {isEditing ? (
+                      <input
+                        className="w-48 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
+                        placeholder="Barcode"
+                        value={editVal.barcode ?? ''}
+                        onChange={(e) => setEditVal((v) => ({ ...v, barcode: e.target.value }))}
+                      />
+                    ) : displayBarcode}
                   </td>
 
                   <td className="py-2 pr-4">

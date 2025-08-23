@@ -9,7 +9,7 @@ import sys
 import traceback
 import inspect
 import time
-import re  # ← for duplicate error parsing
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Sequence
@@ -113,7 +113,7 @@ try:
 
     from app.services.redis_service import redis_lifespan
 
-    # 👑 Admin seeder: import direct ensure_admin_user
+    # 👑 Admin seeder
     try:
         from app.startup.admin_seed import ensure_admin_user  # type: ignore
     except Exception:
@@ -181,6 +181,12 @@ def _clean_origin_token(token: str | None) -> Optional[str]:
     return f"{u.scheme}://{u.netloc}"
 
 def _parse_cors_env(raw: str) -> list[str]:
+    """Parse CORS origins from env. Accepts:
+      - Proper JSON: '["http://a", "http://b"]'
+      - Single-quoted bracket list: "['http://a','http://b']"
+      - Comma separated: 'http://a, http://b'
+    """
+    # 1) Try strict JSON first
     try:
         parsed = _json.loads(raw)
         if isinstance(parsed, list):
@@ -191,15 +197,21 @@ def _parse_cors_env(raw: str) -> list[str]:
             return [c] if c else []
     except Exception:
         pass
-    try:
-        s = raw.strip()
-        if s.startswith("[") and "'" in s and '"' not in s:
-            parsed = _json.loads(s.replace("'", '"'))
-            if isinstance(parsed, list):
-                cleaned = [_clean_origin_token(x) for x in parsed]
-                return [c for c in cleaned if c]
-    except Exception:
-        pass
+
+    # 2) Try bracketed list with mixed/single quotes without JSON-decoding hacks
+    s = (raw or "").strip()
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1]
+        parts = [p.strip() for p in inner.split(",")]
+        tokens: list[str] = []
+        for p in parts:
+            if len(p) >= 2 and ((p[0] == p[-1]) and p[0] in ("'", '"')):
+                p = p[1:-1]
+            tokens.append(p)
+        cleaned = [_clean_origin_token(x) for x in tokens]
+        return [c for c in cleaned if c]
+
+    # 3) Fallback: comma separated
     parts = [p for p in raw.split(",")]
     cleaned = [_clean_origin_token(p) for p in parts]
     return [c for c in cleaned if c]
@@ -471,7 +483,7 @@ def _find_alembic_ini() -> Path:
     for c in candidates:
         if c and str(c) and c.exists():
             return c
-    return Path("alembic.ini")  # harmless default; alembic will complain if missing
+    return Path("alembic.ini")
 
 def _detect_script_location() -> str:
     for cand in ("alembic", "app/migrations", "migrations"):
@@ -663,7 +675,7 @@ async def system_status_public():
 @app.get("/api/v1/celery/health", include_in_schema=False)
 async def celery_health():
     if celery_app_instance is None:
-        return {"status": "disabled"}
+        raise HTTPException(status_code=503, detail="Celery worker not available.")
     loop = asyncio.get_event_loop()
 
     def _ping():
@@ -819,10 +831,17 @@ def mount(router_module, prefix: str | None, tags: list[str] | None = None) -> N
     shown = existing if effective_prefix == "" else (effective_prefix or existing or "/")
     logger.info(f"🔌 Mounted: {shown} — Tags: {', '.join(tags or getattr(router, 'tags', []) or [])}")
 
-if health_router:
-    app.include_router(health_router)
+# Health (if present)
+try:
+    from app.routes.health import router as health_router  # type: ignore
+    if health_router:
+        app.include_router(health_router)
+except Exception:
+    pass
 
 # Specific first; broad later; upload LAST.
+from app.routes import auth, users, avatar, system, filaments, admin, cart, inventory_levels, inventory_moves, user_inventory, checkout, models, metrics, upload  # noqa
+
 mount(auth,      "/api/v1/auth",      ["auth"])
 mount(users,     "/api/v1/users",     ["users"])
 mount(avatar,    "/api/v1/avatar",    ["avatar"])

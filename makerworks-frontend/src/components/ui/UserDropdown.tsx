@@ -115,35 +115,174 @@ export default function UserDropdown() {
 
   return (
     <>
-      {/* Toggle (PILL with avatar + username, like before) */}
+      {/* Toggle (JUST a circular avatar / placeholder). If admin: king's crown overlay. */}
       <button
         ref={btnRef}
         type="button"
         onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v); }}
         className={clsx(
-          'inline-flex items-center gap-2 rounded-full px-2.5 py-1.5',
+          'relative inline-flex items-center justify-center rounded-full w-9 h-9',
           'border border-white/20 dark:border-white/20',
           'bg-white/20 dark:bg-black/20 backdrop-blur-sm',
-          'text-brand-text dark:text-white',
           'hover:shadow-[0_0_12px_rgba(255,122,26,.22),0_0_36px_rgba(255,122,26,.08)]',
           'transition'
         )}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Account menu"
+        aria-label={isAdmin ? 'Account menu, admin' : 'Account menu'}
+        data-admin={isAdmin ? 'true' : 'false'}
+        title={isAdmin ? 'Admin' : undefined}
       >
+        {/* Avatar image */}
         <img
           src={avatarUrl}
           alt="avatar"
-          className="w-7 h-7 rounded-full object-cover"
+          className="w-9 h-9 rounded-full object-cover"
           onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/static/default-avatar.png'; }}
           draggable={false}
         />
-        <span className="text-sm font-semibold">{user?.username ?? 'Account'}</span>
-        <svg width="16" height="16" viewBox="0 0 24 24" className="opacity-70" aria-hidden>
-          <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
+
+        {/* Crown overlay (ADMIN ONLY) */}
+        {isAdmin && (
+          <span className="mw-admin-crown" aria-hidden="true">
+            {/* King’s crown: gold band, five points, jeweled */}
+            <svg className="mw-crown-svg" viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                {/* Gold gradients */}
+                <linearGradient id="mw-gold" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#fff3b0"/>
+                  <stop offset="35%" stopColor="#f9d24a"/>
+                  <stop offset="70%" stopColor="#f2b705"/>
+                  <stop offset="100%" stopColor="#c58f00"/>
+                </linearGradient>
+                <linearGradient id="mw-goldEdge" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#d6a300"/>
+                  <stop offset="100%" stopColor="#8a5d00"/>
+                </linearGradient>
+
+                {/* Jewel fills */}
+                <radialGradient id="mw-ruby" cx="50%" cy="40%" r="60%">
+                  <stop offset="0%" stopColor="#ffb3b3"/>
+                  <stop offset="45%" stopColor="#ff3b3b"/>
+                  <stop offset="100%" stopColor="#a10018"/>
+                </radialGradient>
+                <radialGradient id="mw-sapphire" cx="50%" cy="40%" r="60%">
+                  <stop offset="0%" stopColor="#b3d1ff"/>
+                  <stop offset="45%" stopColor="#2f7bff"/>
+                  <stop offset="100%" stopColor="#0a2a6a"/>
+                </radialGradient>
+                <radialGradient id="mw-emerald" cx="50%" cy="40%" r="60%">
+                  <stop offset="0%" stopColor="#b9ffd1"/>
+                  <stop offset="45%" stopColor="#27c26e"/>
+                  <stop offset="100%" stopColor="#0c4e2a"/>
+                </radialGradient>
+
+                {/* Shine bar */}
+                <linearGradient id="mw-shine" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="rgba(255,255,255,0)" />
+                  <stop offset="45%" stopColor="rgba(255,255,255,0.58)" />
+                  <stop offset="55%" stopColor="rgba(255,255,255,0.58)" />
+                  <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+                </linearGradient>
+              </defs>
+
+              {/* Band */}
+              <rect x="8" y="56" width="104" height="14" rx="4" fill="url(#mw-gold)" stroke="url(#mw-goldEdge)" strokeWidth="2"/>
+
+              {/* Five-point crown silhouette */}
+              <path
+                d="M10 58
+                   L24 30 L40 52
+                   L60 22 L80 52
+                   L96 26 L110 58"
+                fill="none"
+                stroke="url(#mw-goldEdge)"
+                strokeWidth="10"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+              {/* Fill behind the thick stroke to look solid gold */}
+              <path
+                d="M10 58
+                   L24 30 L40 52
+                   L60 22 L80 52
+                   L96 26 L110 58 Z"
+                fill="url(#mw-gold)"
+                opacity="0.95"
+              />
+
+              {/* Jewel caps at the tips */}
+              <circle cx="24" cy="30" r="5.6" fill="url(#mw-sapphire)" stroke="#123c7a" strokeWidth="1.6"/>
+              <circle cx="60" cy="22" r="6.2" fill="url(#mw-ruby)" stroke="#6a0012" strokeWidth="1.6"/>
+              <circle cx="96" cy="26" r="5.6" fill="url(#mw-emerald)" stroke="#0c4e2a" strokeWidth="1.6"/>
+
+              {/* Inset gemstones on band */}
+              <rect x="26" y="60" width="10" height="8" rx="2" fill="url(#mw-ruby)" stroke="#6a0012" strokeWidth="1"/>
+              <rect x="55" y="60" width="10" height="8" rx="2" fill="url(#mw-emerald)" stroke="#0c4e2a" strokeWidth="1"/>
+              <rect x="84" y="60" width="10" height="8" rx="2" fill="url(#mw-sapphire)" stroke="#123c7a" strokeWidth="1"/>
+
+              {/* Pearl beading along band */}
+              {Array.from({ length: 9 }).map((_, i) => {
+                const x = 16 + i * 11.5;
+                return (
+                  <circle key={i} cx={x} cy={66} r="1.6" fill="#fff8e1" stroke="#c9a800" strokeWidth="0.8"/>
+                );
+              })}
+
+              {/* Moving shine sweep */}
+              <g className="mw-crown-shine">
+                <rect x="-40" y="18" width="80" height="56" fill="url(#mw-shine)" transform="skewX(-18)"/>
+              </g>
+            </svg>
+          </span>
+        )}
       </button>
+
+      {/* Crown + effects (exists even when menu is closed) */}
+      <style>{`
+        .mw-admin-crown{
+          position: absolute;
+          top: -14px;
+          left: 50%;
+          transform: translateX(-50%);
+          pointer-events: none;
+          filter:
+            drop-shadow(0 1px 0 rgba(255,255,255,.35))
+            drop-shadow(0 6px 10px rgba(0,0,0,.35));
+        }
+        .mw-crown-svg{ width: 46px; height: auto; display: block; }
+
+        @media (prefers-reduced-motion: no-preference){
+          .mw-admin-crown{
+            animation: mw-crown-bob 2.6s ease-in-out infinite;
+          }
+          button:hover > .mw-admin-crown{
+            animation-duration: 1.6s;
+          }
+          /* Shine pass glides across the crown */
+          .mw-crown-shine{
+            opacity: .22;
+            transform: translateX(-130%);
+            animation: mw-crown-shine 4.2s ease-in-out infinite;
+          }
+          button:hover > .mw-admin-crown .mw-crown-shine{
+            opacity: .35;
+            animation-duration: 2s;
+          }
+        }
+        @keyframes mw-crown-bob{
+          0%,100% { transform: translateX(-50%) translateY(0); }
+          50%     { transform: translateX(-50%) translateY(-2px); }
+        }
+        @keyframes mw-crown-shine{
+          0%   { transform: translateX(-130%); }
+          100% { transform: translateX(130%); }
+        }
+
+        /* Keep clicks clean on the avatar button */
+        .mw-admin-crown, .mw-crown-svg, .mw-crown-shine { pointer-events: none; }
+
+      `}</style>
 
       {/* DROPDOWN via portal (overlay; no layout shove). */}
       {open && createPortal(

@@ -1,6 +1,6 @@
 // src/pages/Admin.tsx
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useMemo, useState, useEffect, useCallback } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import PageLayout from '@/components/layout/PageLayout';
 import { useUser } from '@/hooks/useUser';
 import UsersTab from './admin/UsersTab';
@@ -9,17 +9,70 @@ import ModelsTab from './admin/ModelsTab';
 import InventoryTab from './admin/InventoryTab';
 
 type TabKey = 'users' | 'filaments' | 'inventory' | 'models';
-const TABS: readonly TabKey[] = ['users', 'filaments', 'inventory', 'models'] as const;
+const TABS = ['users', 'filaments', 'inventory', 'models'] as const;
+
+function isTab(value: unknown): value is TabKey {
+  return typeof value === 'string' && (TABS as readonly string[]).includes(value);
+}
 
 export default function Admin() {
+  // ✅ Hooks are always called, in a fixed order
   const { user, isAdmin, loading } = useUser();
-  const [tab, setTab] = useState<TabKey>('users');
-  const navigate = useNavigate();
 
+  // URL <-> state sync for tab
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialFromUrl = searchParams.get('tab');
+  const initialFromStorage = (typeof window !== 'undefined'
+    ? window.sessionStorage.getItem('mw.admin.tab')
+    : null) as TabKey | null;
+
+  const initialTab: TabKey =
+    (isTab(initialFromUrl) && (initialFromUrl as TabKey)) ||
+    (isTab(initialFromStorage) && (initialFromStorage as TabKey)) ||
+    'users';
+
+  const [tab, setTab] = useState<TabKey>(initialTab);
+
+  // Keep URL in sync (without adding history entries on every click)
   useEffect(() => {
-    if (!loading && !user) navigate('/auth/signin');
-  }, [loading, user, navigate]);
+    const current = searchParams.get('tab');
+    if (current !== tab) {
+      const next = new URLSearchParams(searchParams);
+      next.set('tab', tab);
+      setSearchParams(next, { replace: true });
+    }
+  }, [tab, searchParams, setSearchParams]);
 
+  // Persist last tab for refreshes where URL might not be preserved (e.g. manual nav)
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('mw.admin.tab', tab);
+    } catch {}
+  }, [tab]);
+
+  const currentIndex = useMemo(() => TABS.indexOf(tab), [tab]);
+
+  const setTabSafe = useCallback((value: TabKey) => {
+    if (isTab(value)) setTab(value);
+  }, []);
+
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      e.preventDefault();
+      let nextIdx = currentIndex;
+      if (e.key === 'ArrowRight') nextIdx = (currentIndex + 1) % TABS.length;
+      if (e.key === 'ArrowLeft') nextIdx = (currentIndex - 1 + TABS.length) % TABS.length;
+      if (e.key === 'Home') nextIdx = 0;
+      if (e.key === 'End') nextIdx = TABS.length - 1;
+      setTabSafe(TABS[nextIdx]);
+      const btn = document.getElementById(`tab-${TABS[nextIdx]}`);
+      btn?.focus();
+    },
+    [currentIndex, setTabSafe]
+  );
+
+  // ⏳ Initial loading state
   if (loading) {
     return (
       <PageLayout title="Admin Panel">
@@ -28,7 +81,13 @@ export default function Admin() {
     );
   }
 
-  if (!user || !isAdmin) {
+  // 🚪 Redirect unauthenticated users (after the initial load)
+  if (!user) {
+    return <Navigate to="/auth/signin" replace />;
+  }
+
+  // 🚫 Authenticated but not an admin
+  if (!isAdmin) {
     return (
       <PageLayout title="Access Denied">
         <p>Admin access required.</p>
@@ -36,24 +95,10 @@ export default function Admin() {
     );
   }
 
-  const currentIndex = useMemo(() => TABS.indexOf(tab), [tab]);
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
-    e.preventDefault();
-    let nextIdx = currentIndex;
-    if (e.key === 'ArrowRight') nextIdx = (currentIndex + 1) % TABS.length;
-    if (e.key === 'ArrowLeft')  nextIdx = (currentIndex - 1 + TABS.length) % TABS.length;
-    if (e.key === 'Home')       nextIdx = 0;
-    if (e.key === 'End')        nextIdx = TABS.length - 1;
-    setTab(TABS[nextIdx]);
-    const btn = document.getElementById(`tab-${TABS[nextIdx]}`);
-    btn?.focus();
-  }
-
+  // ✅ Authenticated admin view
   return (
     <PageLayout title="Admin Panel" maxWidth="xl" padding="p-4">
-      {/* Tabs = actual buttons with green LED ring; whole container manages roving focus */}
+      {/* Tabs: roving focus via keyboard, LED ring on active */}
       <div
         role="tablist"
         aria-label="Admin sections"
@@ -72,7 +117,7 @@ export default function Admin() {
               aria-controls={`panel-${t}`}
               data-active={active ? 'true' : 'false'}
               className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
-              onClick={() => setTab(t)}
+              onClick={() => setTabSafe(t)}
             >
               {label}
             </button>
@@ -80,7 +125,7 @@ export default function Admin() {
         })}
       </div>
 
-      {/* Panels (keep your orange/amber card styles INSIDE each tab component) */}
+      {/* Panels (render only the active tab’s content) */}
       <div id="panel-users" role="tabpanel" aria-labelledby="tab-users" hidden={tab !== 'users'}>
         {tab === 'users' && <UsersTab />}
       </div>
@@ -94,7 +139,7 @@ export default function Admin() {
         {tab === 'models' && <ModelsTab />}
       </div>
 
-      {/* Turn up the LED for the active tab, locally (no global side effects) */}
+      {/* Local LED glow for the active tab */}
       <style>{`
         .mw-admin-tabs .mw-enter[data-active="true"]{
           border-color:#16a34a !important;

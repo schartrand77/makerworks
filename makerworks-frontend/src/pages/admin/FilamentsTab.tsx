@@ -1,521 +1,544 @@
 // src/pages/admin/FilamentsTab.tsx
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from "react";
 import {
-  getFilaments,
+  listFilaments,
   createFilament,
   updateFilament,
   deleteFilament,
-  type FilamentDTO,
-} from '@/api/filaments';
-import { bgClassFromHex } from '@/lib/colorMap';
-
-type BarcodeLite = {
-  code?: string | null;
-  symbology?: string | null;
-  is_primary?: boolean | null;
-  isPrimary?: boolean | null;
-  is_primary_barcode?: boolean | null;
-};
+} from "../../api/filaments";
 
 type Filament = {
   id: string;
-  // legacy fields
-  type?: string | null;
-  color?: string | null;
-  hex?: string | null;            // any CSS color string
-  is_active?: boolean | null;
-  // new backend fields (optional)
-  name?: string | null;
-  category?: string | null;
-  colorHex?: string | null;
-  pricePerKg?: number | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-
-  // barcode-ish fields (backend may return none, one, or a list)
-  barcode?: string | null;
-  code?: string | null;
-  symbology?: string | null;
-  is_primary_barcode?: boolean | null;
-  barcodes?: BarcodeLite[] | null;
+  name?: string;
+  material?: string | null;   // PLA / PETG / ABS ...
+  category?: string | null;   // Matte / Silk / CF ...
+  type?: string | null;       // backend sometimes mirrors category here
+  color_name?: string | null;
+  color_hex?: string | null;
+  color?: string | null;      // some responses use color
+  hex?: string | null;        // some responses use hex
+  price_per_kg?: number | string | null;
+  pricePerKg?: number | string | null; // camelCase variant from backend
+  is_active?: boolean;
+  barcodes?: string[] | null; // backend returns array or null
 };
 
-function normalizeItems(body: any): Filament[] {
-  if (!body) return [];
-  if (Array.isArray(body)) return body as Filament[];
-  if (Array.isArray(body?.items)) return body.items as Filament[];
-  if (Array.isArray(body?.filaments)) return body.filaments as Filament[];
-  if (Array.isArray(body?.results)) return body.results as Filament[];
-  if (Array.isArray(body?.rows)) return body.rows as Filament[];
-  if (Array.isArray(body?.data)) return body.data as Filament[];
-  if (body?.data && Array.isArray(body.data.items)) return body.data.items as Filament[];
-  return [];
-}
+type Draft = {
+  material: string;
+  category: string;
+  color_name: string;
+  color_hex: string;
+  price_per_kg: number | string; // allow string while typing
+  barcode?: string;
+  is_active: boolean;
+};
 
-function formatApiError(data: any): string {
-  if (!data) return '';
-  if (typeof data.detail === 'string' && data.detail === 'validation_error' && Array.isArray(data.errors)) {
-    return data.errors.map((e: any) => {
-      const loc = Array.isArray(e?.loc) ? e.loc.join('.') : e?.loc ?? '';
-      const msg = e?.msg ?? e?.type ?? 'invalid';
-      return loc ? `${loc}: ${msg}` : String(msg);
-    }).join(' · ');
-  }
-  if (Array.isArray(data.detail)) {
-    return data.detail.map((d: any) => {
-      const loc = Array.isArray(d?.loc) ? d.loc.join('.') : d?.loc ?? '';
-      const msg = d?.msg ?? d?.type ?? 'unprocessable';
-      return loc ? `${loc}: ${msg}` : String(msg);
-    }).join(' · ');
-  }
-  if (typeof data.detail === 'string') return data.detail;
-  try { return JSON.stringify(data); } catch { return String(data); }
-}
-
-function stripEmpty<T extends Record<string, any>>(obj: T): Partial<T> {
-  const out: Record<string, any> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === '' || v === null || v === undefined) continue;
-    out[k] = v;
-  }
-  return out as Partial<T>;
-}
-
-function toNumberOr<T extends number | undefined>(v: any, fallback: T): number | T {
-  const n = typeof v === 'string' ? v.trim() : v;
-  if (n === '' || n === null || n === undefined) return fallback;
-  const num = Number(n);
-  return Number.isFinite(num) ? num : fallback;
-}
-
-function ensureHashHex(v: string | null | undefined): string | undefined {
-  if (!v) return undefined;
-  const s = v.trim();
-  if (!s) return undefined;
-  return s.startsWith('#') ? s : `#${s}`;
-}
-
-function primaryBarcodeOf(f: Filament | undefined | null): string | undefined {
-  if (!f) return undefined;
-  const direct = f.barcode || f.code;
-  if (direct) return direct || undefined;
-  const list = f.barcodes;
-  if (Array.isArray(list) && list.length > 0) {
-    const prim = list.find(b => b.is_primary === true || b.isPrimary === true || b.is_primary_barcode === true) ?? list[0];
-    return prim?.code || undefined;
-  }
-  return undefined;
-}
-
-type EditState = Partial<Filament> & { id?: string };
+const EMPTY_DRAFT: Draft = {
+  material: "",
+  category: "",
+  color_name: "",
+  color_hex: "#000000",
+  price_per_kg: "",
+  is_active: true,
+  barcode: "",
+};
 
 export default function FilamentsTab() {
-  const [filaments, setFilaments] = useState<Filament[]>([]);
+  const [items, setItems] = useState<Filament[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // row-level ui state
-  const [creating, setCreating] = useState(false);
-  const [createVal, setCreateVal] = useState<EditState>({
-    type: '',
-    color: '',
-    hex: '',
-    pricePerKg: 0,
-    is_active: true,
-    barcode: '',
-    symbology: '',
-    is_primary_barcode: true,
-  });
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editVal, setEditVal] = useState<EditState>({});
+  // UI state
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(25);
+  const [manage, setManage] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  // Create form
+  const [newDraft, setNewDraft] = useState<Draft>({ ...EMPTY_DRAFT });
 
-    (async () => {
-      setLoading(true);
+  // Edit form (single-row edit; no hooks in loops)
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Draft>({ ...EMPTY_DRAFT });
+
+  async function reload() {
+    setLoading(true);
+    try {
+      const data = await listFilaments();
+      setItems(Array.isArray(data) ? data : []);
       setErr(null);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to load filaments");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load all filaments
+  useEffect(() => {
+    let alive = true;
+    (async () => {
       try {
-        const res = await getFilaments();
-        const items = normalizeItems(res);
-        if (!cancelled) setFilaments(items ?? []);
+        setLoading(true);
+        const data = await listFilaments();
+        if (!alive) return;
+        setItems(Array.isArray(data) ? data : []);
+        setErr(null);
       } catch (e: any) {
-        console.error('[FilamentsTab] failed to load filaments', e);
-        const st = e?.response?.status;
-        const detailText = formatApiError(e?.response?.data);
-        const msg = st ? `${st}: Failed to load filaments${detailText ? ` — ${detailText}` : ''}` : 'Failed to load filaments';
-        if (!cancelled) {
-          setErr(msg);
-          setFilaments([]);
-        }
+        setErr(e?.message || "Failed to load filaments");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
-
-    return () => { cancelled = true; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const sorted = useMemo(() => {
-    return filaments
-      .slice()
-      .sort((a, b) => {
-        const aa = a.is_active === false ? 1 : 0;
-        const bb = b.is_active === false ? 1 : 0;
-        if (aa !== bb) return aa - bb;
-        const at = (a.category || a.type || '').toString();
-        const bt = (b.category || b.type || '').toString();
-        const t = at.localeCompare(bt);
-        if (t) return t;
-        const ac = (a.name || a.color || '').toString();
-        const bc = (b.name || b.color || '').toString();
-        return ac.localeCompare(bc);
-      });
-  }, [filaments]);
+  // Filter + paginate (client-side)
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = q
+      ? items.filter((f) => {
+          const hay = [
+            f.name,
+            f.material,
+            f.category,
+            f.type,
+            f.color_name,
+            f.color,
+            f.color_hex,
+            f.hex,
+            String(f.price_per_kg ?? f.pricePerKg ?? ""),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        })
+      : items.slice();
+    return base;
+  }, [items, query]);
 
-  const startEdit = (f: Filament) => {
-    setEditingId(f.id);
-    setEditVal({
-      id: f.id,
-      type: f.type ?? f.category ?? '',
-      color: f.color ?? f.name ?? '',
-      hex: f.hex ?? f.colorHex ?? '',
-      pricePerKg: typeof f.pricePerKg === 'number' ? f.pricePerKg : 0,
-      is_active: f.is_active !== false,
-      barcode: primaryBarcodeOf(f) ?? '',
-      symbology: f.symbology ?? '',
-      is_primary_barcode: true,
-    });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const current = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
+
+  // Helpers to normalize fields on display
+  const displayCategory = (f: Filament) => f.category ?? f.type ?? "—";
+  const displayColorName = (f: Filament) => f.color_name ?? f.color ?? "—";
+  const displayHex = (f: Filament) => f.color_hex ?? f.hex ?? "—";
+  const displayPrice = (f: Filament) => {
+    const n = Number(f.price_per_kg ?? f.pricePerKg);
+    return Number.isFinite(n) ? n.toFixed(2) : "0.00";
   };
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditVal({});
-  };
-
-  /** Build a superset payload compatible with old and new backends. */
-  const compatPayloadFrom = (src: EditState) => {
-    const type = (src.type ?? '').toString().trim();
-    const color = (src.color ?? '').toString().trim();
-    const hex = ensureHashHex(src.hex ?? '') ?? '';
-    const pricePerKg = toNumberOr(src.pricePerKg, 0);
-    const is_active = !!src.is_active;
-
-    // barcode fields (optional)
-    const barcode = (src.barcode ?? src.code ?? '').toString().trim();
-    const symbology = (src.symbology ?? '').toString().trim();
-    const is_primary_barcode = src.is_primary_barcode != null ? !!src.is_primary_barcode : true;
-
-    // derive new schema fields
-    const category = type;
-    const name = `${type} ${color}`.trim();
-    const colorHex = hex;
-
-    const superset = stripEmpty({
-      // legacy keys
-      type, color, hex, is_active,
-      // new keys
-      name, category, colorHex, pricePerKg,
-      // barcode keys (backend accepts 'barcode' and optional 'symbology'/'is_primary_barcode')
-      barcode,
-      symbology,
-      is_primary_barcode,
-    });
-
-    return superset as unknown as FilamentDTO;
+  const displayBarcode = (f: Filament) => {
+    if (Array.isArray(f.barcodes) && f.barcodes.length > 0) return f.barcodes[0];
+    return "—";
   };
 
-  const doCreate = async () => {
-    if (creating) return;
-    setCreating(true);
-    setErr(null);
+  // Actions
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
     try {
-      const payload = compatPayloadFrom(createVal);
-      const created = await createFilament(payload);
-      setFilaments((prev) => [{ ...(payload as any), ...(created as any) } as Filament, ...prev]);
-      setCreateVal({
-        type: '',
-        color: '',
-        hex: '',
-        pricePerKg: 0,
-        is_active: true,
-        barcode: '',
-        symbology: '',
-        is_primary_barcode: true,
-      });
-    } catch (e: any) {
-      console.error('[FilamentsTab] create failed', e);
-      const st = e?.response?.status;
-      const detailText = formatApiError(e?.response?.data);
-      setErr(st ? `${st}: Create failed${detailText ? ` — ${detailText}` : ''}` : 'Create failed');
-    } finally {
-      setCreating(false);
-    }
-  };
+      const payload: any = { ...newDraft };
+      // normalize hex
+      if (!payload.color_hex?.toString().startsWith("#")) {
+        payload.color_hex = `#${(payload.color_hex || "").toString().replace(/^#+/, "")}`;
+      }
+      // coerce/validate price
+      const price = Number(payload.price_per_kg);
+      if (!Number.isFinite(price) || price <= 0) {
+        alert("Please enter a price per kg greater than 0.");
+        return;
+      }
+      payload.price_per_kg = price;
+      // drop empty barcode
+      if (typeof payload.barcode === "string" && payload.barcode.trim() === "") {
+        delete payload.barcode;
+      }
 
-  const doSave = async (id: string) => {
-    if (savingId) return;
-    setSavingId(id);
-    setErr(null);
+      console.debug("[filaments] POST /filaments payload →", payload);
+      await createFilament(payload);
+      // Always reload to sync (server may compute name, mirror fields, attach barcodes)
+      await reload();
+      setNewDraft({ ...EMPTY_DRAFT });
+    } catch (e: any) {
+      alert("Create failed: " + (e?.response?.data?.detail || e.message));
+    }
+  }
+
+  async function beginEdit(f: Filament) {
+    setEditId(f.id);
+    setEditDraft({
+      material: f.material ?? "",
+      category: f.category ?? f.type ?? "",
+      color_name: f.color_name ?? f.color ?? "",
+      color_hex: f.color_hex ?? f.hex ?? "#000000",
+      price_per_kg: String(f.price_per_kg ?? f.pricePerKg ?? ""),
+      is_active: !!f.is_active,
+      barcode: "", // single entry input (append-only)
+    });
+  }
+
+  async function handleSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editId) return;
     try {
-      const payload = compatPayloadFrom(editVal);
-      const updated = await updateFilament(id, payload);
-      setFilaments((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, ...(payload as any), ...(updated as any) } : f))
-      );
-      cancelEdit();
-    } catch (e: any) {
-      console.error('[FilamentsTab] save failed', e);
-      const st = e?.response?.status;
-      const detailText = formatApiError(e?.response?.data);
-      setErr(st ? `${st}: Save failed${detailText ? ` — ${detailText}` : ''}` : 'Save failed');
-    } finally {
-      setSavingId(null);
-    }
-  };
+      const payload: any = { ...editDraft };
+      if (!payload.color_hex?.toString().startsWith("#")) {
+        payload.color_hex = `#${(payload.color_hex || "").toString().replace(/^#+/, "")}`;
+      }
+      const price = Number(payload.price_per_kg);
+      if (payload.price_per_kg !== "" && (!Number.isFinite(price) || price <= 0)) {
+        alert("Please enter a valid price per kg (> 0).");
+        return;
+      }
+      if (payload.price_per_kg !== "") payload.price_per_kg = price;
+      else delete payload.price_per_kg;
 
-  const doDelete = async (id: string) => {
-    if (savingId) return;
-    setSavingId(id);
-    setErr(null);
+      if (typeof payload.barcode === "string" && payload.barcode.trim() === "") {
+        delete payload.barcode;
+      }
+
+      await updateFilament(editId, payload);
+      await reload();
+      setEditId(null);
+    } catch (e: any) {
+      alert("Update failed: " + (e?.response?.data?.detail || e.message));
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Delete this filament? This cannot be undone.")) return;
     try {
       await deleteFilament(id);
-      setFilaments((prev) => prev.filter((f) => f.id !== id));
-      if (editingId === id) cancelEdit();
+      setItems((prev) => prev.filter((f) => f.id !== id));
     } catch (e: any) {
-      console.error('[FilamentsTab] delete failed', e);
-      const st = e?.response?.status;
-      const detailText = formatApiError(e?.response?.data);
-      setErr(st ? `${st}: Delete failed${detailText ? ` — ${detailText}` : ''}` : 'Delete failed');
-    } finally {
-      setSavingId(null);
+      alert("Delete failed: " + (e?.response?.data?.detail || e.message));
     }
-  };
+  }
 
+  // Render
   return (
-    <div className="glass-card p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-base font-medium">Filaments</h2>
-        <div className="text-sm text-zinc-500">{filaments.length} total</div>
+    <div className="space-y-4">
+      {/* Top bar: pill search + pagination + manage toggle */}
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPage(1);
+          }}
+          placeholder="Search filaments…"
+          className="rounded-full px-4 py-2 border outline-none focus:ring"
+          aria-label="Search filaments"
+        />
+        <div className="flex items-center gap-2">
+          <button
+            className="mw-btn-sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            ‹ Prev
+          </button>
+          <span className="text-sm">
+            Page {page} / {totalPages}
+          </span>
+          <button
+            className="mw-btn-sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Next ›
+          </button>
+        </div>
+        <label className="ml-auto inline-flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={manage}
+            onChange={(e) => {
+              setManage(e.target.checked);
+              setEditId(null);
+            }}
+          />
+          <span className="text-sm">Manage (add / edit / delete)</span>
+        </label>
       </div>
 
-      {err && (
-        <div className="mb-3 rounded-md px-3 py-2 text-sm border backdrop-blur-xl shadow-sm bg-red-50/80 dark:bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-200">
-          {err}
-        </div>
+      {/* Create form (only when manage) */}
+      {manage && (
+        <form onSubmit={handleCreate} className="p-3 rounded border space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+            <input
+              value={newDraft.material}
+              onChange={(e) =>
+                setNewDraft((d) => ({ ...d, material: e.target.value }))
+              }
+              placeholder="Material (PLA, PETG)"
+              className="mw-input"
+              required
+            />
+            <input
+              value={newDraft.category}
+              onChange={(e) =>
+                setNewDraft((d) => ({ ...d, category: e.target.value }))
+              }
+              placeholder="Category (Matte, Silk, CF)"
+              className="mw-input"
+              required
+            />
+            <input
+              value={newDraft.color_name}
+              onChange={(e) =>
+                setNewDraft((d) => ({ ...d, color_name: e.target.value }))
+              }
+              placeholder="Color name (Onyx)"
+              className="mw-input"
+              required
+            />
+            <input
+              value={newDraft.color_hex}
+              onChange={(e) =>
+                setNewDraft((d) => ({ ...d, color_hex: e.target.value }))
+              }
+              placeholder="#000000"
+              className="mw-input"
+              pattern="^#?[0-9A-Fa-f]{6}$"
+              title="6-digit hex, with or without leading #"
+              required
+            />
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={newDraft.price_per_kg}
+              onChange={(e) =>
+                setNewDraft((d) => ({
+                  ...d,
+                  // keep as string to avoid transient 0 during typing
+                  price_per_kg: e.target.value,
+                }))
+              }
+              placeholder="Price/kg"
+              className="mw-input"
+              required
+            />
+            <input
+              value={newDraft.barcode}
+              onChange={(e) =>
+                setNewDraft((d) => ({ ...d, barcode: e.target.value }))
+              }
+              placeholder="Barcode (optional)"
+              className="mw-input"
+            />
+          </div>
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={newDraft.is_active}
+              onChange={(e) =>
+                setNewDraft((d) => ({ ...d, is_active: e.target.checked }))
+              }
+            />
+            <span>Active</span>
+          </label>
+          <div>
+            <button className="mw-btn">Add filament</button>
+          </div>
+        </form>
       )}
 
-      {/* Create row — now supports barcode (optional). Default "Active" true. */}
-      <div className="mb-4 rounded-md border p-3 backdrop-blur-xl shadow-sm">
-        <div className="mb-2 text-sm font-medium">Add Filament</div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
-          <input
-            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-            placeholder="Type (PLA, PETG...)"
-            value={createVal.type ?? ''}
-            onChange={(e) => setCreateVal((v) => ({ ...v, type: e.target.value }))}
-          />
-          <input
-            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-            placeholder="Color name"
-            value={createVal.color ?? ''}
-            onChange={(e) => setCreateVal((v) => ({ ...v, color: e.target.value }))}
-          />
-          <input
-            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-            placeholder="Color hex (#000000)"
-            value={createVal.hex ?? ''}
-            onChange={(e) => setCreateVal((v) => ({ ...v, hex: e.target.value }))}
-          />
-          <input
-            className="col-span-12 sm:col-span-3 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-            placeholder="Barcode (optional)"
-            value={createVal.barcode ?? ''}
-            onChange={(e) => setCreateVal((v) => ({ ...v, barcode: e.target.value }))}
-          />
-          <input
-            className="col-span-12 sm:col-span-2 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-            placeholder="Price/kg (e.g., 24.99)"
-            type="number"
-            step="0.01"
-            value={createVal.pricePerKg ?? 0}
-            onChange={(e) => setCreateVal((v) => ({ ...v, pricePerKg: Number(e.target.value) }))}
-          />
-
-          <div className="col-span-12 sm:col-span-1 flex items-center justify-end">
-            <button
-              className="rounded px-3 py-1 text-sm border shadow-sm disabled:opacity-50"
-              disabled={
-                creating ||
-                !(createVal.type && createVal.color && createVal.hex) ||
-                createVal.pricePerKg == null
-              }
-              onClick={doCreate}
-            >
-              {creating ? 'Creating…' : 'Create'}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="overflow-x-auto">
+      {/* List */}
+      <div className="overflow-auto rounded border">
         <table className="min-w-full text-sm">
-          <thead className="text-left text-zinc-400 border-b">
-            <tr>
-              <th className="py-2 pr-4">Type</th>
-              <th className="py-2 pr-4">Color</th>
-              <th className="py-2 pr-4">Value</th>
-              <th className="py-2 pr-4">Barcode</th>
-              <th className="py-2 pr-4">Price/kg</th>
-              <th className="py-2 pr-4">Active</th>
-              <th className="py-2 pr-4">Created</th>
-              <th className="py-2 pr-4">Updated</th>
-              <th className="py-2 pr-0 text-right">Actions</th>
+          <thead>
+            <tr className="bg-black/5 dark:bg-white/5">
+              <th className="text-left p-2">#</th>
+              <th className="text-left p-2">Material</th>
+              <th className="text-left p-2">Category</th>
+              <th className="text-left p-2">Color</th>
+              <th className="text-left p-2">Hex</th>
+              <th className="text-left p-2">Barcode</th>
+              <th className="text-left p-2">Price/kg</th>
+              <th className="text-left p-2">Active</th>
+              {manage && <th className="text-left p-2">Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {loading &&
-              Array.from({ length: 8 }).map((_, i) => (
-                <tr key={`skeleton-${i}`} className="border-b last:border-0">
-                  {[24, 28, 40, 40, 24, 16, 36, 36, 24].map((w, j) => (
-                    <td key={j} className="py-2 pr-4">
-                      <div className="h-3" style={{ width: w }} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-
-            {!loading && !err && sorted.length === 0 && (
+            {loading && (
               <tr>
-                <td colSpan={9} className="py-3 pr-4 text-zinc-500">No filaments found.</td>
+                <td className="p-3" colSpan={manage ? 9 : 8}>
+                  Loading…
+                </td>
               </tr>
             )}
+            {!loading && current.length === 0 && (
+              <tr>
+                <td className="p-3" colSpan={manage ? 9 : 8}>
+                  No filaments.
+                </td>
+              </tr>
+            )}
+            {!loading &&
+              current.map((f, idx) => {
+                const rowNumber = (page - 1) * pageSize + idx + 1;
+                const isEditing = manage && editId === f.id;
 
-            {!loading && !err && sorted.map((f) => {
-              const isEditing = editingId === f.id;
-              const displayHex = f.colorHex ?? f.hex ?? '';
-              const displayPrice = typeof f.pricePerKg === 'number' ? f.pricePerKg : undefined;
-              const displayBarcode = primaryBarcodeOf(f) ?? '—';
-
-              return (
-                <tr key={f.id} className="border-b last:border-0">
-                  <td className="py-2 pr-4">
-                    {isEditing ? (
-                      <input
-                        className="w-40 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-                        value={editVal.type ?? ''}
-                        onChange={(e) => setEditVal((v) => ({ ...v, type: e.target.value }))}
-                      />
-                    ) : (f.type || f.category || '—')}
-                  </td>
-
-                  <td className="py-2 pr-4">
-                    {isEditing ? (
-                      <input
-                        className="w-40 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-                        value={editVal.color ?? ''}
-                        onChange={(e) => setEditVal((v) => ({ ...v, color: e.target.value }))}
-                      />
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`inline-block h-4 w-4 rounded-full border border-black/10 dark:border-white/15 ${bgClassFromHex(displayHex)}`}
-                          title={displayHex || ''}
+                if (isEditing) {
+                  return (
+                    <tr key={f.id} className="bg-yellow-50 dark:bg-yellow-950/20">
+                      <td className="p-2">{rowNumber}</td>
+                      <td className="p-2">
+                        <input
+                          className="mw-input"
+                          value={editDraft.material}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              material: e.target.value,
+                            }))
+                          }
                         />
-                        <span>{f.color || f.name || '—'}</span>
-                      </div>
-                    )}
-                  </td>
-
-                  <td className="py-2 pr-4">
-                    {isEditing ? (
-                      <input
-                        className="w-48 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-                        value={editVal.hex ?? ''}
-                        onChange={(e) => setEditVal((v) => ({ ...v, hex: e.target.value }))}
-                      />
-                    ) : (displayHex || '—')}
-                  </td>
-
-                  <td className="py-2 pr-4">
-                    {isEditing ? (
-                      <input
-                        className="w-48 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-                        placeholder="Barcode"
-                        value={editVal.barcode ?? ''}
-                        onChange={(e) => setEditVal((v) => ({ ...v, barcode: e.target.value }))}
-                      />
-                    ) : displayBarcode}
-                  </td>
-
-                  <td className="py-2 pr-4">
-                    {isEditing ? (
-                      <input
-                        className="w-28 rounded border px-2 py-1 bg-white/70 dark:bg-zinc-900/60"
-                        type="number"
-                        step="0.01"
-                        value={editVal.pricePerKg ?? 0}
-                        onChange={(e) => setEditVal((v) => ({ ...v, pricePerKg: Number(e.target.value) }))}
-                      />
-                    ) : (displayPrice != null ? `$${displayPrice.toFixed(2)}` : '—')}
-                  </td>
-
-                  <td className="py-2 pr-4">
-                    {isEditing ? (
-                      <label className="inline-flex items-center gap-2 text-sm">
+                      </td>
+                      <td className="p-2">
+                        <input
+                          className="mw-input"
+                          value={editDraft.category}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              category: e.target.value,
+                            }))
+                          }
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          className="mw-input"
+                          value={editDraft.color_name}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              color_name: e.target.value,
+                            }))
+                          }
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          className="mw-input"
+                          value={editDraft.color_hex}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              color_hex: e.target.value,
+                            }))
+                          }
+                          pattern="^#?[0-9A-Fa-f]{6}$"
+                          title="6-digit hex, with or without leading #"
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          className="mw-input"
+                          value={editDraft.barcode ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              barcode: e.target.value,
+                            }))
+                          }
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          className="mw-input"
+                          value={editDraft.price_per_kg}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              price_per_kg: e.target.value,
+                            }))
+                          }
+                        />
+                      </td>
+                      <td className="p-2">
                         <input
                           type="checkbox"
-                          checked={!!(editVal.is_active ?? true)}
-                          onChange={(e) => setEditVal((v) => ({ ...v, is_active: e.target.checked }))}
+                          checked={editDraft.is_active}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              is_active: e.target.checked,
+                            }))
+                          }
                         />
-                        Active
-                      </label>
-                    ) : (f.is_active === false ? 'No' : 'Yes')}
-                  </td>
+                      </td>
+                      <td className="p-2">
+                        <div className="flex gap-2">
+                          <button className="mw-btn-sm" onClick={handleSaveEdit}>
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            className="mw-btn-sm"
+                            onClick={() => setEditId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
 
-                  <td className="py-2 pr-4">{f.created_at ? new Date(f.created_at).toLocaleString() : '—'}</td>
-                  <td className="py-2 pr-4">{f.updated_at ? new Date(f.updated_at).toLocaleString() : '—'}</td>
-
-                  <td className="py-2 pr-0">
-                    <div className="flex justify-end gap-2">
-                      {!isEditing ? (
-                        <>
-                          <button className="rounded px-2 py-1 border shadow-sm" onClick={() => startEdit(f)}>
+                return (
+                  <tr key={f.id}>
+                    <td className="p-2">{rowNumber}</td>
+                    <td className="p-2">{f.material ?? "—"}</td>
+                    <td className="p-2">{displayCategory(f)}</td>
+                    <td className="p-2">{displayColorName(f)}</td>
+                    <td className="p-2">{displayHex(f)}</td>
+                    <td className="p-2">{displayBarcode(f)}</td>
+                    <td className="p-2">{displayPrice(f)}</td>
+                    <td className="p-2">{f.is_active ? "Yes" : "No"}</td>
+                    {manage && (
+                      <td className="p-2">
+                        <div className="flex gap-2">
+                          <button
+                            className="mw-btn-sm"
+                            onClick={() => beginEdit(f)}
+                          >
                             Edit
                           </button>
                           <button
-                            className="rounded px-2 py-1 border shadow-sm text-red-600"
-                            disabled={savingId === f.id}
-                            onClick={() => doDelete(f.id)}
+                            className="mw-btn-sm"
+                            onClick={() => handleDelete(f.id)}
                           >
-                            {savingId === f.id ? 'Deleting…' : 'Delete'}
+                            Delete
                           </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            className="rounded px-2 py-1 border shadow-sm"
-                            disabled={
-                              savingId === f.id ||
-                              !( (editVal.type ?? '').trim() && (editVal.color ?? '').trim() && (editVal.hex ?? '').trim() )
-                            }
-                            onClick={() => doSave(f.id!)}
-                          >
-                            {savingId === f.id ? 'Saving…' : 'Save'}
-                          </button>
-                          <button className="rounded px-2 py-1 border shadow-sm" onClick={cancelEdit}>
-                            Cancel
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>
+
+      {/* local styles for tiny utility classes (keeps your theme intact) */}
+      <style>{`
+        .mw-input{border:1px solid rgba(0,0,0,.15); padding:.35rem .5rem; border-radius:.35rem; width:100%;}
+        .mw-btn{border:1px solid rgba(0,0,0,.2); padding:.45rem .75rem; border-radius:.45rem;}
+        .mw-btn-sm{border:1px solid rgba(0,0,0,.2); padding:.25rem .5rem; border-radius:.35rem; font-size:.85rem;}
+      `}</style>
     </div>
   );
 }

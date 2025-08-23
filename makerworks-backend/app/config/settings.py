@@ -30,7 +30,6 @@ def _preload_env() -> None:
 
 _preload_env()
 
-
 DEFAULT_SECRET = "dev-secret-change-me"
 
 
@@ -39,6 +38,45 @@ def _default_if_blank(value: Optional[str], default: str) -> str:
         return default
     v = str(value).strip()
     return v or default
+
+
+def _repo_root() -> Path:
+    """…/makerworks-backend/app/config/settings.py -> repo root two levels up."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _resolve_dir(
+    raw: Optional[str],
+    default_rel: str,
+    base: Path,
+    ensure_writable: bool = True,
+) -> Path:
+    """
+    Resolve `raw` (env) or `default_rel` under `base` into an absolute path.
+    If `raw` is absolute but not writable and ensure_writable=True, fallback to base/default_rel.
+    """
+    candidate = Path(raw).expanduser() if raw else (base / default_rel)
+    if not candidate.is_absolute():
+        candidate = (base / candidate).resolve()
+
+    if not ensure_writable:
+        return candidate
+
+    # Try to create/test writability; if it fails, fallback to base/default_rel.
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        test = candidate / ".write_test"
+        test.touch(exist_ok=True)
+        try:
+            test.unlink(missing_ok=True)  # type: ignore[call-arg]
+        except TypeError:  # py3.10 compat
+            if test.exists():
+                test.unlink()
+        return candidate
+    except Exception:
+        fallback = (base / default_rel).resolve()
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 class Settings(BaseSettings):
@@ -67,12 +105,11 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = Field(default="", env="CELERY_BROKER_URL")
     CELERY_RESULT_BACKEND: str = Field(default="", env="CELERY_RESULT_BACKEND")
 
-    # ── File system roots (mounted in Docker) ────────────────────────────────
-    # In containers we *bind* /uploads and /thumbnails. Outside Docker, we’ll
-    # create local ./uploads and ./thumbnails so dev still works.
-    UPLOAD_DIR: str = Field(default="/uploads", env="UPLOAD_DIR")
-    THUMBNAILS_DIR: Optional[str] = Field(default="/thumbnails", env="THUMBNAILS_DIR")
-    MODELS_DIR: str = Field(default="/models", env="MODELS_DIR")
+    # ── File system roots (Docker binds vs. local dev) ───────────────────────
+    # IMPORTANT: default to *relative* paths so bare-metal dev doesn’t try to mkdir('/uploads')
+    UPLOAD_DIR: str = Field(default="uploads", env="UPLOAD_DIR")
+    THUMBNAILS_DIR: Optional[str] = Field(default="thumbnails", env="THUMBNAILS_DIR")
+    MODELS_DIR: str = Field(default="models", env="MODELS_DIR")
     STATIC_DIR: str = Field(default="app/static", env="STATIC_DIR")
 
     # ── CORS ─────────────────────────────────────────────────────────────────
@@ -162,6 +199,7 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> List[str]:
         normed: List[str] = []
+
         def _norm(u: str) -> str:
             s = str(u).strip().rstrip("/")
             s = s.replace('["', "").replace('"]', "").replace("['", "").replace("']", "")
@@ -183,36 +221,27 @@ class Settings(BaseSettings):
                     normed.append(s)
         return normed
 
+    # NOTE: all path properties resolve to writable locations or fall back to repo-local dirs.
     @property
     def base_upload_path(self) -> Path:
-        # Prefer explicit env, else container bind, else local ./uploads
-        p = Path(self.UPLOAD_DIR)
-        if not p.is_absolute():
-            p = Path("/uploads") if Path("/uploads").exists() else Path("uploads")
-        return p.resolve()
+        return _resolve_dir(self.UPLOAD_DIR, "uploads", base=_repo_root(), ensure_writable=True)
 
     @property
     def thumbnails_path(self) -> Path:
-        # Prefer explicit env, else container bind, else local ./thumbnails
-        if self.THUMBNAILS_DIR:
-            p = Path(self.THUMBNAILS_DIR)
-        else:
-            p = Path("/thumbnails") if Path("/thumbnails").exists() else Path("thumbnails")
-        return p.resolve()
+        # self.THUMBNAILS_DIR can be None; still resolve to a writable default
+        raw = self.THUMBNAILS_DIR or "thumbnails"
+        return _resolve_dir(raw, "thumbnails", base=_repo_root(), ensure_writable=True)
 
     @property
     def models_path(self) -> Path:
-        p = Path(self.MODELS_DIR)
-        if not p.is_absolute():
-            p = Path("/models") if Path("/models").exists() else Path("models")
-        return p.resolve()
+        return _resolve_dir(self.MODELS_DIR, "models", base=_repo_root(), ensure_writable=True)
 
     @property
     def static_path(self) -> Path:
-        p = Path(self.STATIC_DIR)
-        if not p.is_absolute():
-            p = Path("app/static")
-        return p.resolve()
+        # Static can be read-only; just resolve without forcing writability
+        p = _resolve_dir(self.STATIC_DIR, "app/static", base=_repo_root(), ensure_writable=False)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
 
     # ── Back-compat lowercase aliases (some modules still expect these) ──────
     @property
@@ -279,13 +308,13 @@ def get_settings() -> Settings:
     s.CELERY_RESULT_BACKEND = _default_if_blank(s.CELERY_RESULT_BACKEND, s.REDIS_URL)
     s.FRONTEND_ORIGIN = _default_if_blank(s.FRONTEND_ORIGIN or "", s.DOMAIN)
 
-    # Ensure directories exist (binds in Docker; local dirs in bare metal)
+    # Ensure directories exist (these are already write-checked in resolver)
     for p in (s.base_upload_path, s.thumbnails_path, s.models_path, s.static_path):
         p.mkdir(parents=True, exist_ok=True)
 
     # Backfill env for libs that read os.environ directly
     os.environ.setdefault("UPLOAD_DIR", str(s.base_upload_path))
-    os.environ.setdefault("THUMBNAILS_DIR", str(s.thumbnails_path))
+    os.environ.setdefault("THUMBNAILS_DIR", str(s.thumbnails_path))  # ← fixed key
     os.environ.setdefault("MODELS_DIR", str(s.models_path))
     os.environ.setdefault("STATIC_DIR", str(s.static_path))
     os.environ.setdefault("DOMAIN", s.DOMAIN)

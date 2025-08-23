@@ -6,7 +6,7 @@ import os
 from typing import Any, Optional, Set, Tuple
 from uuid import UUID, uuid4
 
-# NOTE: stripe is imported lazily in create_checkout_session() so missing package doesn't break boot
+# FastAPI / SQLAlchemy
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,7 +63,7 @@ def _user_is_admin(u: Any) -> bool:
     return False
 
 def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
-    # Strict Bearer parser
+    """Strict Bearer parser (returns token or None)."""
     if not isinstance(authorization, str):
         return None
     s = authorization.strip()
@@ -71,13 +71,14 @@ def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
         return None
     parts = s.split(" ", 1)
     if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1].strip() or None
+        token = parts[1].strip()
+        return token or None
     return None
 
 def _extract_any_token(authorization: Optional[str]) -> Optional[str]:
     """
-    Accepts either 'Bearer <jwt>' or a raw JWT as the Authorization header.
-    Helpful behind some proxies or quick local hacks.
+    Accept either 'Bearer <jwt>' or a raw JWT string in Authorization/X-Forwarded-Authorization.
+    Helpful behind certain proxies or quick local hacks.
     """
     tok = _extract_bearer_token(authorization)
     if tok:
@@ -90,7 +91,10 @@ def _extract_any_token(authorization: Optional[str]) -> Optional[str]:
     return None
 
 def _extract_token_from_cookies(request: Request) -> Optional[str]:
-    # Accept a variety of cookie names; support either raw token or "Bearer …"
+    """
+    Accept a variety of cookie names; support either raw token or "Bearer …".
+    This plays nice with frontends that store `access_token` in cookies.
+    """
     for name in (
         "Authorization", "authorization",
         "access_token", "access-token",
@@ -104,6 +108,18 @@ def _extract_token_from_cookies(request: Request) -> Optional[str]:
         if tok:
             return tok
     return None
+
+def _extract_token_from_query(request: Request) -> Optional[str]:
+    """
+    Fallback for `?access_token=` or `?token=` in the query string.
+    Handy for curl/CLI and certain embedded clients.
+    """
+    qp = request.query_params
+    raw = qp.get("access_token") or qp.get("token")
+    if not raw:
+        return None
+    # tolerate "Bearer <jwt>" in query too (people copy/paste…)
+    return _extract_bearer_token(raw) or raw.strip() or None
 
 async def _load_user_by_id(db: AsyncSession, uid: Any) -> Optional[User]:
     try:
@@ -120,32 +136,43 @@ def _norm_str(v: Optional[str]) -> Optional[str]:
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Current user dependency
-# - Accepts Authorization header OR cookies OR session.user_id (if present)
+# - Accepts Authorization header OR cookies OR session.user_id (if present) OR query param
 # - Returns 401/403 with clear messages
 # ──────────────────────────────────────────────────────────────────────────────
 async def get_current_user(
     request: Request,
     authorization: Optional[str] = Header(None),
     x_forwarded_authorization: Optional[str] = Header(None, alias="X-Forwarded-Authorization"),
+    x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"),
     db: AsyncSession = Depends(get_async_db),
 ) -> User:
     """
     Resolve the current user via:
-      1) Authorization: Bearer <JWT> (or X-Forwarded-Authorization) OR raw JWT in Authorization
+      1) Authorization / X-Forwarded-Authorization / X-Auth-Token
+         - Bearer <JWT> or raw JWT
       2) cookies: access_token/token/jwt/Authorization
-      3) request.session['user_id'] (if SessionMiddleware set it)
-      4) (dev) X-User-Id header with a raw UUID
+      3) query params: ?access_token= / ?token=
+      4) request.session['user_id'] (if SessionMiddleware set it)
+      5) (dev) X-User-Id header with a raw UUID
     """
-    # 1) Authorization header
-    token = _extract_any_token(authorization) or _extract_any_token(x_forwarded_authorization)
+    # 1) Headers
+    token = (
+        _extract_any_token(authorization)
+        or _extract_any_token(x_forwarded_authorization)
+        or _extract_any_token(x_auth_token)
+    )
 
-    # 2) Cookie tokens (access_token, token, jwt, Authorization)
+    # 2) Cookie tokens
     if not token:
         token = _extract_token_from_cookies(request)
 
+    # 3) Query param tokens (?access_token= / ?token=)
+    if not token:
+        token = _extract_token_from_query(request)
+
     user: Optional[User] = None
 
-    # 3) Session-based user (if your auth layer sets it)
+    # 4) Session-based user (if your auth layer sets it via Redis/SessionMiddleware)
     if not token:
         try:
             sess = getattr(request, "session", None)
@@ -156,7 +183,7 @@ async def get_current_user(
         except Exception:
             user = None  # never crash auth on session lookup
 
-    # 4) Dev override header (useful locally; remove if you dislike it)
+    # 5) Dev override header (useful locally; remove if you dislike it)
     if not token and not user:
         dev_uid = request.headers.get("x-user-id") or request.headers.get("X-User-Id")
         if dev_uid:
@@ -167,10 +194,10 @@ async def get_current_user(
         try:
             payload = decode_token(token)
         except Exception:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
         user_id = payload.get("sub") or payload.get("user_id") or payload.get("uid")
         if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
+            raise HTTPException(status_code=401, detail="Invalid token payload (missing sub)")
         user = await _load_user_by_id(db, user_id)
 
     if user is None:
@@ -192,13 +219,19 @@ async def optional_user(
     request: Request,
     authorization: Optional[str] = Header(None),
     x_forwarded_authorization: Optional[str] = Header(None, alias="X-Forwarded-Authorization"),
+    x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"),
     db: AsyncSession = Depends(get_async_db),
 ) -> Optional[User]:
     try:
-        # Try the same resolution as get_current_user, but never raise 401
-        token = _extract_any_token(authorization) or _extract_any_token(x_forwarded_authorization)
+        token = (
+            _extract_any_token(authorization)
+            or _extract_any_token(x_forwarded_authorization)
+            or _extract_any_token(x_auth_token)
+        )
         if not token:
             token = _extract_token_from_cookies(request)
+        if not token:
+            token = _extract_token_from_query(request)
 
         # session
         if not token:
@@ -391,10 +424,7 @@ async def attach_barcode_to_filament(
             {"fid": str(filament_id)},
         )
 
-    # Try a friendly upsert:
-    # - If code doesn't exist: insert with our filament_id
-    # - If code exists with NULL filament_id: claim it by setting filament_id
-    # - If code exists with another filament_id: leave as-is (we'll check and error)
+    # Friendly upsert:
     await db.execute(
         text(
             """
@@ -456,7 +486,6 @@ async def detach_barcode_from_filament(
         ),
         {"code": code},
     )
-    # If code doesn't exist, no-op
     prior_owner = res.scalar_one_or_none()
 
     # Optionally delete if now fully unbound
@@ -464,7 +493,7 @@ async def detach_barcode_from_filament(
         await db.execute(
             text(
                 "DELETE FROM public.barcodes "
-                "WHERE code = :code AND filament_id IS NULL AND (variant_id IS NULL OR variant_id = NULL)"
+                "WHERE code = :code AND filament_id IS NULL AND variant_id IS NULL"
             ),
             {"code": code},
         )

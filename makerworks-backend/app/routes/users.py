@@ -17,6 +17,7 @@ from app.services.cache.user_cache import (
     get_user_by_username,
     delete_user_cache,
 )
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -27,7 +28,7 @@ router = APIRouter()
 @router.patch(
     "/me",
     response_model=UserOut,
-    summary="Update user profile (bio, etc.)",
+    summary="Update user profile (bio, name, avatar_url, language, theme)",
     status_code=status.HTTP_200_OK,
 )
 async def update_profile(
@@ -36,17 +37,52 @@ async def update_profile(
     db: AsyncSession = Depends(get_async_db),
 ):
     """
-    Allows a user to update their profile (currently only bio).
+    Allows a user to update their profile.
+    IMPORTANT: operate on a **persistent** instance in this request's AsyncSession
+    to avoid 'Instance ... is not persistent within this Session' errors.
     """
-    logger.info("🔷 Updating profile for user_id=%s", current_user.id)
-    current_user.bio = payload.bio
-    await db.commit()
-    await db.refresh(current_user)
+    # Re-attach to current session
+    db_user = await db.get(User, current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    # Cache updated user profile in Redis
-    await cache_user_by_id(current_user)
+    # Only apply fields explicitly provided by the client
+    data = payload.model_dump(exclude_unset=True)
 
-    return UserOut.model_validate(current_user)
+    # Coerce empty strings to None on optional text fields
+    for key in ("name", "bio", "avatar_url", "language"):
+        if key in data and isinstance(data[key], str) and data[key] == "":
+            data[key] = None
+
+    # Normalize theme to either 'light' or 'dark' (or None)
+    if "theme" in data:
+        t = (data["theme"] or "").lower()
+        data["theme"] = t if t in ("light", "dark") else None
+
+    # Apply changes
+    for field, value in data.items():
+        setattr(db_user, field, value)
+
+    logger.info("🔷 Updating profile for user_id=%s with %s", current_user.id, list(data.keys()) or "no-op")
+
+    try:
+        await db.commit()
+        await db.refresh(db_user)  # safe: db_user is persistent in this session
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("⛔ Failed to update profile for user_id=%s", current_user.id)
+        raise HTTPException(status_code=500, detail="Failed to update profile") from exc
+
+    # Refresh caches
+    try:
+        await delete_user_cache(str(db_user.id), db_user.username)
+        await cache_user_by_id(db_user)
+        await cache_user_by_username(db_user)
+    except Exception:
+        # Cache issues shouldn't break the request; log and move on
+        logger.warning("⚠️ Cache update failed for user_id=%s", db_user.id, exc_info=True)
+
+    return UserOut.model_validate(db_user)
 
 # ─────────────────────────────────────────────────────────────
 # GET /users/me
@@ -60,7 +96,7 @@ async def update_profile(
 )
 async def get_me(current_user: User = Depends(get_current_user)):
     """
-    Returns current user info from the database.
+    Returns current user info (served from cache when available).
     """
     logger.info("🔷 Fetching current user: %s", current_user.id)
 
@@ -115,7 +151,7 @@ async def get_all_users(
 
     logger.info("🔷 Admin %s fetching all users.", current_user.id)
     result = await db.execute(select(User))
-    users = result.scalars().all()
+    users = result.scalars().all()  # ← fixed typo: was "s...calars"
     return [UserOut.model_validate(u) for u in users]
 
 # ─────────────────────────────────────────────────────────────

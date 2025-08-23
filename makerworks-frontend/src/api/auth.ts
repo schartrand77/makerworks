@@ -77,6 +77,18 @@ function coerceUser(u: unknown): ApiUser {
   }
 }
 
+function toUser(u: ApiUser): User {
+  return {
+    id: u.id,
+    email: u.email,
+    username: u.username,
+    name: u.name ?? null,
+    role: u.role ?? null,
+    is_verified: u.is_verified,
+    avatar_url: u.avatar_url ?? null,
+  }
+}
+
 function trim(s: string) {
   return s == null ? '' : String(s).trim()
 }
@@ -135,22 +147,13 @@ export async function signIn({ identifier, password }: SignInParams): Promise<Us
     throw new Error('Failed to sign in')
   }
 
-  const u = coerceUser(res.data.user)
-  return {
-    id: u.id,
-    email: u.email,
-    username: u.username,
-    name: u.name ?? null,
-    role: u.role ?? null,
-    is_verified: u.is_verified,
-    avatar_url: u.avatar_url ?? null,
-  }
+  return toUser(coerceUser(res.data.user))
 }
 
 /** Fetch the current user using the session cookie. */
 export async function getCurrentUser(): Promise<User> {
-  const res = await http.get<User>('auth/me')
-  return res.data
+  const u = await apiMe()
+  return toUser(u)
 }
 
 /** Sign out; try POST first, fall back to GET on 405/404/422. */

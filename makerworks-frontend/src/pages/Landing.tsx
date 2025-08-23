@@ -121,7 +121,7 @@ const Landing = () => {
   return (
     <div className="flex items-center justify-center min-h-screen bg-brand-white dark:bg-brand-black">
       {/* Fixed-size card to prevent stretch/squish */}
-      <GlassCard className="mw-card mw-card--fixed">
+      <GlassCard className="mw-card mw-card--fixed mw-card--flicker">
         <div className="relative w-full h-full px-4 sm:px-6">
           {/* 6-row grid: top | title+motto | spacer | button | version | bottom */}
           <div className="mw-grid grid grid-rows-[1.2fr_auto_32px_auto_auto_.8fr] place-items-center h-full p-8 text-center gap-0">
@@ -315,6 +315,84 @@ const Landing = () => {
             background: rgba(22,163,74,0.82); filter: blur(3.5px); opacity: 0; transition: opacity 240ms ease;
           }
           .mw-motto-word.is-on::after { opacity: 1; }
+
+          /* === Landing-only fluorescent flicker halo ======================= */
+          /* Add class="mw-card--flicker" to the Landing card (GlassCard) */
+          .mw-card--flicker { position: relative; isolation: isolate; }
+
+          .mw-card--flicker::after {
+            content: "";
+            position: absolute;
+            inset: -12%;
+            border-radius: inherit;
+            pointer-events: none;
+            z-index: -1;
+
+            /* two-layer glow: green core + faint white halo */
+            background:
+              radial-gradient(60% 55% at 50% 50%,
+                rgba(22,163,74,0.18) 0%,
+                rgba(22,163,74,0.08) 40%,
+                rgba(22,163,74,0.00) 72%),
+              radial-gradient(120% 90% at 50% 50%,
+                rgba(255,255,255,0.14) 0%,
+                rgba(255,255,255,0.00) 60%);
+            filter: blur(24px);
+            opacity: 0.85;
+
+            /* 1) warmup = irregular flicker once
+               2) hum = gentle ongoing shimmer */
+            animation:
+              mw-bulb-warmup 1.6s steps(24, end) 1 both,
+              mw-bulb-hum 2.2s ease-in-out infinite 1.6s;
+            will-change: opacity, filter;
+          }
+
+          .dark .mw-card--flicker::after {
+            opacity: 0.9;
+            filter: blur(26px);
+          }
+
+          /* Slight boost when the LED button inside is hovered */
+          .mw-card--flicker:has(.mw-enter:hover)::after {
+            opacity: 0.98;
+            filter: blur(30px);
+          }
+
+          /* Irregular startup flicker: a few pops, then settles */
+          @keyframes mw-bulb-warmup {
+            0%   { opacity: 0.00; }
+            5%   { opacity: 0.95; }
+            7%   { opacity: 0.20; }
+            12%  { opacity: 0.88; }
+            16%  { opacity: 0.25; }
+            22%  { opacity: 0.97; }
+            27%  { opacity: 0.32; }
+            33%  { opacity: 1.00; }
+            40%  { opacity: 0.38; }
+            48%  { opacity: 0.94; }
+            58%  { opacity: 0.52; }
+            68%  { opacity: 0.98; }
+            78%  { opacity: 0.70; }
+            88%  { opacity: 0.92; }
+            100% { opacity: 0.85; }
+          }
+
+          /* Subtle ongoing hum so it feels alive but not annoying */
+          @keyframes mw-bulb-hum {
+            0%, 100% { opacity: 0.82; filter: blur(24px); }
+            45%      { opacity: 0.78; filter: blur(23px); }
+            55%      { opacity: 0.86; filter: blur(24.5px); }
+          }
+
+          /* Respect reduced motion: no flicker, just a steady glow */
+          @media (prefers-reduced-motion: reduce) {
+            .mw-card--flicker::after {
+              animation: none !important;
+              opacity: 0.86;
+              filter: blur(24px);
+            }
+          }
         `}
       </style>
     </div>

@@ -10,7 +10,6 @@ import Axios, {
  * - Force baseURL to ORIGIN-ONLY (strip any path like '/api')
  * - Ensure exactly one '/api/v1' prefix on every request path
  * - Rewrite legacy:
- *     '/users/me'                  -> '/api/v1/auth/me'
  *     '/users/:id/uploads'         -> '/api/v1/admin/users/:id/uploads'
  * - Install interceptors on all instances (global + created)
  */
@@ -29,7 +28,6 @@ function originOnly(u: string): string {
     const url = new URL(u)
     return `${url.protocol}//${url.host}` // strip any path/query/hash
   } catch {
-    // fallback: crude regex to slice at first single slash after host
     const m = u.match(/^(https?:\/\/[^/]+)(?:\/.*)?$/i)
     return m ? m[1] : u.replace(/\/+$/, '')
   }
@@ -70,16 +68,11 @@ function prefixPath(pathname: string) {
 
 /**
  * Rewrite legacy paths to spec-correct ones.
- * - '/api/v1/users/me'           -> '/api/v1/auth/me'
- * - '/api/v1/users/:id/uploads'  -> '/api/v1/admin/users/:id/uploads'
+ * NOTE: We DO NOT touch '/users/me' anymore. That endpoint exists and supports PATCH/GET.
+ * - '/api/v1/users/:id/uploads'  <- '/users/:id/uploads'
  */
 function rewriteLegacyPaths(pathname: string): string {
   const withPrefix = (pathname.startsWith('/api/v1/') ? pathname : prefixPath(pathname)).replace(/\/{2,}/g, '/')
-
-  // /api/v1/users/me  -> /api/v1/auth/me
-  if (/^\/api\/v1\/users\/me\/?$/i.test(withPrefix)) {
-    return '/api/v1/auth/me'
-  }
 
   // /api/v1/users/:id/uploads -> /api/v1/admin/users/:id/uploads
   const up = withPrefix.match(/^\/api\/v1\/users\/([^/]+)\/uploads\/?$/i)
@@ -122,16 +115,12 @@ function ensureVersioned(url: string) {
   return normalizeRelative(url)
 }
 
-/** Last-chance fixer for obvious legacy forms */
+/** Last-chance fixer for obvious legacy forms (no '/users/me' shenanigans) */
 function forceFixCommon(u: string) {
   // Absolute?
   if (/^https?:\/\//i.test(u)) {
     try {
       const abs = new URL(u)
-      if (/^\/users\/me\/?$/i.test(abs.pathname)) {
-        abs.pathname = '/api/v1/auth/me'
-        return abs.toString()
-      }
       const m = abs.pathname.match(/^\/users\/([^/]+)\/uploads\/?$/i)
       if (m) {
         const id = decodeURIComponent(m[1])
@@ -145,7 +134,6 @@ function forceFixCommon(u: string) {
   }
 
   // Relative
-  if (/^\/?users\/me\/?$/i.test(u)) return '/api/v1/auth/me'
   const n = u.replace(/^\//, '').match(/^users\/([^/]+)\/uploads\/?$/i)
   if (n) return `/api/v1/admin/users/${encodeURIComponent(decodeURIComponent(n[1]))}/uploads`
   return u

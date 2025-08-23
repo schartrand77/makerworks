@@ -6,6 +6,7 @@ This is a full base migration that creates the current schema from scratch:
   filaments, filament_pricing, checkout_sessions, upload_jobs, audit_logs)
 - Inventory tables (brands, categories, products, product_variants, media, warehouses,
   inventory_levels, suppliers, supplier_skus, stock_moves, user_items)
+- Filament barcodes table (barcodes) with per-filament codes and uniqueness
 - FKs, indexes and sensible defaults
 - The compatibility VIEW public.models and its INSTEAD OF triggers
 
@@ -40,6 +41,9 @@ UUID = postgresql.UUID(as_uuid=True)
 
 
 def upgrade() -> None:
+    # Ensure UUID generation is available for server_default on barcodes.id, etc.
+    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+
     # ──────────────────────────────────────────────────────────────────────
     # users
     # ──────────────────────────────────────────────────────────────────────
@@ -178,7 +182,7 @@ def upgrade() -> None:
         "filaments",
         sa.Column("id", UUID, primary_key=True, nullable=False),
 
-        # Canonical (now tolerant/nullable so UI partials don't 500)
+        # Canonical (tolerant/nullable so UI partials don't 500)
         sa.Column("name", sa.String(length=128), nullable=True),
         sa.Column("category", sa.String(length=64), nullable=True),
         sa.Column("color_hex", sa.String(length=16), nullable=True),
@@ -214,6 +218,20 @@ def upgrade() -> None:
         ["name", "category", "color_hex"],
         schema="public",
     )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # barcodes (per-filament barcodes)
+    # ──────────────────────────────────────────────────────────────────────
+    op.create_table(
+        "barcodes",
+        sa.Column("id", UUID, primary_key=True, nullable=False, server_default=sa.text("gen_random_uuid()")),
+        sa.Column("filament_id", UUID, sa.ForeignKey("public.filaments.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("code", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_unique_constraint("barcodes_code_key", "barcodes", ["code"], schema="public")
+    op.create_index("barcodes_filament_id_idx", "barcodes", ["filament_id"], unique=False, schema="public")
 
     # ──────────────────────────────────────────────────────────────────────
     # filament_pricing (legacy/simple)
@@ -555,17 +573,22 @@ def downgrade() -> None:
     op.drop_index("ix_public_variant_sku", table_name="product_variants", schema="public")
     op.drop_index("ix_public_variant_product", table_name="product_variants", schema="public")
     # drop the GIN index created via raw SQL
-    op.execute("DROP INDEX IF EXISTS ix_public_variant_attributes_gin")
+    op.execute("DROP INDEX IF EXISTS public.ix_public_variant_attributes_gin")
     op.drop_table("product_variants", schema="public")
     op.drop_index("ix_public_products_brand", table_name="products", schema="public")
     op.drop_index("ix_public_products_category", table_name="products", schema="public")
     op.drop_table("products", schema="public")
     op.drop_table("categories", schema="public")
     op.drop_table("brands", schema="public")
-    op.execute("DROP TYPE IF EXISTS stock_move_type")
+    # safer in case of any lingering dependency
+    op.execute("DROP TYPE IF EXISTS stock_move_type CASCADE")
 
     # Filament-related (reverse)
     op.drop_table("filament_pricing", schema="public")
+    # barcodes depends on filaments → drop first
+    op.drop_index("barcodes_filament_id_idx", table_name="barcodes", schema="public")
+    op.drop_constraint("barcodes_code_key", "barcodes", schema="public", type_="unique")
+    op.drop_table("barcodes", schema="public")
     # drop canonical uniqueness + legacy index before table
     op.drop_constraint(
         "uq_public_filaments_name_category_colorhex",

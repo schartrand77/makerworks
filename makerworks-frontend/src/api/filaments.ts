@@ -1,270 +1,138 @@
 // src/api/filaments.ts
-// Self-contained API client for Filaments (no external axios/client needed)
+import client from '@/lib/client';
 
-type Primitive = string | number | boolean | null | undefined;
+const raw = import.meta.env.VITE_API_PREFIX || '/api/v1';
+// In dev (vite on :5173), guess the backend origin if only a path was given
+const guessed =
+  raw.startsWith('/') && typeof window !== 'undefined' && window.location.port === '5173'
+    ? 'http://localhost:8000/api/v1'
+    : raw;
+// Strip any trailing slashes once, and never append another
+export const API_PREFIX = guessed.replace(/\/+$/, '');
+const BASE = `${API_PREFIX}/filaments`; // <- no trailing slash
 
-const RAW_PREFIX =
-  (import.meta as any)?.env?.VITE_API_PREFIX ??
-  (import.meta as any)?.env?.VITE_API_BASE ??
-  '/api/v1';
-
-const API_PREFIX = String(RAW_PREFIX).replace(/\/+$/, ''); // trim trailing slash
-
-// ---------------------------------------------------------
-// Types
-// ---------------------------------------------------------
-export type FilamentDTO = {
-  id?: string;
-
-  // legacy (older backend fields)
-  type?: string | null;
-  color?: string | null;
-  hex?: string | null;
-  is_active?: boolean | null;
-
-  // current backend fields
-  name?: string | null;
-  category?: string | null;
-  colorHex?: string | null;
-  colorName?: string | null;
-  pricePerKg?: number | null;
-
-  // metadata (server-filled)
-  created_at?: string | null;
-  updated_at?: string | null;
-};
-
-export type ListOptions = {
-  search?: string;
-  includeInactive?: boolean;
-  page?: number;
-  pageSize?: number;
-  signal?: AbortSignal;
-};
-
-export type CreateOptions = {
-  signal?: AbortSignal;
-};
-
-export type UpdateOptions = {
-  signal?: AbortSignal;
-};
-
-export type DeleteOptions = {
-  signal?: AbortSignal;
-};
-
-// ---------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------
-function toNum(v: any): number | undefined {
-  if (v === '' || v === null || v === undefined) return undefined;
-  const n = typeof v === 'string' ? Number(v.trim()) : Number(v);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-function normHex(s: Primitive): string | undefined {
-  if (s == null) return undefined;
-  const t = String(s).trim();
-  if (!t) return undefined;
-  return t.startsWith('#') ? t.toUpperCase() : `#${t.toUpperCase()}`;
-}
-
-function qs(params: Record<string, Primitive>): string {
-  const usp = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
+function clean<T extends Record<string, any>>(obj: T): Partial<T> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
     if (v === undefined || v === null || v === '') continue;
-    usp.append(k, String(v));
+    out[k] = v;
   }
-  const q = usp.toString();
-  return q ? `?${q}` : '';
+  return out;
 }
 
-async function http<T = any>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
-  path: string,
-  body?: unknown,
-  signal?: AbortSignal
-): Promise<T> {
-  const url = `${API_PREFIX}${path.startsWith('/') ? path : `/${path}`}`;
+function logAxios(err: any, label: string) {
+  const allow = err?.response?.headers?.['allow'];
+  // eslint-disable-next-line no-console
+  console.warn('[filaments]', err?.response?.status, 'on', label, 'Allow:', allow ?? '(no Allow header)');
+}
 
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  const init: RequestInit = {
-    method,
-    headers,
-    credentials: 'include', // keep cookie session
-    signal,
-  };
+/** List filaments (optionally with simple search/paging) */
+export async function listFilaments(params?: {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const res = await client.get(BASE, { params });
+  return res.data;
+}
 
-  if (body !== undefined) {
-    if (body instanceof FormData) {
-      // Let the browser set multipart boundary
-      delete (headers as any)['Content-Type'];
-      init.body = body;
-    } else {
-      (headers as any)['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-  }
+/** Create a filament; include `barcode` to attach one at create-time */
+export async function createFilament(input: {
+  material?: string;
+  category?: string; // e.g. "Matte" / "Silk" / "CF"
+  type?: string;     // alias for category
+  color_name?: string;
+  color_hex?: string;
+  price_per_kg?: number; // numeric
+  is_active?: boolean;
+  barcode?: string; // optional single barcode to add
+}) {
+  const payload = clean({
+    material: input.material,
+    category: input.category ?? input.type,
+    type: input.type ?? input.category,
+    color_name: input.color_name,
+    color_hex: input.color_hex,
+    price_per_kg: input.price_per_kg,
+    is_active: input.is_active ?? true,
+    barcode: input.barcode?.trim(),
+  });
 
-  const res = await fetch(url, init);
-  const ct = res.headers.get('content-type') || '';
-  const isJson = ct.includes('application/json');
-  const payload = res.status === 204 ? null : isJson ? await res.json() : await res.text();
+  // eslint-disable-next-line no-console
+  console.info('[filaments] POST', BASE, 'payload →', payload);
 
-  if (!res.ok) {
-    const msg =
-      (isJson && (payload as any)?.detail) ||
-      (isJson && (payload as any)?.message) ||
-      `${res.status} ${res.statusText}`;
-    const err: any = new Error(msg);
-    err.status = res.status;
-    err.data = payload;
+  try {
+    const res = await client.post(BASE, payload);
+    return res.data;
+  } catch (err) {
+    logAxios(err, BASE);
     throw err;
   }
-
-  return payload as T;
 }
 
-// ---------------------------------------------------------
-// Body builders (tolerant of legacy/new backends)
-// ---------------------------------------------------------
-function buildCreateBody(input: Partial<FilamentDTO>) {
-  const type = (input.type ?? '').toString().trim();
-  const color = (input.color ?? input.colorName ?? '').toString().trim();
-  const hexRaw = normHex(input.hex ?? input.colorHex);
-
-  const baseCategory = (input.category ?? type)?.toString().trim();
-  const category = baseCategory && baseCategory.length ? baseCategory : 'Misc';
-
-  // If no explicit name, derive "PLA Orange" style from category + color
-  const derivedName = [category, color].filter(Boolean).join(' ').trim();
-  const name = (input.name ?? derivedName).toString().trim();
-
-  const pricePerKg = toNum(input.pricePerKg);
-  const is_active = input.is_active ?? true;
-
-  // Superset payload to satisfy both old and new servers
-  const body: any = {
-    // new
-    name,
-    category,
-    colorHex: hexRaw,
-    pricePerKg: pricePerKg ?? 0,
-    is_active,
-    colorName: color || undefined,
-
-    // legacy (ignored by new backend; accepted by old)
-    type: type || undefined,
-    color: color || undefined,
-    hex: hexRaw,
-  };
-
-  return body;
-}
-
-function buildPatchBody(input: Partial<FilamentDTO>) {
-  const body: any = {};
-
-  // name derivation if any of its parts changed
-  if (input.name != null || input.type != null || input.color != null || input.category != null) {
-    const type = (input.type ?? '').toString().trim();
-    const color = (input.color ?? input.colorName ?? '').toString().trim();
-    const category = (input.category ?? '').toString().trim();
-    const defaultName = [category || type, color].filter(Boolean).join(' ').trim();
-    const finalName = (input.name ?? defaultName).toString().trim();
-    if (finalName) body.name = finalName;
+/** Update a filament by id */
+export async function updateFilament(
+  id: string,
+  changes: Partial<{
+    material: string;
+    category: string;
+    type: string;
+    color_name: string;
+    color_hex: string;
+    price_per_kg: number;
+    is_active: boolean;
+  }>
+) {
+  const url = `${BASE}/${id}`;
+  const payload = clean(changes);
+  try {
+    const res = await client.patch(url, payload);
+    return res.data;
+  } catch (err) {
+    logAxios(err, url);
+    throw err;
   }
+}
 
-  if (input.category != null || input.type != null) {
-    const c = (input.category ?? input.type ?? '').toString().trim();
-    if (c) body.category = c;
+/** Delete a filament by id */
+export async function deleteFilament(id: string) {
+  const url = `${BASE}/${id}`;
+  try {
+    await client.delete(url);
+    return { ok: true };
+  } catch (err) {
+    logAxios(err, url);
+    throw err;
   }
+}
 
-  if (input.colorHex != null || input.hex != null) {
-    const hx = normHex(input.colorHex ?? input.hex);
-    if (hx) body.colorHex = hx;
+/** Attach a barcode to a filament */
+export async function addBarcode(id: string, code: string) {
+  const url = `${BASE}/${id}/barcodes`;
+  try {
+    const res = await client.post(url, { code: code.trim() });
+    return res.data;
+  } catch (err) {
+    logAxios(err, url);
+    throw err;
   }
+}
 
-  if (input.color != null || input.colorName != null) {
-    const cn = (input.color ?? input.colorName ?? '').toString().trim();
-    if (cn) body.colorName = cn;
+/** Remove a barcode from a filament */
+export async function removeBarcode(id: string, code: string) {
+  const url = `${BASE}/${id}/barcodes/${encodeURIComponent(code)}`;
+  try {
+    await client.delete(url);
+    return { ok: true };
+  } catch (err) {
+    logAxios(err, url);
+    throw err;
   }
-
-  if (input.pricePerKg != null) {
-    const n = toNum(input.pricePerKg);
-    if (n != null) body.pricePerKg = n;
-  }
-
-  if (input.is_active != null) body.is_active = !!input.is_active;
-
-  // keep legacy mirrors (harmless if ignored)
-  if (input.type != null) body.type = input.type;
-  if (input.color != null) body.color = input.color;
-  if (input.hex != null) body.hex = input.hex;
-
-  return body;
 }
 
-// ---------------------------------------------------------
-// API
-// ---------------------------------------------------------
-export async function getFilaments(opts: ListOptions = {}) {
-  const { search, includeInactive, page, pageSize, signal } = opts;
-  // Server expects: include_inactive, page, page_size
-  const q = qs({
-    search,
-    include_inactive: includeInactive ? 'true' : undefined,
-    page,
-    page_size: pageSize,
-  });
-  return http<FilamentDTO[]>('GET', `/filaments${q}`, undefined, signal);
-}
-
-export async function getFilament(id: string, opts: { signal?: AbortSignal } = {}) {
-  return http<FilamentDTO>('GET', `/filaments/${id}`, undefined, opts.signal);
-}
-
-export async function createFilament(input: Partial<FilamentDTO>, opts: CreateOptions = {}) {
-  const body = buildCreateBody(input);
-  return http<FilamentDTO>('POST', '/filaments', body, opts.signal);
-}
-
-export async function updateFilament(id: string, input: Partial<FilamentDTO>, opts: UpdateOptions = {}) {
-  const body = buildPatchBody(input);
-  return http<FilamentDTO>('PATCH', `/filaments/${id}`, body, opts.signal);
-}
-
-export async function deleteFilament(id: string, opts: DeleteOptions = {}) {
-  // backend returns 204
-  await http<void>('DELETE', `/filaments/${id}`, undefined, opts.signal);
-  return;
-}
-
-// ---------------------------------------------------------
-// Convenience helpers
-// ---------------------------------------------------------
-
-/**
- * Fetch a simplified list of active filaments for public consumption.
- *
- * The Estimate page only needs a small subset of the filament fields, so this
- * helper normalises the API response into the legacy `{ id, type, color, hex }`
- * shape expected by older components.
- */
-export async function fetchAvailableFilaments(): Promise<{
-  id: string
-  type: string
-  color: string
-  hex: string
-}[]> {
-  const rows = await getFilaments({ includeInactive: false });
-
-  return rows.map((f) => ({
-    id: String(f.id ?? ''),
-    // Prefer new `name`/`category` fields but fall back to legacy ones
-    type: String(f.type ?? f.category ?? ''),
-    color: String(f.color ?? f.colorName ?? ''),
-    hex: String(f.hex ?? f.colorHex ?? '#000000'),
-  }));
+/** Simple helper used by EstimateCard etc. */
+export async function fetchAvailableFilaments() {
+  // server returns active filaments; filter client-side if needed
+  const res = await client.get(BASE);
+  return res.data;
 }

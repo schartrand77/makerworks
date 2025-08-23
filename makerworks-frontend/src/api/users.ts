@@ -1,135 +1,84 @@
-import axios from './client'
-import { toast } from 'sonner'
-import { z } from 'zod'
-import { useAuthStore } from '@/store/useAuthStore'
-import { getCurrentUser } from './auth'
-import { isAxiosError } from 'axios'
+// src/api/users.ts
+import api from './client'
 
-export interface AvatarUploadResponse {
-  status: 'ok'
-  avatar_url: string
-  thumbnail_url: string
-  uploaded_at: string
+/** What the backend returns for the signed-in user (subset; add fields as needed) */
+export interface UserMe {
+  id: string
+  email: string
+  username: string
+  name: string | null
+  avatar: string | null
+  avatar_url: string | null
+  avatar_updated_at?: string | null
+  bio: string | null
+  language: string | null
+  theme: 'light' | 'dark' | null
+  role?: string | null
+  is_verified?: boolean
+  is_active?: boolean
+  created_at?: string
+  last_login?: string | null
 }
 
-export const UpdateProfileSchema = z.object({
-  username: z.string().min(3).max(50).optional(),
-  email: z.string().email().optional(),
-  bio: z.string().max(140).optional(),
-  language: z.string().optional()
-})
+/** Only fields the backend actually allows you to PATCH on /users/me */
+export interface UpdateMePayload {
+  name?: string | null
+  bio?: string | null
+  avatar_url?: string | null
+  language?: string | null
+  theme?: 'light' | 'dark' | null
+}
 
-export type UpdateProfilePayload = z.infer<typeof UpdateProfileSchema>
+/** Keys we will send to the server; everything else is dropped */
+const ALLOWED_KEYS: (keyof UpdateMePayload)[] = [
+  'name',
+  'bio',
+  'avatar_url',
+  'language',
+  'theme',
+]
 
-/**
- * Upload a new avatar for the current user.
- */
-export const uploadAvatar = async (
-  file: File
-): Promise<AvatarUploadResponse | null> => {
-  const { user, setUser, fetchUser } = useAuthStore.getState()
-  if (!user?.id) {
-    toast.error('❌ Not authenticated. Please log in.')
-    return null
-  }
+/** Coerce empty strings to null for optional text fields */
+function emptyToNull<T extends string | null | undefined>(v: T): string | null | undefined {
+  if (v === '') return null
+  return v
+}
 
-  const formData = new FormData()
-  formData.append('file', file)
-
-  try {
-    const res = await axios.post<AvatarUploadResponse>(
-      `/avatar`,
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+/** Sanitize outbound PATCH body to avoid 422s */
+export function sanitizeUpdateMe(input: Record<string, any>): UpdateMePayload {
+  const out: UpdateMePayload = {}
+  for (const k of ALLOWED_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(input, k)) {
+      // coerce empties on string-ish fields
+      if (k === 'name' || k === 'bio' || k === 'avatar_url' || k === 'language') {
+        // @ts-expect-error runtime coercion
+        out[k] = emptyToNull(input[k])
+      } else if (k === 'theme') {
+        const t = String(input[k] ?? '').toLowerCase()
+        out.theme = t === 'dark' ? 'dark' : t === 'light' ? 'light' : null
       }
-    )
-
-    // Patch the current user with the new avatar URL
-    setUser({
-      ...user,
-      avatar_url: res.data.avatar_url
-    })
-
-    try {
-      await fetchUser(true)
-    } catch (err) {
-      console.warn('[uploadAvatar] Failed to refresh user:', err)
     }
-
-    toast.success('✅ Avatar updated.')
-    return res.data
-  } catch (err: unknown) {
-    console.error('[uploadAvatar] error', err)
-    const detail =
-      isAxiosError(err) && err.response?.data?.detail
-        ? String(err.response.data.detail)
-        : '❌ Failed to upload avatar.'
-    toast.error(detail)
-    return null
   }
+  return out
 }
 
-/**
- * Update the current user's profile (username, email, bio, etc.)
- */
-export const updateUserProfile = async (
-  data: UpdateProfilePayload
-): Promise<void> => {
-  const { user } = useAuthStore.getState()
-  if (!user) {
-    toast.error('❌ Not authenticated. Please log in.')
-    throw new Error('Not authenticated')
-  }
-
-  const parsed = UpdateProfileSchema.safeParse(data)
-  if (!parsed.success) {
-    toast.error('❌ Invalid profile data.')
-    console.error(parsed.error)
-    throw parsed.error
-  }
-
-  try {
-    await axios.patch('/users/me', parsed.data)
-
-    // Refetch updated profile to hydrate state
-    await getCurrentUser()
-
-    toast.success('✅ Profile updated.')
-  } catch (err: unknown) {
-    console.error('[updateUserProfile] error', err)
-    const detail =
-      isAxiosError(err) && err.response?.data?.detail
-        ? String(err.response.data.detail)
-        : '❌ Failed to update profile.'
-    toast.error(detail)
-    throw err
-  }
+/** GET /api/v1/users/me */
+export async function getMe(): Promise<UserMe> {
+  const res = await api.get('/users/me')
+  return res.data as UserMe
 }
 
-/**
- * Delete the current user's account.
- */
-export const deleteAccount = async (): Promise<void> => {
-  const { user, logout } = useAuthStore.getState()
-  if (!user) {
-    toast.error('❌ Not authenticated. Please log in.')
-    throw new Error('Not authenticated')
+/** PATCH /api/v1/users/me — send only allowed, sanitized fields */
+export async function updateMe(partial: Record<string, any>): Promise<UserMe> {
+  const body = sanitizeUpdateMe(partial)
+
+  // If caller passed garbage only, avoid a 422 from an empty payload by throwing early
+  if (Object.keys(body).length === 0) {
+    throw new Error('Nothing to update: provide one of name, bio, avatar_url, language, theme')
   }
 
-  try {
-    await axios.delete('/users/me')
-    logout()
-    toast.success('✅ Account deleted.')
-  } catch (err: unknown) {
-    console.error('[deleteAccount] error', err)
-    const detail =
-      isAxiosError(err) && err.response?.data?.detail
-        ? String(err.response.data.detail)
-        : '❌ Failed to delete account.'
-    toast.error(detail)
-    throw err
-  }
+  const res = await api.patch('/users/me', body, {
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return res.data as UserMe
 }

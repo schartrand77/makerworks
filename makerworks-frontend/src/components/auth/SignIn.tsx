@@ -1,39 +1,71 @@
 // src/components/auth/SignIn.tsx
-import { useEffect, useState } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
-import PageLayout from '@/components/layout/PageLayout';
-import { useSignIn } from '@/hooks/useSignIn';
-import { useAuthStore } from '@/store/useAuthStore';
-import GlassButton from '@/components/ui/GlassButton';
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, Link, useLocation } from 'react-router-dom'
+import PageLayout from '@/components/layout/PageLayout'
+import { useSignIn } from '@/hooks/useSignIn'
+import { useAuthStore } from '@/store/useAuthStore'
+import GlassButton from '@/components/ui/GlassButton'
 
 const SignIn: React.FC = () => {
-  const [emailOrUsername, setEmailOrUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [emailOrUsername, setEmailOrUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { signIn, loading, error } = useSignIn();
-  const { resolved, isAuthenticated } = useAuthStore();
+  const navigate = useNavigate()
+  const location = useLocation()
 
-  // ✅ Only redirect after hydration + successful auth, and avoid looping
+  // useSignIn returns { signIn, state, error }
+  const { signIn, state, error } = useSignIn()
+  const loading = state === 'loading'
+
+  // ✅ Select minimal slices to avoid "getSnapshot should be cached" warnings
+  const user = useAuthStore((s) => s.user)
+  const fetchUser = useAuthStore((s) => s.fetchUser)
+
+  const canSubmit = useMemo(
+    () => !!emailOrUsername.trim() && !!password,
+    [emailOrUsername, password]
+  )
+
+  // Compute target once per location change
+  const targetPath = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    return params.get('redirect') || '/dashboard'
+  }, [location.search])
+
+  // ✅ If user already exists (e.g., cookie present), bounce away from Sign In
+  const redirectedRef = useRef(false)
   useEffect(() => {
-    if (resolved && isAuthenticated() && location.pathname !== '/dashboard') {
-      navigate('/dashboard', { replace: true });
-    }
-  }, [resolved, isAuthenticated, navigate, location.pathname]);
+    if (redirectedRef.current) return
+    if (!user) return
+    redirectedRef.current = true
+    navigate(targetPath, { replace: true })
+  }, [user, navigate, targetPath])
 
   const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await signIn(emailOrUsername, password);
-  };
+    e.preventDefault()
+    if (!canSubmit || loading) return
+
+    // Attempt sign-in
+    const ok = await signIn(emailOrUsername.trim(), password)
+
+    // ✅ Navigate immediately on success (don’t wait for any other flags)
+    if (ok) {
+      redirectedRef.current = true
+      // Ensure store is hydrated so the rest of the app has user state
+      try {
+        await fetchUser?.()
+      } catch {
+        /* non-fatal */
+      }
+      navigate(targetPath, { replace: true })
+    }
+  }
 
   return (
     <PageLayout title="Sign In">
       <form
         onSubmit={onSubmit}
-        /* Exact shared card shell: grey glass, amber ring, subtle top gloss,
-           and green halo when the primary button is hovered. */
         className={[
           'relative overflow-visible rounded-2xl mw-led mw-card',
           'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
@@ -46,11 +78,9 @@ const SignIn: React.FC = () => {
         ].join(' ')}
         noValidate
       >
-        {/* removed inner <h1> to prevent double title; PageLayout already renders it */}
-
         {error && (
           <p
-            className="text-red-500 text-sm text-center bg-red-100 border border-red-300 p-2 rounded-full"
+            className="text-red-600 dark:text-red-400 text-sm text-center bg-red-100/80 dark:bg-red-900/30 border border-red-300/70 dark:border-red-500/40 p-2 rounded-full"
             role="alert"
           >
             {error}
@@ -88,18 +118,17 @@ const SignIn: React.FC = () => {
           />
           <button
             type="button"
-            onClick={() => setShowPassword(!showPassword)}
+            onClick={() => setShowPassword((s) => !s)}
             className="absolute right-3 top-7 text-xs text-brand-orange hover:text-brand-green"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
         </div>
 
-        {/* LED ring/glow button, same design as everywhere (no solid hover, text color unchanged) */}
         <GlassButton
           className="mt-4 mw-enter mw-enter--slim rounded-full font-medium shadow-lg text-gray-800 dark:text-gray-200 transition-all duration-200 disabled:opacity-60"
           type="submit"
-          disabled={loading}
+          disabled={!canSubmit || loading}
           variant="brand"
           aria-busy={loading}
         >
@@ -114,38 +143,19 @@ const SignIn: React.FC = () => {
         </p>
       </form>
 
-      {/* Local styles for the LED ring + card halo on hover */}
       <style>
         {`
-          /* --- LED green token --- */
-          .mw-enter { --mw-ring: #16a34a; } /* Tailwind green-600 */
-
-          /* --- Slim, modern pill sizing --- */
-          .mw-enter--slim {
-            padding: 0.56rem 1.95rem !important;
-            font-size: 0.95rem !important;
-            line-height: 1.2 !important;
-            letter-spacing: 0.01em;
-          }
-
-          /* --- Base LED ring look (transparent base; inner+outer glow) --- */
+          .mw-enter { --mw-ring: #16a34a; }
+          .mw-enter--slim { padding: 0.56rem 1.95rem !important; font-size: 0.95rem !important; line-height: 1.2 !important; letter-spacing: 0.01em; }
           .mw-enter {
-            background: transparent !important;            /* never solid */
+            background: transparent !important;
             border: 1px solid var(--mw-ring) !important;
-            box-shadow:
-              inset 0 0 8px 1.5px rgba(22,163,74,0.36),
-              0 0 10px 2.5px rgba(22,163,74,0.34);
+            box-shadow: inset 0 0 8px 1.5px rgba(22,163,74,0.36), 0 0 10px 2.5px rgba(22,163,74,0.34);
           }
-
-          /* Hover: stronger glow only (no bg fill; NO text-color change) */
           .mw-enter:hover {
             background: transparent !important;
-            box-shadow:
-              inset 0 0 12px 2.5px rgba(22,163,74,0.58),
-              0 0 16px 5px rgba(22,163,74,0.60),
-              0 0 32px 12px rgba(22,163,74,0.24);
+            box-shadow: inset 0 0 12px 2.5px rgba(22,163,74,0.58), 0 0 16px 5px rgba(22,163,74,0.60), 0 0 32px 12px rgba(22,163,74,0.24);
           }
-
           .mw-enter:focus-visible {
             outline: none !important;
             box-shadow:
@@ -154,17 +164,10 @@ const SignIn: React.FC = () => {
               0 0 0 4px var(--mw-ring),
               0 0 20px 5px rgba(22,163,74,0.48);
           }
-
-          /* Glow the whole card subtly when the sign-in button is hovered */
           .mw-card { transition: box-shadow 180ms ease, border-color 180ms ease; }
           .mw-card:has(.mw-enter:hover) {
-            box-shadow:
-              0 0 0 1px rgba(22,163,74,0.35),
-              0 0 22px 8px rgba(22,163,74,0.30),
-              0 0 50px 20px rgba(22,163,74,0.18);
+            box-shadow: 0 0 0 1px rgba(22,163,74,0.35), 0 0 22px 8px rgba(22,163,74,0.30), 0 0 50px 20px rgba(22,163,74,0.18);
           }
-
-          /* Give the form card a touch of depth in dark mode so it doesn't disappear */
           .dark .mw-card {
             box-shadow:
               0 0 0 1px rgba(255,255,255,0.10),
@@ -184,7 +187,7 @@ const SignIn: React.FC = () => {
         `}
       </style>
     </PageLayout>
-  );
-};
+  )
+}
 
-export default SignIn;
+export default SignIn

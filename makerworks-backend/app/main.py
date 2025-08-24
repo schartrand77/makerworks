@@ -720,6 +720,34 @@ async def system_status_public():
 async def underscore_health():
     return {"ok": True}
 
+# ──────────────────────────────────────────────────────────────────────────────
+# VERSION endpoints — serve the repo's ./VERSION file (raw & JSON)
+# ──────────────────────────────────────────────────────────────────────────────
+def _find_version() -> str:
+    """
+    Locate and read the repository VERSION file.
+    We walk up from this file to handle containerized layouts (/app, etc).
+    """
+    here = Path(__file__).resolve()
+    for p in [here, *here.parents]:
+        vf = p / "VERSION"
+        if vf.exists():
+            try:
+                return vf.read_text(encoding="utf-8").strip()
+            except Exception:
+                break
+    return ""
+
+@app.get("/VERSION", include_in_schema=False)
+async def get_version_raw():
+    v = _find_version()
+    # Always return 200 with a newline like a typical VERSION file
+    return Response(content=(v + "\n"), media_type="text/plain")
+
+@app.get("/api/v1/system/version", include_in_schema=False)
+async def get_version_json():
+    return {"version": _find_version()}
+
 # Celery health (optional)
 @app.get("/api/v1/celery/health", include_in_schema=False)
 async def celery_health():

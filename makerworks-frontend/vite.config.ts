@@ -7,7 +7,7 @@ import fs from 'node:fs';
 // Allow overriding the backend origin, but default to local dev backend.
 const BACKEND = (process.env.VITE_BACKEND_URL?.replace(/\/$/, '') || 'http://localhost:8000');
 
-// Resolve app version safely across layouts/containers
+// Resolve app version safely across layouts/containers by reading ./VERSION
 function resolveVersion(): string {
   // 0) explicit env (CI/CD or docker-compose)
   const envVer = (process.env.VITE_APP_VERSION || process.env.APP_VERSION || '').trim();
@@ -56,7 +56,9 @@ export default defineConfig({
     postcss: path.resolve(__dirname, './postcss.config.js'),
   },
   define: {
+    // Make both the version and API base available to the app at build & runtime
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
+    'import.meta.env.VITE_API_BASE': JSON.stringify(BACKEND),
   },
   server: {
     host: true,          // '0.0.0.0' for Docker/LAN
@@ -67,8 +69,14 @@ export default defineConfig({
     watch: {
       usePolling: true,  // helps with file change detection in Docker/VM mounts
     },
-    // 👇 The reason your PNG looked like a web page last time was proxying mistakes.
+    // Dev-only proxy so the frontend can call the backend directly.
+    // NOTE: Adding '/VERSION' here lets the UI literally fetch the raw VERSION file at /VERSION.
     proxy: {
+      // Literal VERSION file (FastAPI serves it at /VERSION)
+      '/VERSION': {
+        target: BACKEND,
+        changeOrigin: true,
+      },
       // API
       '/api': {
         target: BACKEND,
@@ -86,7 +94,7 @@ export default defineConfig({
       },
       // Generated thumbnails (your STL → PNG output)
       '/thumbnails': {
-        target: BACKEND,  // <- fixed typo
+        target: BACKEND,
         changeOrigin: true,
       },
     },

@@ -1,184 +1,108 @@
 # app/routes/users.py
+from __future__ import annotations
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+import re
+from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# project deps
 from app.db.database import get_async_db
 from app.dependencies.auth import get_current_user
-from app.models import User, Favorite, ModelMetadata
-from app.schemas.user import UpdateUserProfile, UserOut
-from app.schemas.models import ModelOut
-from app.services.cache.user_cache import (
-    cache_user_by_id,
-    cache_user_by_username,
-    get_user_by_id,
-    get_user_by_username,
-    delete_user_cache,
-)
+
+# ✅ use the PLURAL schemas module
+from app.schemas.users import UserOut, UserUpdate
+
+# your ORM model (adjust if your path differs)
+from app.models import User  # or: from app.models.user import User
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter()  # main.py mounts this at /api/v1/users
 
-# ─────────────────────────────────────────────────────────────
-# PATCH /users/me
-# ─────────────────────────────────────────────────────────────
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,30}$")
 
-@router.patch(
-    "/me",
-    response_model=UserOut,
-    summary="Update user profile (bio, name, avatar_url, language, theme)",
-    status_code=status.HTTP_200_OK,
-)
-async def update_profile(
-    payload: UpdateUserProfile,
-    current_user: User = Depends(get_current_user),
+
+@router.get("/me", response_model=UserOut, status_code=status.HTTP_200_OK)
+async def get_me(
+    me: User = Depends(get_current_user),
+) -> UserOut:
+    """
+    Return the current authenticated user.
+    """
+    # Pydantic v2: validate from ORM instance
+    return UserOut.model_validate(me)
+
+
+@router.patch("/me", response_model=UserOut, status_code=status.HTTP_200_OK)
+async def update_me(
+    payload: UserUpdate,
+    me: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
-):
+) -> UserOut:
     """
-    Allows a user to update their profile.
-    IMPORTANT: operate on a **persistent** instance in this request's AsyncSession
-    to avoid 'Instance ... is not persistent within this Session' errors.
-    """
-    # Re-attach to current session
-    db_user = await db.get(User, current_user.id)
-    if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
+    Sparse update for the signed-in user's profile.
 
-    # Only apply fields explicitly provided by the client
+    Notes:
+    - Only applies fields explicitly sent (exclude_unset).
+    - Coerces empty strings to None for optional text fields.
+    - Validates username (3–30, [A-Za-z0-9_]) and enforces uniqueness.
+    - Accepts `avatar_url` as a plain string; if your schema allows relative
+      `/uploads/...`, this will not 422.
+    """
     data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No fields provided")
 
-    # Coerce empty strings to None on optional text fields
-    for key in ("name", "bio", "avatar_url", "language"):
-        if key in data and isinstance(data[key], str) and data[key] == "":
-            data[key] = None
+    # Refresh within this session to avoid stale instance edge cases
+    db_user = await db.get(User, me.id)
+    if not db_user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    # Normalize theme to either 'light' or 'dark' (or None)
+    # Normalize empties → None
+    def _clean(val: Optional[str]) -> Optional[str]:
+        if isinstance(val, str) and val.strip() == "":
+            return None
+        return val
+
+    for k in ("name", "bio", "language", "avatar_url"):
+        if k in data:
+            data[k] = _clean(data[k])
+
+    # Username (optional)
+    if "username" in data:
+        new_username = (data["username"] or "").strip() or None
+        if new_username and new_username != db_user.username:
+            if not _USERNAME_RE.fullmatch(new_username):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="username must be 3–30 chars of letters, numbers, or underscore",
+                )
+            # uniqueness
+            res = await db.execute(select(User.id).where(User.username == new_username))
+            if res.scalar() is not None:
+                raise HTTPException(status.HTTP_409_CONFLICT, detail="Username already taken")
+            db_user.username = new_username
+        # prevent falling through to setattr with possibly None
+        data.pop("username", None)
+
+    # Theme normalization (accept only light/dark/null)
     if "theme" in data:
         t = (data["theme"] or "").lower()
         data["theme"] = t if t in ("light", "dark") else None
 
-    # Apply changes
+    # Apply remaining fields verbatim
     for field, value in data.items():
         setattr(db_user, field, value)
 
-    logger.info("🔷 Updating profile for user_id=%s with %s", current_user.id, list(data.keys()) or "no-op")
-
     try:
         await db.commit()
-        await db.refresh(db_user)  # safe: db_user is persistent in this session
-    except Exception as exc:
+        await db.refresh(db_user)
+    except Exception as exc:  # pragma: no cover
         await db.rollback()
-        logger.exception("⛔ Failed to update profile for user_id=%s", current_user.id)
-        raise HTTPException(status_code=500, detail="Failed to update profile") from exc
-
-    # Refresh caches
-    try:
-        await delete_user_cache(str(db_user.id), db_user.username)
-        await cache_user_by_id(db_user)
-        await cache_user_by_username(db_user)
-    except Exception:
-        # Cache issues shouldn't break the request; log and move on
-        logger.warning("⚠️ Cache update failed for user_id=%s", db_user.id, exc_info=True)
+        logger.exception("Profile update failed for user_id=%s", me.id)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update profile") from exc
 
     return UserOut.model_validate(db_user)
-
-# ─────────────────────────────────────────────────────────────
-# GET /users/me
-# ─────────────────────────────────────────────────────────────
-
-@router.get(
-    "/me",
-    response_model=UserOut,
-    summary="Get current authenticated user",
-    status_code=status.HTTP_200_OK,
-)
-async def get_me(current_user: User = Depends(get_current_user)):
-    """
-    Returns current user info (served from cache when available).
-    """
-    logger.info("🔷 Fetching current user: %s", current_user.id)
-
-    # Check Redis cache first
-    cached = await get_user_by_id(str(current_user.id))
-    if cached:
-        logger.debug("⚡ Using cached user profile for %s", current_user.id)
-        return cached
-
-    return UserOut.model_validate(current_user)
-
-# ─────────────────────────────────────────────────────────────
-# GET /users/username/check
-# ─────────────────────────────────────────────────────────────
-
-@router.get(
-    "/username/check",
-    summary="Check if username is available",
-    status_code=status.HTTP_200_OK,
-)
-async def check_username(username: str, db: AsyncSession = Depends(get_async_db)):
-    """
-    Check if a username is already taken.
-    """
-    logger.debug("🔷 Checking username availability: %s", username)
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    return {
-        "available": user is None,
-        "note": "Username is available" if user is None else "Username is already taken",
-    }
-
-# ─────────────────────────────────────────────────────────────
-# GET /users (admin-only)
-# ─────────────────────────────────────────────────────────────
-
-@router.get(
-    "",
-    summary="Admin-only: list all users",
-    status_code=status.HTTP_200_OK,
-)
-async def get_all_users(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db),
-):
-    """
-    Fetch all users — admin only.
-    """
-    if current_user.role != "admin":
-        logger.warning("⛔ User %s attempted to access admin-only user list.", current_user.id)
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    logger.info("🔷 Admin %s fetching all users.", current_user.id)
-    result = await db.execute(select(User))
-    users = result.scalars().all()  # ← fixed typo: was "s...calars"
-    return [UserOut.model_validate(u) for u in users]
-
-# ─────────────────────────────────────────────────────────────
-# GET /users/{user_id}/favorites
-# ─────────────────────────────────────────────────────────────
-
-@router.get(
-    "/{user_id}/favorites",
-    summary="Get user's favorite models",
-    status_code=status.HTTP_200_OK,
-)
-async def get_user_favorites(
-    user_id: str = Path(..., description="User ID to fetch favorites for"),
-    db: AsyncSession = Depends(get_async_db),
-):
-    """
-    Fetch a user's favorite models.
-    """
-    logger.info("🔷 Fetching favorites for user_id=%s", user_id)
-
-    result = await db.execute(
-        select(ModelMetadata)
-        .join(Favorite, Favorite.model_id == ModelMetadata.id)
-        .where(Favorite.user_id == user_id)
-    )
-    models = result.scalars().all()
-
-    logger.info("✅ Found %d favorite models for user_id=%s", len(models), user_id)
-
-    return [ModelOut.model_validate(m).model_dump() for m in models]

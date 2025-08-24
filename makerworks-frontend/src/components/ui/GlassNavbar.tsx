@@ -86,17 +86,6 @@ const GlassNavbar = () => {
     return () => window.removeEventListener('avatar:updated', onUpdate)
   }, [])
 
-  // Gentle gear spin (safe when nav hidden; ref will be null)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (gearRef.current) {
-        gearRef.current.classList.add('animate-spin-once')
-        setTimeout(() => gearRef.current?.classList.remove('animate-spin-once'), 1000)
-      }
-    }, Math.random() * 8000 + 3000)
-    return () => clearInterval(interval)
-  }, [])
-
   /** Routes — fixed; NO admin tab, no admin awareness */
   const navRoutes = useMemo(
     () => [
@@ -131,9 +120,8 @@ const GlassNavbar = () => {
   // ✅ Return based on hideNav AFTER all hooks are declared
   if (hideNav) return null
 
-  /** Green-LED button base for navbar items (matches system .mw-enter) */
-  const ledBtnBase =
-    'mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200 inline-flex'
+  /** Unified LED button base for navbar items (mw-btn = ring-only pill) */
+  const btnBase = 'mw-btn mw-btn-sm'
 
   return (
     <nav
@@ -163,8 +151,9 @@ const GlassNavbar = () => {
             <Link
               key={item.path}
               to={item.path}
-              className={ledBtnBase}
+              className={btnBase}
               aria-current={isActive ? 'page' : undefined}
+              title={item.label}
             >
               {item.label}
             </Link>
@@ -176,22 +165,19 @@ const GlassNavbar = () => {
         {isAuthenticated ? (
           <UserDropdown user={resolvedUser} />
         ) : (
-          <Link to="/auth/signin" className={ledBtnBase}>
+          <Link to="/auth/signin" className={btnBase} title="Sign In">
             Sign In
           </Link>
         )}
       </div>
 
-      {/* Navbar-local intensifier for the active tab (keeps green LED, just turns it up) */}
+      {/* Navbar-local intensifier for the active tab — ring-only, no glow */}
       <style>{`
-        .mw-nav .mw-enter[aria-current="page"]{
-          border-color: #16a34a !important; /* reinforce the ring */
-          box-shadow:
-            inset 0 0 12px 2.5px rgba(22,163,74,0.60),
-            0 0 18px 6px rgba(22,163,74,0.65),
-            0 0 36px 14px rgba(22,163,74,0.28);
+        .mw-nav .mw-btn[aria-current="page"]{
+          border-color: color-mix(in oklab, var(--mw-ring) 85%, black) !important; /* reinforce the ring */
+          box-shadow: inset 0 1px 0 var(--mw-inner-hi); /* keep inner highlight, no bloom */
         }
-        .mw-nav .mw-enter[aria-current="page"]:hover{
+        .mw-nav .mw-btn[aria-current="page"]:hover{
           transform: none; /* keep it steady when active */
         }
       `}</style>

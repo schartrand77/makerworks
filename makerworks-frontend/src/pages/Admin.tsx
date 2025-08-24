@@ -7,19 +7,18 @@ import UsersTab from './admin/UsersTab';
 import FilamentsTab from './admin/FilamentsTab';
 import ModelsTab from './admin/ModelsTab';
 import InventoryTab from './admin/InventoryTab';
+import EstimatesTab from './admin/Estimates'; // ✅ new import
 
-type TabKey = 'users' | 'filaments' | 'inventory' | 'models';
-const TABS = ['users', 'filaments', 'inventory', 'models'] as const;
+type TabKey = 'users' | 'filaments' | 'inventory' | 'models' | 'estimates';
+const TABS = ['users', 'filaments', 'inventory', 'models', 'estimates'] as const;
 
 function isTab(value: unknown): value is TabKey {
   return typeof value === 'string' && (TABS as readonly string[]).includes(value);
 }
 
 export default function Admin() {
-  // ✅ Hooks are always called, in a fixed order
   const { user, isAdmin, loading } = useUser();
 
-  // URL <-> state sync for tab
   const [searchParams, setSearchParams] = useSearchParams();
   const initialFromUrl = searchParams.get('tab');
   const initialFromStorage = (typeof window !== 'undefined'
@@ -33,7 +32,6 @@ export default function Admin() {
 
   const [tab, setTab] = useState<TabKey>(initialTab);
 
-  // Keep URL in sync (without adding history entries on every click)
   useEffect(() => {
     const current = searchParams.get('tab');
     if (current !== tab) {
@@ -43,7 +41,6 @@ export default function Admin() {
     }
   }, [tab, searchParams, setSearchParams]);
 
-  // Persist last tab for refreshes where URL might not be preserved (e.g. manual nav)
   useEffect(() => {
     try {
       window.sessionStorage.setItem('mw.admin.tab', tab);
@@ -51,7 +48,6 @@ export default function Admin() {
   }, [tab]);
 
   const currentIndex = useMemo(() => TABS.indexOf(tab), [tab]);
-
   const setTabSafe = useCallback((value: TabKey) => {
     if (isTab(value)) setTab(value);
   }, []);
@@ -72,7 +68,6 @@ export default function Admin() {
     [currentIndex, setTabSafe]
   );
 
-  // ⏳ Initial loading state
   if (loading) {
     return (
       <PageLayout title="Admin Panel">
@@ -81,12 +76,7 @@ export default function Admin() {
     );
   }
 
-  // 🚪 Redirect unauthenticated users (after the initial load)
-  if (!user) {
-    return <Navigate to="/auth/signin" replace />;
-  }
-
-  // 🚫 Authenticated but not an admin
+  if (!user) return <Navigate to="/auth/signin" replace />;
   if (!isAdmin) {
     return (
       <PageLayout title="Access Denied">
@@ -95,10 +85,8 @@ export default function Admin() {
     );
   }
 
-  // ✅ Authenticated admin view
   return (
     <PageLayout title="Admin Panel" maxWidth="xl" padding="p-4">
-      {/* Tabs: roving focus via keyboard, LED ring on active */}
       <div
         role="tablist"
         aria-label="Admin sections"
@@ -125,7 +113,6 @@ export default function Admin() {
         })}
       </div>
 
-      {/* Panels (render only the active tab’s content) */}
       <div id="panel-users" role="tabpanel" aria-labelledby="tab-users" hidden={tab !== 'users'}>
         {tab === 'users' && <UsersTab />}
       </div>
@@ -138,8 +125,10 @@ export default function Admin() {
       <div id="panel-models" role="tabpanel" aria-labelledby="tab-models" hidden={tab !== 'models'}>
         {tab === 'models' && <ModelsTab />}
       </div>
+      <div id="panel-estimates" role="tabpanel" aria-labelledby="tab-estimates" hidden={tab !== 'estimates'}>
+        {tab === 'estimates' && <EstimatesTab />}
+      </div>
 
-      {/* Local LED glow for the active tab */}
       <style>{`
         .mw-admin-tabs .mw-enter[data-active="true"]{
           border-color:#16a34a !important;

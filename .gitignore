@@ -14,3 +14,12 @@ thumbnails/
 cookies.txt
 secrets/
 makerworks-backend/uploads/
+.venv/
+venv/
+node_modules/
+__pycache__/
+uploads/
+thumbnails/
+makerworks-backend/uploads/
+dist/
+build/

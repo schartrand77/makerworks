@@ -2,7 +2,7 @@
   "name": "makerworks-frontend",
   "private": true,
   "license": "MIT",
-  "version": "0.2.6",
+  "version": "0.2.8",
   "type": "module",
   "scripts": {
     "dev": "vite --host",

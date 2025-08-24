@@ -1,0 +1,15 @@
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+uploads/
+thumbnails/
+*.so
+*.dylib
+cookies.txt
+secrets/

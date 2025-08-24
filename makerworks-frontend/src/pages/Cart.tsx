@@ -1,361 +1,416 @@
-// src/pages/Cart.tsx
+// src/pages/Browse.tsx
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { handleCartCheckout } from '@/lib/checkout';
-import PageLayout from '@/components/layout/PageLayout';
+import { useNavigate, useLocation } from 'react-router-dom';
+import axios from '@/api/client';
+import { LayoutGrid, Search as SearchIcon } from 'lucide-react';
+import { useAuthStore } from '@/store/useAuthStore';
+import { useToast } from '@/context/ToastProvider';
+import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
 import PageHeader from '@/components/ui/PageHeader';
-import { useCartStore } from '@/store/useCartStore';
-import { ShoppingCart, Minus, Plus, Trash2, Loader2, Sparkles, Star } from 'lucide-react';
 
-interface CartItem { id: string; name: string; price: number; quantity: number; }
-type Suggestion = { id: string; name: string; blurb?: string; price?: number; thumbnail?: string | null; };
-
-/** LED buttons everywhere; keep sizes/disabled state consistent */
-function pillClasses(
-  _tone: 'amber' | 'emerald' | 'red' | 'zinc',
-  size: 'sm' | 'md' = 'md',
-  disabled = false
-){
-  const sizeCls = size === 'sm' ? 'mw-btn-sm' : 'mw-btn-md';
-  const state   = disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer';
-  // LED ring + default text color; transparent background so amber rings elsewhere stay amber.
-  return ['mw-enter', sizeCls, 'font-medium text-gray-800 dark:text-gray-200', state].join(' ');
+interface Model {
+  id: string;
+  name: string | null;
+  description: string | null;
+  thumbnail_url: string | null;
+  file_url: string | null;
+  uploader_username: string | null;
+  stl_url?: string | null;
 }
 
-/** Card shell: keep your amber ring look; add mw-led for button-triggered halo */
-function cardClasses(extra = ''){
-  return [
+type SourceKey = 'local' | 'makerworld' | 'thingiverse' | 'printables' | 'thangs';
+
+const SOURCES: { key: SourceKey; label: string }[] = [
+  { key: 'local', label: 'MakerWorks' },
+  { key: 'makerworld', label: 'Makerworld' },
+  { key: 'thingiverse', label: 'Thingiverse' },
+  { key: 'printables', label: 'Printables' },
+  { key: 'thangs', label: 'Thangs' },
+];
+
+const BACKEND_BASE =
+  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ||
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/api\/v1\/?$/, '') ||
+  `${window.location.protocol}//${window.location.hostname}:8000`;
+
+function resolveMediaUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+
+  if (s.startsWith('/thumbnails') || s.startsWith('/uploads') || s.startsWith('/static')) {
+    return `${BACKEND_BASE}${s}`;
+  }
+  const viaHelper = getAbsoluteUrl(s);
+  if (viaHelper) return viaHelper;
+  return s.startsWith('/') ? s : `/${s}`;
+}
+
+type ListResponse = {
+  total: number;
+  items: any[];
+  limit: number;
+  offset: number;
+};
+
+const Browse: React.FC = () => {
+  const [models, setModels] = useState<Model[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingInitial, setLoadingInitial] = useState(true);
+
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
+  const [source, setSource] = useState<SourceKey>('local');
+
+  const { user } = useAuthStore();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const toast = useToast();
+
+  const limit = 9;
+
+  useEffect(() => {
+    if (source === 'local') {
+      setModels([]);
+      setPage(1);
+      setHasMore(true);
+      setLoadingInitial(true);
+      fetchModels(1, limit);
+      if (user?.id) fetchFavorites();
+    } else {
+      redirectToExternal(source as Exclude<SourceKey, 'local'>);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
+
+  useEffect(() => {
+    if (page > 1 && source === 'local') fetchModels(page, limit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, source]);
+
+  const fetchModels = async (pageParam = 1, limitParam = limit) => {
+    if (pageParam > 1) setLoadingMore(true);
+    try {
+      const offset = (pageParam - 1) * limitParam;
+      const url = `${BACKEND_BASE}/api/v1/models`;
+      const res = await axios.get<ListResponse>(url, { params: { offset, limit: limitParam } });
+
+      const fetched: Model[] = (res.data.items || []).map((m) => {
+        const defaultThumb = m?.id ? `/thumbnails/${m.id}.png` : null;
+        const rawThumb = m.thumbnail_url || (m as any).thumbnail_path || defaultThumb;
+
+        const rawFile = (m as any).stl_url || m.file_url || null;
+        const fileAbs = resolveMediaUrl(rawFile);
+
+        return {
+          id: m.id,
+          name: m.name ?? null,
+          description: m.description ?? null,
+          thumbnail_url: resolveMediaUrl(rawThumb),
+          file_url: fileAbs,
+          stl_url: fileAbs,
+          uploader_username: (m as any).uploader_username || null,
+        } as Model;
+      });
+
+      setModels((prev) => (pageParam === 1 ? fetched : [...prev, ...fetched]));
+      const nextCount = (pageParam - 1) * limitParam + fetched.length;
+      setHasMore(nextCount < (res.data.total ?? nextCount));
+    } catch (err) {
+      console.error('[Browse] Failed to load models]:', err);
+      toast.error('⚠️ Failed to load models. Please try again.');
+      setHasMore(false);
+    } finally {
+      setLoadingInitial(false);
+      if (pageParam > 1) setLoadingMore(false);
+    }
+  };
+
+  const fetchFavorites = async () => {
+    if (!user?.id) return;
+    try {
+      const res = await axios.get<string[]>(
+        `${BACKEND_BASE}/api/v1/users/${user.id}/favorites`
+      );
+      setFavorites(new Set(res.data || []));
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status !== 405) {
+        console.error('[Browse] Failed to load favorites]:', err);
+      }
+    }
+  };
+
+  const toggleFavorite = async (id: string) => {
+    if (!user?.id) return;
+    const isFav = favorites.has(id);
+    const updated = new Set(favorites);
+    isFav ? updated.delete(id) : updated.add(id);
+    setFavorites(updated);
+
+    try {
+      const base = `${BACKEND_BASE}/api/v1`;
+      if (isFav) await axios.delete(`${base}/users/${user.id}/favorites/${id}`);
+      else await axios.post(`${base}/users/${user.id}/favorites`, { modelId: id });
+    } catch (err) {
+      console.error('[Browse] Failed to update favorite]:', err);
+      setFavorites(new Set(favorites));
+      toast.error('⚠️ Failed to update favorite. Please try again.');
+    }
+  };
+
+  const redirectToExternal = (platform: Exclude<SourceKey, 'local'>) => {
+    const urls: Record<Exclude<SourceKey, 'local'>, string> = {
+      makerworld: 'https://makerworld.com',
+      thingiverse: 'https://www.thingiverse.com',
+      printables: 'https://www.printables.com',
+      thangs: 'https://thangs.com',
+    };
+    const url = urls[platform];
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!win) toast.info('Popup blocked. Allow popups to open external sources in a new tab.');
+    setSource('local');
+  };
+
+  const filteredModels = useMemo(() => {
+    const q = query.toLowerCase();
+    return models.filter((model) => {
+      const name = (model.name ?? '').toLowerCase();
+      const desc = (model.description ?? '').toLowerCase();
+      return name.includes(q) || desc.includes(q);
+    });
+  }, [models, query]);
+
+  const isLoading = loadingInitial;
+
+  const navigateToModel = (m: Model) => {
+    if (!m?.id) return;
+    const from = `${location.pathname}${location.search}`;
+    navigate(`/models/${m.id}`, {
+      state: {
+        preloaded: {
+          id: m.id,
+          name: m.name,
+          description: m.description,
+          thumbnail_url: m.thumbnail_url,
+          stl_url: m.stl_url ?? m.file_url ?? null,
+          uploader_username: m.uploader_username,
+        },
+        from,
+      },
+    });
+  };
+
+  const navigateToEstimate = (m: Model) => {
+    if (!m?.id) return;
+    const src = m.stl_url ?? m.file_url ?? null;
+    const from = `${location.pathname}${location.search}`;
+    navigate('/estimate', {
+      state: {
+        modelId: m.id,
+        modelUrl: src,
+        fromModel: {
+          id: m.id,
+          name: m.name ?? null,
+          description: m.description ?? null,
+          src,
+          thumbnail_url: m.thumbnail_url ?? null,
+        },
+        from,
+      },
+    });
+  };
+
+  // exact same class stack Cart uses for its card rim (no neon hover)
+  const cartRim = [
     'relative overflow-visible rounded-2xl mw-led',
     'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
     'border border-amber-300/45 ring-1 ring-amber-300/40 hover:ring-amber-400/55',
     'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-    'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none before:opacity-0 hover:before:opacity-100 before:transition-opacity',
+    'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
+    'before:opacity-0 hover:before:opacity-100 before:transition-opacity',
     'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
-    extra,
   ].join(' ');
-}
-
-/** Try the server cart first (session-backed), then client store. */
-async function fetchServerCart(): Promise<CartItem[]> {
-  const res = await fetch('/api/v1/cart', { credentials: 'include' });
-  if (!res.ok) return [];
-  const data = await res.json();
-  const arr = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
-  return arr
-    .map((it: any) => ({
-      id: String(it.id ?? it.model_id ?? crypto.randomUUID()),
-      name: String(it.name ?? it.title ?? 'Item'),
-      price: Number(it.price ?? it.cost ?? 0),
-      quantity: Number(it.quantity ?? it.qty ?? 1),
-    }))
-    .filter((x) => x.quantity > 0);
-}
-
-/** “Popular” suggestions — actually ask for popular; de-dupe and drop items already in cart. */
-async function fetchSuggestions(excludeIds: string[] = []): Promise<Suggestion[]> {
-  try {
-    // Adjust query params to match your API’s contract for “popular”
-    const res = await fetch('/api/v1/models?sort=popular&limit=12', { credentials: 'include' });
-    if (!res.ok) throw new Error('bad status');
-    const models = await res.json();
-    const list = Array.isArray(models?.items) ? models.items : Array.isArray(models) ? models : [];
-
-    const seen = new Set<string>();
-    const out: Suggestion[] = [];
-    for (const m of list) {
-      const id = String(m.id ?? m.model_id ?? crypto.randomUUID());
-      if (seen.has(id) || excludeIds.includes(id)) continue;
-      seen.add(id);
-      out.push({
-        id,
-        name: String(m.name ?? m.title ?? 'Model'),
-        blurb: String(m.description ?? m.subtitle ?? '') || undefined,
-        thumbnail: m.thumbnail_url ?? m.image_url ?? null,
-        price: Number(m.price ?? m.base_price ?? 0) || undefined,
-      });
-      if (out.length >= 6) break;
-    }
-    return out;
-  } catch {
-    console.info('[suggestions] using fallback list');
-    return [
-      { id: 'benchy',  name: 'Benchy',       blurb: 'The one and only!',            price: 0 },
-      { id: 'calicat', name: 'Cali Cat',     blurb: 'Calibration with attitude',    price: 0 },
-      { id: 'xyzcube', name: 'XYZ Cube',     blurb: 'Dimensional sanity check',     price: 0 },
-      { id: 'vase',    name: 'Spiral Vase',  blurb: 'Vase mode goodness',           price: 0 },
-      { id: 'rook',    name: 'Rook',         blurb: 'Classic print benchmark',      price: 0 },
-      { id: 'frog',    name: 'Frog',         blurb: 'A friendly calibration buddy', price: 0 },
-    ];
-  }
-}
-
-export default function Cart(){
-  const { items, setItemQuantity, removeItem, clearCart } = useCartStore();
-  const navigate = useNavigate();
-
-  const [serverItems, setServerItems] = useState<CartItem[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [recent, setRecent] = useState<Suggestion[]>([]);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try{
-        const rows = await fetchServerCart();
-
-        // Build exclusion list using whichever cart source will display
-        const idsInCart = (items.length ? items : rows).map(i => String(i.id));
-        const sugs = await fetchSuggestions(idsInCart);
-
-        if (alive){ setServerItems(rows); setSuggestions(sugs); }
-      } finally { if (alive) setLoading(false); }
-    })();
-
-    try{
-      const raw = localStorage.getItem('mw_recent_models');
-      if (raw){
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)){
-          setRecent(arr.slice(0, 6).map((m:any)=>({
-            id: String(m.id ?? crypto.randomUUID()),
-            name: String(m.name ?? 'Model'),
-            blurb: m.blurb ?? undefined,
-            price: m.price ?? undefined,
-            thumbnail: m.thumbnail ?? null,
-          })));
-        }
-      }
-    } catch { /* shrug */ }
-
-    return () => { alive = false; };
-    // We intentionally don’t include `items` here to keep this an initial-load fetch.
-    // If you want it reactive, add `items` to deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const displayItems: CartItem[] = useMemo(() => (items.length > 0 ? items : serverItems), [items, serverItems]);
-  const subtotal = useMemo(() => displayItems.reduce((t,i)=> t + i.price * i.quantity, 0), [displayItems]);
-
-  const handleCheckout = () => { handleCartCheckout(navigate); };
 
   return (
-    <PageLayout>
-      <div className="space-y-6 flex flex-col items-center w-full">
-        <div className="w-full max-w-5xl">
-          <PageHeader icon={<ShoppingCart className="w-8 h-8 text-zinc-400" />} title="Your Cart" />
-        </div>
+    <main className="mx-auto max-w-6xl px-4 py-8 space-y-5">
+      <PageHeader icon={<LayoutGrid className="w-8 h-8 text-zinc-400" />} title="Browse Models" />
 
-        {loading ? (
-          <div className="w-full max-w-md p-8 text-center">
-            <div className={cardClasses('p-8')}>
-              <Loader2 className="w-6 h-6 text-zinc-400 mx-auto mb-3" aria-hidden />
-              <p className="text-base text-zinc-700 dark:text-zinc-300">Loading your cart…</p>
+      {/* Page wrapper = plain glass (Cart does this too for its big sections) */}
+      <section className="card p-4 sm:p-6 rounded-3xl">
+        {/* Controls */}
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+          <div className="relative w-full sm:flex-1">
+            <input
+              type="text"
+              placeholder="Search models…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className={[
+                'w-full rounded-full px-4 h-10',
+                'bg-white/80 dark:bg-white/10 backdrop-blur',
+                'ring-1 ring-black/10 dark:ring-white/10 focus:ring-amber-400/60',
+              ].join(' ')}
+              aria-label="Search models"
+            />
+            <SearchIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          </div>
+
+          {/* Source select */}
+          <div className="relative inline-flex items-center w-full sm:w-auto">
+            <select
+              aria-label="Source"
+              value={source}
+              onChange={(e) => setSource(e.target.value as SourceKey)}
+              className={[
+                'rounded-full px-3 pr-8 h-10',
+                'bg-white/80 dark:bg-white/10 backdrop-blur',
+                'ring-1 ring-black/10 dark:ring-white/10 focus:ring-amber-400/60',
+                'w-full sm:w-[220px] appearance-none text-center',
+              ].join(' ')}
+            >
+              {SOURCES.map(({ key, label }) => (
+                <option key={key} value={key} className="bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+                  {label}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-zinc-700/70 dark:text-zinc-300/70">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </div>
           </div>
-        ) : displayItems.length === 0 ? (
+        </div>
+
+        {/* Grid */}
+        {source === 'local' && (
           <>
-            {/* Empty-state hero */}
-            <div className="w-full max-w-5xl">
-              <div className={cardClasses('p-8 sm:p-10 overflow-hidden')}>
-                <div className="flex items-center gap-3 mb-3">
-                  <Sparkles className="w-5 h-5 text-amber-500/80" />
-                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                    Your cart is currently empty
-                  </h2>
-                </div>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-5">
-                  Warm it up with a few models—try one of these popular starters.
-                </p>
-                <Link to="/browse" className="mw-enter mw-btn-md font-semibold text-gray-800 dark:text-gray-200 inline-flex">
-                  Browse models
-                </Link>
-              </div>
-            </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" role="list" aria-label="Model results">
+              {isLoading &&
+                Array.from({ length: 8 }).map((_, idx) => (
+                  <article key={`skeleton-${idx}`} className={`${cartRim} p-3 animate-pulse`} role="listitem">
+                    <div className="space-y-3">
+                      <div className="w-full aspect-[4/3] bg-zinc-300/20 dark:bg-zinc-600/20 rounded-lg" />
+                      <div className="h-4 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-3/4" />
+                      <div className="h-3 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-full" />
+                    </div>
+                  </article>
+                ))}
 
-            {/* Popular suggestions — identical viewer/halo as Browse */}
-            {suggestions.length > 0 && (
-              <section className="w-full max-w-5xl">
-                <div className="mb-3 flex items-center gap-2">
-                  <Star className="w-4 h-4 text-amber-500/80" />
-                  <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Popular right now</h3>
-                </div>
+              {!isLoading && filteredModels.length === 0 && (
+                <div className="col-span-full text-center text-gray-500 dark:text-gray-400">No models found.</div>
+              )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {suggestions.map((s) => (
-                    <article key={`sugg-${s.id}`} className={cardClasses('p-4')}>
-                      <div className="mw-thumb aspect-[4/3] rounded-xl mb-3 bg-zinc-900 dark:bg-zinc-900">
+              {!isLoading &&
+                filteredModels.map((model) => {
+                  const modelKey = model.id || model.file_url || Math.random().toString();
+                  const thumbUrl = resolveMediaUrl(model.thumbnail_url || (model.id ? `/thumbnails/${model.id}.png` : null));
+
+                  return (
+                    <article
+                      key={`model-${modelKey}`}
+                      className={`${cartRim} p-4 cursor-pointer`}
+                      role="listitem"
+                      onClick={() => navigateToModel(model)}
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (model.id) toggleFavorite(model.id);
+                        }}
+                        className="absolute top-2 right-2 text-yellow-400 hover:scale-110 transition"
+                        aria-label="Favorite"
+                        title="Toggle favorite"
+                      >
+                        {model.id && favorites.has(model.id) ? '★' : '☆'}
+                      </button>
+
+                      {/* Thumbnail frame = neutral ring (Cart tiles do this too) */}
+                      <div className="mw-thumb aspect-[4/3] rounded-xl mb-3 bg-zinc-900 dark:bg-zinc-900 ring-1 ring-black/10 dark:ring-white/10">
                         <div className="mw-thumb-frame w-full h-full flex items-center justify-center">
-                          {s.thumbnail ? (
-                            <img src={s.thumbnail} alt={`${s.name} preview`} className="mw-thumb-img" loading="lazy" />
+                          {thumbUrl ? (
+                            <img
+                              key={`thumb-${modelKey}`}
+                              src={thumbUrl}
+                              alt={model.name ?? 'Model'}
+                              className="mw-thumb-img"
+                              loading="lazy"
+                              draggable={false}
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).onerror = null;
+                                (e.currentTarget as HTMLImageElement).src = `${BACKEND_BASE}/static/default-avatar.png`;
+                              }}
+                            />
                           ) : (
-                            <div className="text-zinc-400 text-sm">Preview</div>
+                            <div className="text-sm text-zinc-500">No preview available</div>
                           )}
                         </div>
                       </div>
 
-                      <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{s.name}</h4>
-                      {s.blurb && <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5 line-clamp-2">{s.blurb}</p>}
+                      <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{model.name || 'Untitled'}</h4>
+
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5 line-clamp-2">
+                        {model.description || 'No description provided.'}
+                      </p>
+
+                      {model.uploader_username && (
+                        <p className="text-[12px] text-zinc-500 dark:text-zinc-400 mt-1">
+                          Uploaded by <span className="font-semibold">{model.uploader_username}</span>
+                        </p>
+                      )}
 
                       <div className="mt-3 flex gap-2">
-                        <Link to={`/browse`} className="mw-enter mw-btn-sm text-gray-800 dark:text-gray-200 inline-flex">
-                          View details
-                        </Link>
-                        <Link to={`/estimate`} state={{ modelId: s.id }} className="mw-enter mw-btn-sm text-gray-800 dark:text-gray-200 inline-flex">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigateToEstimate(model);
+                          }}
+                          className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200 inline-flex"
+                          aria-label="Get estimate"
+                          title="Send this model to the estimator"
+                        >
                           Get estimate
-                        </Link>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Recently viewed (left as-is) */}
-            {recent.length > 0 && (
-              <section className="w-full max-w-5xl">
-                <div className="mt-8 mb-3 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Recently viewed</h3>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  {recent.map((r) => (
-                    <Link key={`rec-${r.id}`} to="/browse" className={cardClasses('p-3 hover:before:opacity-100')} title={r.name}>
-                      <div className="aspect-square rounded-lg bg-white/50 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10 mb-2 grid place-items-center overflow-hidden">
-                        {r.thumbnail ? (
-                          <img src={r.thumbnail} alt={`${r.name} preview`} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="text-zinc-400 text-xs">Preview</div>
-                        )}
-                      </div>
-                      <div className="text-[11px] font-medium text-zinc-900 dark:text-zinc-100 truncate">{r.name}</div>
-                    </Link>
-                  ))}
-                </div>
-              </section>
-            )}
-          </>
-        ) : (
-          /* Filled cart */
-          <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Items list */}
-            <div className="lg:col-span-2 space-y-4">
-              {displayItems.map((item) => {
-                const lineTotal = item.price * item.quantity;
-                const clientBacked = items.length > 0;
-
-                return (
-                  <div key={`${item.id}-${item.name}`} className={cardClasses('p-4 sm:p-5')}>
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                      <div className="min-w-0">
-                        <h2 className="font-semibold text-lg text-zinc-900 dark:text-zinc-100 truncate">{item.name}</h2>
-                        <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-0.5">
-                          ID: <span className="font-mono">{item.id}</span> • ${item.price.toFixed(2)} each
-                        </p>
-
-                        <div className="mt-3 flex items-center gap-2">
-                          <button
-                            onClick={() => clientBacked && setItemQuantity(item.id, Math.max(1, item.quantity - 1))}
-                            className={pillClasses('zinc', 'sm', !clientBacked)}
-                            aria-label={`Decrease quantity of ${item.name}`}
-                            disabled={!clientBacked}
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-
-                          <span className="min-w-[2.5rem] text-center text-zinc-900 dark:text-zinc-100">{item.quantity}</span>
-
-                          <button
-                            onClick={() => clientBacked && setItemQuantity(item.id, item.quantity + 1)}
-                            className={pillClasses('amber', 'sm', !clientBacked)}
-                            aria-label={`Increase quantity of ${item.name}`}
-                            disabled={!clientBacked}
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                        {!clientBacked && (
-                          <p className="mt-2 text-xs text-zinc-500">
-                            Server cart loaded. Quantity changes are disabled here—proceed to checkout or add via UI that pushes to the client cart.
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between sm:flex-col sm:items-end gap-3 sm:gap-2">
-                        <div className="text-right">
-                          <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Line Total</div>
-                          <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100">${lineTotal.toFixed(2)}</div>
-                        </div>
+                        </button>
 
                         <button
-                          onClick={() => clientBacked && removeItem(item.id)}
-                          className={pillClasses('red', 'sm', !clientBacked)}
-                          aria-label={`Remove ${item.name}`}
-                          title={clientBacked ? 'Remove from cart' : 'Remove disabled for server-loaded items'}
-                          disabled={!clientBacked}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigateToModel(model);
+                          }}
+                          className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200 inline-flex"
+                          aria-label="View details"
+                          title="View model details"
                         >
-                          <Trash2 className="w-4 h-4 mr-1.5" />
-                          Remove
+                          View details
                         </button>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    </article>
+                  );
+                })}
             </div>
 
-            {/* Summary */}
-            <aside className="space-y-4">
-              <div className={cardClasses('p-5')}>
-                <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 mb-3">Order Summary</h3>
-
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-zinc-600 dark:text-zinc-400">Items</span>
-                    <span className="text-zinc-900 dark:text-zinc-100">{displayItems.length}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-zinc-600 dark:text-zinc-400">Subtotal</span>
-                    <span className="font-medium text-zinc-900 dark:text-zinc-100">${subtotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-zinc-600 dark:text-zinc-400">Taxes &amp; shipping</span>
-                    <span className="text-zinc-900 dark:text-zinc-100">Calculated at checkout</span>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <button
-                    onClick={clearCart}
-                    className={pillClasses('zinc', 'md', items.length === 0)}
-                    aria-label="Clear cart"
-                    title="Remove all items"
-                    disabled={items.length === 0}
-                  >
-                    Clear Cart
-                  </button>
-
-                  <button
-                    onClick={handleCheckout}
-                    className="mw-enter mw-btn-md font-semibold text-gray-800 dark:text-gray-200"
-                    aria-label="Proceed to checkout"
-                    title="Proceed to checkout"
-                  >
-                    Proceed to Checkout
-                  </button>
-                </div>
+            {hasMore && !isLoading && (
+              <div className="mt-5 text-center">
+                <button
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={loadingMore}
+                  className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200 px-4"
+                >
+                  {loadingMore ? 'Loading…' : 'Load more'}
+                </button>
               </div>
-
-              <div className={cardClasses('p-4')}>
-                <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                  Need a custom quote, special material, or rush order? Add notes on the checkout page or contact us
-                  after placing your order—we’ll adjust before printing.
-                </p>
-              </div>
-            </aside>
-          </div>
+            )}
+          </>
         )}
-      </div>
-    </PageLayout>
+      </section>
+    </main>
   );
-}
+};
+
+export default Browse;

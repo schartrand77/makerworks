@@ -1,6 +1,7 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from app.schemas._base import APIModel as BaseModel
 
 
 class SystemStatus(BaseModel):

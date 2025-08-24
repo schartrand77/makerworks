@@ -6,6 +6,10 @@ import { useAuthStore } from '@/store/useAuthStore';
 // If you already have these in your API layer, great. Otherwise, stub or wire them.
 import { getMe, getCart, createCheckoutSession } from '@/api/checkout';
 
+// NEW: keep title consistent with the rest of the app
+import PageHeader from '@/components/ui/PageHeader';
+import { CreditCard } from 'lucide-react';
+
 type CheckoutItem = {
   name: string;
   cost: number;
@@ -157,7 +161,7 @@ export default function CheckoutPage() {
   }
 
   if (!me) {
-    // Signed-out prompt — our standard grey card with green LED button
+    // Signed-out prompt — amber-rimmed card + shared LED pill
     return (
       <div className="max-w-3xl mx-auto p-6">
         <div
@@ -166,17 +170,12 @@ export default function CheckoutPage() {
             'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
             'border border-amber-300/45 ring-1 ring-amber-300/40',
             'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-            'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
-            'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
             'p-6',
           ].join(' ')}
         >
           <h1 className="text-xl font-semibold mb-2">Please sign in</h1>
           <p className="text-neutral-600 dark:text-neutral-300 mb-5">You need an account to complete your purchase.</p>
-          <Link
-            to="/signin"
-            className="mw-enter mw-enter--slim rounded-full font-medium text-gray-800 dark:text-gray-200 inline-flex"
-          >
+          <Link to="/signin" className="mw-btn mw-btn-md font-medium">
             Sign In
           </Link>
         </div>
@@ -186,7 +185,8 @@ export default function CheckoutPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
-      <h1 className="text-2xl font-semibold mb-6">Checkout</h1>
+      {/* CONSISTENT TITLE */}
+      <PageHeader icon={<CreditCard className="w-8 h-8 text-zinc-400" />} title="Checkout" />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT: Forms */}
@@ -198,8 +198,6 @@ export default function CheckoutPage() {
               'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
               'border border-amber-300/45 ring-1 ring-amber-300/40',
               'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
-              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
               'p-6',
             ].join(' ')}
           >
@@ -242,8 +240,6 @@ export default function CheckoutPage() {
               'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
               'border border-amber-300/45 ring-1 ring-amber-300/40',
               'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
-              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
               'p-6',
             ].join(' ')}
           >
@@ -253,8 +249,8 @@ export default function CheckoutPage() {
               <button
                 type="button"
                 onClick={() => setDelivery((d) => ({ ...d, method: 'pickup' }))}
-                data-active={delivery.method === 'pickup'}
-                className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
+                aria-pressed={delivery.method === 'pickup'}
+                className="mw-btn mw-btn-sm font-medium"
               >
                 Pick up
               </button>
@@ -262,8 +258,8 @@ export default function CheckoutPage() {
               <button
                 type="button"
                 onClick={() => setDelivery((d) => ({ ...d, method: 'ship' }))}
-                data-active={delivery.method === 'ship'}
-                className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
+                aria-pressed={delivery.method === 'ship'}
+                className="mw-btn mw-btn-sm font-medium"
               >
                 Ship to me
               </button>
@@ -332,8 +328,6 @@ export default function CheckoutPage() {
               'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
               'border border-amber-300/45 ring-1 ring-amber-300/40',
               'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
-              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
               'p-6',
             ].join(' ')}
           >
@@ -365,8 +359,6 @@ export default function CheckoutPage() {
               'bg-white/60 dark:bg-white/10 backdrop-blur-xl',
               'border border-amber-300/45 ring-1 ring-amber-300/40',
               'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-              'before:content-[""] before:absolute before:inset-0 before:rounded-2xl before:pointer-events-none',
-              'before:shadow-[0_0_0_1px_rgba(251,146,60,0.12),0_0_12px_rgba(251,146,60,0.10),0_0_20px_rgba(251,146,60,0.08)]',
               'p-6',
             ].join(' ')}
           >
@@ -426,84 +418,13 @@ export default function CheckoutPage() {
               type="button"
               onClick={handlePay}
               disabled={submitting}
-              className="mt-6 w-full mw-enter mw-enter--slim rounded-full font-medium text-gray-800 dark:text-gray-200 disabled:opacity-60 inline-flex justify-center"
+              className="mt-6 w-full mw-btn mw-btn-md font-semibold"
             >
               {submitting ? 'Creating session…' : 'Pay with Stripe'}
             </button>
           </section>
         </aside>
       </div>
-
-      {/* Local LED styles for consistency */}
-      <style>{`
-        /* Green LED token */
-        .mw-enter { --mw-ring: #16a34a; } /* Tailwind green-600 */
-
-        /* Slim, modern pill sizing */
-        .mw-enter--slim {
-          padding: 0.56rem 1.95rem !important;
-          font-size: 0.95rem !important;
-          line-height: 1.2 !important;
-          letter-spacing: 0.01em;
-        }
-
-        /* Base LED ring look (transparent base; inner+outer glow) */
-        .mw-enter {
-          background: transparent !important;            /* never solid */
-          border: 1px solid var(--mw-ring) !important;
-          box-shadow:
-            inset 0 0 8px 1.5px rgba(22,163,74,0.36),
-            0 0 10px 2.5px rgba(22,163,74,0.34);
-          transition: box-shadow .18s ease, transform .12s ease, border-color .18s ease;
-        }
-
-        /* Hover: stronger glow only (no bg fill; NO text-color change) */
-        .mw-enter:hover {
-          background: transparent !important;
-          transform: translateY(-0.5px);
-          box-shadow:
-            inset 0 0 12px 2.5px rgba(22,163,74,0.58),
-            0 0 16px 5px rgba(22,163,74,0.60),
-            0 0 32px 12px rgba(22,163,74,0.24);
-        }
-
-        .mw-enter:focus-visible {
-          outline: none !important;
-          box-shadow:
-            inset 0 0 13px 2.5px rgba(22,163,74,0.58),
-            0 0 0 2px rgba(255,255,255,0.6),
-            0 0 0 4px var(--mw-ring),
-            0 0 20px 5px rgba(22,163,74,0.48);
-        }
-
-        /* Card halo: green under-glow when any .mw-enter inside is hovered */
-        .mw-led { transition: box-shadow .18s ease, border-color .18s ease; }
-        .mw-led:has(.mw-enter:hover){
-          border-color: rgba(22,163,74,0.55) !important;
-          box-shadow:
-            inset 0 1px 0 rgba(255,255,255,0.65),
-            0 0 0 1px rgba(22,163,74,0.14),
-            0 0 12px rgba(22,163,74,0.12),
-            0 0 24px rgba(22,163,74,0.10);
-        }
-        .dark .mw-led:has(.mw-enter:hover){
-          border-color: rgba(22,163,74,0.70) !important;
-          box-shadow:
-            inset 0 1px 0 rgba(255,255,255,0.65),
-            0 0 0 1px rgba(22,163,74,0.22),
-            0 0 24px rgba(22,163,74,0.24),
-            0 0 60px rgba(22,163,74,0.22);
-        }
-
-        /* Delivery toggle: intensify the active one a bit */
-        .mw-led .mw-enter[data-active="true"]{
-          box-shadow:
-            inset 0 0 12px 2.5px rgba(22,163,74,0.62),
-            0 0 16px 6px rgba(22,163,74,0.62),
-            0 0 36px 14px rgba(22,163,74,0.24);
-          border-color: rgba(22,163,74,0.9) !important;
-        }
-      `}</style>
     </div>
   );
 }

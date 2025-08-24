@@ -1,10 +1,14 @@
 // src/App.tsx
 import React, { Suspense, useEffect, useState } from "react";
+import { Routes, Route } from "react-router-dom";
 import { useSessionRefresh } from "@/hooks/useSessionRefresh";
 import GlassNavbar from "@/components/ui/GlassNavbar";
 import RoutesRenderer from "@/routes";
 import { useAuthStore } from "@/store/useAuthStore";
 import ErrorBoundary from "@/components/system/ErrorBoundary";
+
+// NEW: Printers admin page (bambu bridge controls)
+import Printers from "@/pages/admin/Printers";
 
 // Lightweight loading UI used both for initial auth and lazy chunk fallback
 function AppSkeleton() {
@@ -22,8 +26,16 @@ function AppContent() {
   return (
     <div className="pt-16">
       <ErrorBoundary>
+        {/* We keep Suspense here so lazy chunks (and the printers page, if later code-split) get a spinner */}
         <Suspense fallback={<AppSkeleton />}>
-          <RoutesRenderer />
+          {/* Inject a specific route for /admin/printers, and let your existing router render everything else. */}
+          <Routes>
+            <Route path="/admin/printers" element={<Printers />} />
+            {/* Hand the rest of the app to your existing route tree.
+                If RoutesRenderer internally uses <Routes>, that's fine—this element
+                will mount it under the wildcard. */}
+            <Route path="/*" element={<RoutesRenderer />} />
+          </Routes>
         </Suspense>
       </ErrorBoundary>
     </div>

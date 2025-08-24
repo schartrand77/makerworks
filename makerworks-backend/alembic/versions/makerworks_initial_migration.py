@@ -7,7 +7,8 @@ This is a full base migration that creates the current schema from scratch:
 - Inventory tables (brands, categories, products, product_variants, media, warehouses,
   inventory_levels, suppliers, supplier_skus, stock_moves, user_items)
 - Filament barcodes table (barcodes) with per-filament codes and uniqueness
-- FKs, indexes and sensible defaults
+- Pricing tables (pricing_settings, materials, printers, labor_roles, process_steps,
+  quality_tiers, consumables, pricing_rules, pricing_versions)
 - The compatibility VIEW public.models and its INSTEAD OF triggers
 
 For existing databases that already match this schema, do:
@@ -439,6 +440,140 @@ def upgrade() -> None:
     )
 
     # ──────────────────────────────────────────────────────────────────────
+    # PRICING (global settings, materials, printers, labor, steps, tiers,
+    # consumables, rules, versions)
+    # ──────────────────────────────────────────────────────────────────────
+    op.create_table(
+        "pricing_settings",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("effective_from", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("currency", sa.String(length=8), nullable=False, server_default=sa.text("'CAD'")),
+        sa.Column("electricity_cost_per_kwh", sa.Float(), nullable=False, server_default=sa.text("0.18")),
+        sa.Column("shop_overhead_per_day", sa.Float(), nullable=False, server_default=sa.text("35.0")),
+        sa.Column("productive_hours_per_day", sa.Float(), nullable=True),
+        sa.Column("admin_note", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index(
+        "ix_pricing_settings_effective_from",
+        "pricing_settings",
+        ["effective_from"],
+        unique=False,
+        schema="public",
+    )
+
+    op.create_table(
+        "materials",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("type", sa.String(length=8), nullable=False),  # 'FDM' | 'SLA'
+        sa.Column("cost_per_kg", sa.Float(), nullable=True),
+        sa.Column("cost_per_l", sa.Float(), nullable=True),
+        sa.Column("density_g_cm3", sa.Float(), nullable=True),
+        sa.Column("abrasive", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("waste_allowance_pct", sa.Float(), nullable=False, server_default=sa.text("0.05")),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index("ix_materials_enabled", "materials", ["enabled"], unique=False, schema="public")
+
+    op.create_table(
+        "printers",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("tech", sa.String(length=8), nullable=False),  # 'FDM' | 'SLA'
+        sa.Column("nozzle_diameter_mm", sa.Float(), nullable=True),
+        sa.Column("chamber", sa.Boolean(), nullable=True),
+        sa.Column("enclosed", sa.Boolean(), nullable=True),
+        sa.Column("watts_idle", sa.Float(), nullable=False, server_default=sa.text("10.0")),
+        sa.Column("watts_printing", sa.Float(), nullable=False, server_default=sa.text("120.0")),
+        sa.Column("hourly_base_rate", sa.Float(), nullable=False, server_default=sa.text("5.0")),
+        sa.Column("maintenance_rate_per_hour", sa.Float(), nullable=False, server_default=sa.text("0.4")),
+        sa.Column("depreciation_per_hour", sa.Float(), nullable=False, server_default=sa.text("1.0")),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index("ix_printers_enabled", "printers", ["enabled"], unique=False, schema="public")
+
+    op.create_table(
+        "labor_roles",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("hourly_rate", sa.Float(), nullable=False, server_default=sa.text("36.0")),
+        sa.Column("min_bill_minutes", sa.Integer(), nullable=False, server_default=sa.text("15")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    op.create_table(
+        "process_steps",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("default_minutes", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("labor_role_id", UUID, sa.ForeignKey("public.labor_roles.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("material_type_filter", sa.String(length=8), nullable=True),  # 'FDM' | 'SLA'
+        sa.Column("multiplier_per_cm3", sa.Float(), nullable=True),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+    op.create_index("ix_process_steps_enabled", "process_steps", ["enabled"], unique=False, schema="public")
+
+    op.create_table(
+        "quality_tiers",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=64), nullable=False),
+        sa.Column("layer_height_mm", sa.Float(), nullable=True),
+        sa.Column("infill_pct", sa.Integer(), nullable=True),
+        sa.Column("support_density_pct", sa.Integer(), nullable=True),
+        sa.Column("qc_time_minutes", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("price_multiplier", sa.Float(), nullable=False, server_default=sa.text("1.0")),
+        sa.Column("notes", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    op.create_table(
+        "consumables",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.Column("unit", sa.String(length=32), nullable=False),  # e.g. 'L', 'm', 'sheet'
+        sa.Column("cost_per_unit", sa.Float(), nullable=False, server_default=sa.text("0.0")),
+        sa.Column("usage_per_print", sa.Float(), nullable=False, server_default=sa.text("0.0")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    op.create_table(
+        "pricing_rules",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("if_expression", sa.Text(), nullable=False),
+        sa.Column("then_modifiers", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    op.create_table(
+        "pricing_versions",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("effective_from", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("note", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        schema="public",
+    )
+
+    # ──────────────────────────────────────────────────────────────────────
     # Compatibility VIEW + triggers (public.models)
     # ──────────────────────────────────────────────────────────────────────
     op.execute("""
@@ -554,7 +689,24 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS public.models_del_redirect();")
     op.execute("DROP VIEW IF EXISTS public.models;")
 
-    # Drop tables in reverse dependency order
+    # ──────────────────────────────────────────────────────────────────────
+    # PRICING teardown (reverse order)
+    # ──────────────────────────────────────────────────────────────────────
+    op.drop_table("pricing_versions", schema="public")
+    op.drop_table("pricing_rules", schema="public")
+    op.drop_table("consumables", schema="public")
+    op.drop_table("quality_tiers", schema="public")
+    op.drop_index("ix_process_steps_enabled", table_name="process_steps", schema="public")
+    op.drop_table("process_steps", schema="public")
+    op.drop_table("labor_roles", schema="public")
+    op.drop_index("ix_printers_enabled", table_name="printers", schema="public")
+    op.drop_table("printers", schema="public")
+    op.drop_index("ix_materials_enabled", table_name="materials", schema="public")
+    op.drop_table("materials", schema="public")
+    op.drop_index("ix_pricing_settings_effective_from", table_name="pricing_settings", schema="public")
+    op.drop_table("pricing_settings", schema="public")
+
+    # Drop tables in reverse dependency order (rest of schema)
     op.drop_table("audit_logs", schema="public")
     op.drop_table("upload_jobs", schema="public")
     op.drop_table("checkout_sessions", schema="public")

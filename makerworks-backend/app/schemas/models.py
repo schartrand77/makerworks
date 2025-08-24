@@ -2,7 +2,8 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, constr, field_validator, ConfigDict
+from pydantic import Field, constr, field_validator, ConfigDict
+from app.schemas._base import APIModel as BaseModel
 import os
 import re
 from pathlib import Path

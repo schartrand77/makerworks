@@ -1,197 +1,141 @@
 # app/main.py
-
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json as _json
 import logging
 import os
-import sys
-import traceback
-import inspect
-import time
+import random
 import re
+import time
+import traceback
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Dict, List, Literal, Optional, Sequence
 from urllib.parse import urlparse
-import json as _json
 
-from fastapi import FastAPI, Request, HTTPException, status, APIRouter, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text, select
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from pydantic import ValidationError
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse, RedirectResponse
+from starlette.staticfiles import StaticFiles
 
 # ──────────────────────────────────────────────────────────────────────────────
-# stderr helper (avoid crashing on early logging)
-# ──────────────────────────────────────────────────────────────────────────────
-def safe_stderr(msg: str) -> None:
-    try:
-        os.write(sys.__stderr__.fileno(), (msg.rstrip() + "\n").encode("utf-8"))
-    except Exception:
-        pass
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Minimal, robust .env loader (tolerates URLs, colons, quotes, export)
-# Loads BEFORE importing settings so values are available to Pydantic, etc.
-# ──────────────────────────────────────────────────────────────────────────────
-def _load_env_file(path: str) -> int:
-    count = 0
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export "):].strip()
-                if "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                key = key.strip()
-                val = val.strip()
-                if not key:
-                    continue
-                if (len(val) >= 2) and ((val[0] == val[-1]) and val[0] in ("'", '"')):
-                    val = val[1:-1]
-                if key not in os.environ:
-                    os.environ[key] = val
-                    count += 1
-        safe_stderr(f"📦 Loaded {count} env keys from {path}")
-    except FileNotFoundError:
-        safe_stderr(f"📦 Env file not found: {path} (skipping)")
-    except Exception:
-        safe_stderr("📦 Env load error:\n" + "".join(traceback.format_exc()))
-    return count
-
-ENV_FILE = os.getenv("ENV_FILE") or ".env.dev"
-if Path(ENV_FILE).exists():
-    _load_env_file(ENV_FILE)
-elif Path(".env").exists():
-    _load_env_file(".env")
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Defensive imports (now that env vars are in place)
+# App config / dependencies (tolerant imports so the app still boots in dev)
 # ──────────────────────────────────────────────────────────────────────────────
 try:
-    from alembic.config import Config as AlembicConfig
-    from alembic import command as alembic_command
+    from app.core.config import settings  # your settings object
+except Exception:  # pragma: no cover
+    class _Settings:  # tiny stub so attribute access doesn’t explode
+        env = "development"
+        cors_origins: list[str] | str | None = None
+        admin_email: str | None = None
+        admin_force_update: bool | str | None = None
 
-    # prefer new location, fall back to legacy
-    try:
-        from app.core.config import settings  # preferred
-    except Exception:
-        from app.config.settings import settings  # legacy
+    settings = _Settings()  # type: ignore
 
-    try:
-        from app.db.session import async_engine
-    except Exception:
-        async_engine = None  # type: ignore
+try:
+    from app.db.session import get_async_db, async_engine
+except Exception:  # pragma: no cover
+    async_engine = None
 
-    try:
-        from app.db.database import init_db, get_async_db  # ← ADDED get_async_db
-    except Exception:
-        def init_db():  # type: ignore
-            return None
-        async def get_async_db():  # type: ignore
-            raise RuntimeError("DB not available")
+    async def get_async_db() -> AsyncSession:  # type: ignore
+        raise RuntimeError("get_async_db unavailable")
 
-    # Routers: import modules (NOT aggregated router here)
-    from app.routes import (
-        admin, auth, avatar, cart, checkout, filaments, models,
-        metrics, system, upload, users,
-        inventory_levels, inventory_moves, user_inventory,
+try:
+    from app.services.system import get_system_status_snapshot, random_boot_message, startup_banner
+except Exception:  # pragma: no cover
+    def get_system_status_snapshot() -> Dict[str, Any]:
+        return {"uptime": "unknown", "env": getattr(settings, "env", "development")}
+
+    def random_boot_message() -> str:
+        return random.choice(["let’s print some plastic", "booting", "initializing"])
+
+    def startup_banner() -> None:
+        logging.getLogger("uvicorn").info("🌟 Startup complete")
+
+try:
+    # optional: redis lifespan helper
+    from app.core.redis import lifespan as redis_lifespan  # async generator
+except Exception:  # pragma: no cover
+    async def redis_lifespan():
+        if False:  # type: ignore
+            yield None
+        return
+
+try:
+    # optional: celery wiring
+    from app.core.celery import celery_app as celery_app_instance  # type: ignore
+except Exception:  # pragma: no cover
+    celery_app_instance = None
+
+try:
+    # optional: initial DB seeding
+    from app.db.init import init_db  # could be sync or async
+except Exception:  # pragma: no cover
+    init_db = None
+
+try:
+    # optional: admin seeding helper
+    from app.services.admin_seed import ensure_admin_user  # could be sync or async
+except Exception:  # pragma: no cover
+    ensure_admin_user = None
+
+# ORM models (optional at import time; endpoints below gracefully handle None)
+try:
+    from app.models import (
+        PricingSettings,
+        PricingVersion,
+        Material,
+        Printer,
+        LaborRole,
+        ProcessStep,
+        QualityTier,
+        Consumable,
+        Rule,
     )
-
-    try:
-        from app.routes.health import router as health_router  # type: ignore
-    except Exception:
-        health_router = None  # type: ignore
-
-    from app.services.redis_service import redis_lifespan
-
-    # 👑 Admin seeder
-    try:
-        from app.startup.admin_seed import ensure_admin_user  # type: ignore
-    except Exception:
-        ensure_admin_user = None  # type: ignore
-
-    from app.utils.boot_messages import random_boot_message
-    from app.utils.system_info import get_system_status_snapshot
-
-    try:
-        from app.logging_config import startup_banner
-    except Exception:
-        def startup_banner() -> None:
-            logging.getLogger("uvicorn").info("🚀 Backend startup (fallback banner)")
-
-    # Celery hooks (optional)
-    try:
-        from app.worker.tasks import generate_model_previews  # Celery task
-    except Exception:
-        generate_model_previews = None  # type: ignore
-    try:
-        from app.worker import celery_app as celery_app_instance  # type: ignore
-    except Exception:
-        celery_app_instance = None  # type: ignore
-
-    # ← REPLACED: pricing models import with robust loader
-    import importlib
-    from types import ModuleType
-
-    PricingSettings = Material = Printer = LaborRole = ProcessStep = QualityTier = Consumable = Rule = None  # type: ignore
-
-    def _try_import_models() -> None:
-        """Try multiple likely module paths for pricing models and log success."""
-        global PricingSettings, Material, Printer, LaborRole, ProcessStep, QualityTier, Consumable, Rule
-        candidates = [
-            "app.models.pricing",
-            "app.models.pricing_models",
-            "app.models",                 # sometimes everything is exported here
-            "app.db.models.pricing",
-            "app.db.models",
-        ]
-        names = ["PricingSettings","Material","Printer","LaborRole","ProcessStep","QualityTier","Consumable","Rule"]
-        logger_local = logging.getLogger("uvicorn")
-
-        for modname in candidates:
-            try:
-                mod: ModuleType = importlib.import_module(modname)
-            except Exception:
-                continue
-            found = 0
-            for n in names:
-                try:
-                    val = getattr(mod, n)
-                    globals()[n] = val
-                    found += 1
-                except AttributeError:
-                    pass
-            if found:
-                logger_local.info(f"✅ Loaded pricing models from {modname} ({found}/{len(names)})")
-                if all(globals().get(n) is not None for n in names):
-                    return
-        missing = [n for n in names if globals().get(n) is None]
-        logger_local.warning(f"⚠️ Pricing models partially loaded; missing: {missing}")
-
-    _try_import_models()
-
-except Exception:
-    formatted_tb = "".join(traceback.format_exc())
-    safe_stderr("=== STARTUP IMPORT FAILURE ===\n" + formatted_tb)
-    raise
+except Exception:  # pragma: no cover
+    PricingSettings = PricingVersion = Material = Printer = LaborRole = ProcessStep = QualityTier = Consumable = Rule = None  # type: ignore
 
 logger = logging.getLogger("uvicorn")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Small helper: call a fn whether it's sync or async
+# Unique operationId generator to avoid FastAPI duplicate warnings
 # ──────────────────────────────────────────────────────────────────────────────
+def generate_unique_id(route: APIRoute) -> str:
+    method = sorted(route.methods)[0].lower() if route.methods else "get"
+    safe_path = route.path.replace("/", "_").replace("{", "").replace("}", "")
+    return f"{method}{safe_path}"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# App
+# ──────────────────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="MakerWorks API",
+    version="1.0.0",
+    description="MakerWorks backend API",
+    generate_unique_id_function=generate_unique_id,
+)
+app.router.redirect_slashes = True
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Little helpers
+# ──────────────────────────────────────────────────────────────────────────────
+def safe_stderr(msg: str) -> None:
+    try:
+        print(msg, file=os.sys.stderr, flush=True)
+    except Exception:
+        pass
+
 async def _run_maybe_async(fn, *args, **kwargs):
     if fn is None:
         return None
@@ -202,7 +146,7 @@ async def _run_maybe_async(fn, *args, **kwargs):
         return res
     except TypeError:
         if inspect.iscoroutinefunction(fn):
-            return await fn(*args, **kwargs)  # type: ignore
+            return await fn(*args, **kwargs)
         raise
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -225,12 +169,7 @@ def _clean_origin_token(token: str | None) -> Optional[str]:
     return f"{u.scheme}://{u.netloc}"
 
 def _parse_cors_env(raw: str) -> list[str]:
-    """Parse CORS origins from env. Accepts:
-      - Proper JSON: '["http://a", "http://b"]'
-      - Single-quoted bracket list: "['http://a','http://b']"
-      - Comma separated: 'http://a, http://b'
-    """
-    # 1) Try strict JSON first
+    # 1) Try JSON list/string first
     try:
         parsed = _json.loads(raw)
         if isinstance(parsed, list):
@@ -242,7 +181,7 @@ def _parse_cors_env(raw: str) -> list[str]:
     except Exception:
         pass
 
-    # 2) Try bracketed list with mixed/single quotes without JSON-decoding hacks
+    # 2) Try bracketed list w/ quotes
     s = (raw or "").strip()
     if s.startswith("[") and s.endswith("]"):
         inner = s[1:-1]
@@ -286,13 +225,15 @@ def resolve_allowed_origins() -> list[str]:
         if not parsed_ok and any(ch in env_raw for ch in "[]'"):
             logger.warning("⚠️ CORS_ORIGINS looked malformed; parsed defensively: %r -> %s", env_raw, parsed)
 
-    origins.extend([
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-    ])
+    origins.extend(
+        [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:8000",
+        ]
+    )
 
     fe = os.getenv("FRONTEND_ORIGIN", "").strip()
     if fe:
@@ -308,36 +249,6 @@ def resolve_allowed_origins() -> list[str]:
             seen.add(n)
             norm.append(n)
     return norm
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Admin/log helpers
-# ──────────────────────────────────────────────────────────────────────────────
-def _redact_dsn(dsn: Optional[str]) -> str:
-    if not dsn:
-        return "(unset)"
-    try:
-        before_at, after_at = dsn.split("@", 1)
-        proto, user_and_pass = before_at.split("://", 1)
-        user = user_and_pass.split(":", 1)[0]
-        return f"{proto}://{user}:***@{after_at}"
-    except Exception:
-        return "(redacted)"
-
-def _active_db_dsn() -> Optional[str]:
-    for key in ("database_url", "ASYNCPG_URL", "DATABASE_URL"):
-        try:
-            val = getattr(settings, key) if hasattr(settings, key) else os.getenv(key)
-            if val:
-                return str(val)
-        except Exception:
-            continue
-    return None
-
-# ──────────────────────────────────────────────────────────────────────────────
-# App
-# ──────────────────────────────────────────────────────────────────────────────
-app = FastAPI(title="MakerWorks API", version="1.0.0", description="MakerWorks backend API")
-app.router.redirect_slashes = True
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CORS FIRST (no regex when using credentials)
@@ -394,10 +305,7 @@ async def unhandled_exc_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
 
     p = request.url.path
-    force_verbose = (
-        p.startswith(("/api/v1/auth", "/api/v1/users"))
-        or p.endswith(("/signup", "/register", "/login"))
-    )
+    force_verbose = p.startswith(("/api/v1/auth", "/api/v1/users")) or p.endswith(("/signup", "/register", "/login"))
 
     env_name = os.getenv("ENV") or getattr(settings, "env", "development")
     dev_mode = (env_name.lower() != "production") or os.getenv("EXPOSE_ERRORS", "0") == "1"
@@ -405,13 +313,7 @@ async def unhandled_exc_handler(request: Request, exc: Exception):
     if dev_mode or force_verbose:
         tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         return JSONResponse(
-            {
-                "detail": str(exc),
-                "error_type": type(exc).__name__,
-                "trace": tb,
-                "path": request.url.path,
-                "method": request.method,
-            },
+            {"detail": str(exc), "error_type": type(exc).__name__, "trace": tb, "path": request.url.path, "method": request.method},
             status_code=500,
             headers=headers,
         )
@@ -429,9 +331,12 @@ def _dup_payload_from_exc(exc: IntegrityError) -> dict:
     table = getattr(diag, "table_name", None)
     schema = getattr(diag, "schema_name", None)
 
-    if constraint: payload["constraint"] = str(constraint)
-    if table:      payload["table"] = str(table)
-    if schema:     payload["schema"] = str(schema)
+    if constraint:
+        payload["constraint"] = str(constraint)
+    if table:
+        payload["table"] = str(table)
+    if schema:
+        payload["schema"] = str(schema)
 
     msg = str(orig or exc)
     m = _DUP_RE.search(msg)
@@ -447,16 +352,21 @@ def _dup_payload_from_exc(exc: IntegrityError) -> dict:
 
     if "user" in low_t:
         if "email" in low_c or "email" in fields:
-            payload["hint"] = "email_taken"; return payload
+            payload["hint"] = "email_taken"
+            return payload
         if "username" in low_c or "username" in fields:
-            payload["hint"] = "username_taken"; return payload
-        payload["hint"] = "user_duplicate"; return payload
+            payload["hint"] = "username_taken"
+            return payload
+        payload["hint"] = "user_duplicate"
+        return payload
 
     if "filament" in low_t or "uq_filament" in low_c or "filaments" in low_t:
-        payload["hint"] = "filament_exists"; return payload
+        payload["hint"] = "filament_exists"
+        return payload
 
     if any(k in low_t for k in ("product", "variant", "sku")) or "sku" in fields:
-        payload["hint"] = "sku_taken"; return payload
+        payload["hint"] = "sku_taken"
+        return payload
 
     return payload
 
@@ -468,11 +378,7 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
 @app.exception_handler(ValidationError)
 async def validation_error_handler(request: Request, exc: ValidationError):
     headers = _cors_headers_for_request(request)
-    return JSONResponse(
-        {"detail": "validation_error", "errors": exc.errors()},
-        status_code=422,
-        headers=headers,
-    )
+    return JSONResponse({"detail": "validation_error", "errors": exc.errors()}, status_code=422, headers=headers)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Manual OPTIONS (guarantee good preflight responses)
@@ -483,8 +389,10 @@ async def any_options(full_path: str, request: Request) -> Response:
     acrm = request.headers.get("access-control-request-method", "GET")
     acrh = request.headers.get("access-control-request-headers", "")
 
-    logger.info(f"[CORS] Preflight OPTIONS {request.url.path} | Origin={origin} | "
-                f"Req-Method={acrm} | Req-Headers={acrh} | Allowed={ALLOWED_ORIGINS}")
+    logger.info(
+        f"[CORS] Preflight OPTIONS {request.url.path} | Origin={origin} | "
+        f"Req-Method={acrm} | Req-Headers={acrh} | Allowed={ALLOWED_ORIGINS}"
+    )
 
     headers = {"Vary": "Origin"}
     if origin and origin in ALLOWED_ORIGINS:
@@ -519,11 +427,7 @@ async def wait_for_db(timeout_sec: int = 45) -> bool:
     return False
 
 def _find_alembic_ini() -> Path:
-    candidates = [
-        Path(os.getenv("ALEMBIC_INI", "")),
-        Path("alembic.ini"),
-        Path("/app/alembic.ini"),
-    ]
+    candidates = [Path(os.getenv("ALEMBIC_INI", "")), Path("alembic.ini"), Path("/app/alembic.ini")]
     for c in candidates:
         if c and str(c) and c.exists():
             return c
@@ -537,6 +441,8 @@ def _detect_script_location() -> str:
 
 def run_alembic_upgrade() -> bool:
     try:
+        from alembic import command as alembic_command
+        from alembic.config import Config as AlembicConfig
         cfg_path = _find_alembic_ini()
         alembic_cfg = AlembicConfig(str(cfg_path))
         if not alembic_cfg.get_main_option("script_location"):
@@ -589,7 +495,7 @@ async def verify_celery_workers() -> None:
 
     def _ping():
         try:
-            return celery_app_instance.control.ping(timeout=1.0)
+            return celery_app_instance.control.ping(timeout=1.0)  # type: ignore[attr-defined]
         except Exception as e:
             return e
 
@@ -625,11 +531,31 @@ async def lifespan(_: _FastAPI):
         logger.info(f"🔐 SECRET_KEY present: {bool(os.getenv('SECRET_KEY'))}")
 
         try:
+            def _redact_dsn(dsn: Optional[str]) -> str:
+                if not dsn:
+                    return "(unset)"
+                try:
+                    before_at, after_at = dsn.split("@", 1)
+                    proto, user_and_pass = before_at.split("://", 1)
+                    user = user_and_pass.split(":", 1)[0]
+                    return f"{proto}://{user}:***@{after_at}"
+                except Exception:
+                    return "(redacted)"
+
+            def _active_db_dsn() -> Optional[str]:
+                for key in ("database_url", "ASYNCPG_URL", "DATABASE_URL"):
+                    try:
+                        val = getattr(settings, key) if hasattr(settings, key) else os.getenv(key)
+                        if val:
+                            return str(val)
+                    except Exception:
+                        continue
+                return None
+
             admin_email = os.getenv("ADMIN_EMAIL") or getattr(settings, "admin_email", None) or "(unset)"
             force_update_raw = os.getenv("ADMIN_FORCE_UPDATE") or getattr(settings, "admin_force_update", "")
             force_update = str(force_update_raw).lower() in {"1", "true", "yes", "on"}
-            logger.info("👑 Admin config: email=%s force_update=%s dsn=%s",
-                        admin_email, force_update, _redact_dsn(_active_db_dsn()))
+            logger.info("👑 Admin config: email=%s force_update=%s dsn=%s", admin_email, force_update, _redact_dsn(_active_db_dsn()))
         except Exception as _e:
             logger.warning(f"⚠️ Admin config log failed: {_e}")
 
@@ -662,12 +588,12 @@ async def lifespan(_: _FastAPI):
 
         # 6) Ensure admin user exists (handles sync/async)
         try:
-          if ensure_admin_user is None:
-              logger.warning("⚠️ ensure_admin_user not available; skipping admin seed.")
-          else:
-              logger.info("[admin_seed] ensure_admin_user() starting…")
-              await _run_maybe_async(ensure_admin_user)
-              logger.info("[admin_seed] ensure_admin_user() finished.")
+            if ensure_admin_user is None:
+                logger.warning("⚠️ ensure_admin_user not available; skipping admin seed.")
+            else:
+                logger.info("[admin_seed] ensure_admin_user() starting…")
+                await _run_maybe_async(ensure_admin_user)
+                logger.info("[admin_seed] ensure_admin_user() finished.")
         except Exception as e:
             logger.exception("[admin_seed] ensure_admin_user crashed: %s", e)
 
@@ -715,7 +641,7 @@ async def healthz_v1():
 async def system_status_public():
     return {"status": "ok"}
 
-# NEW: simple /_health that returns OK (your curl was using this)
+# NEW: simple /_health that returns OK
 @app.get("/_health", include_in_schema=False)
 async def underscore_health():
     return {"ok": True}
@@ -724,10 +650,6 @@ async def underscore_health():
 # VERSION endpoints — serve the repo's ./VERSION file (raw & JSON)
 # ──────────────────────────────────────────────────────────────────────────────
 def _find_version() -> str:
-    """
-    Locate and read the repository VERSION file.
-    We walk up from this file to handle containerized layouts (/app, etc).
-    """
     here = Path(__file__).resolve()
     for p in [here, *here.parents]:
         vf = p / "VERSION"
@@ -741,7 +663,6 @@ def _find_version() -> str:
 @app.get("/VERSION", include_in_schema=False)
 async def get_version_raw():
     v = _find_version()
-    # Always return 200 with a newline like a typical VERSION file
     return Response(content=(v + "\n"), media_type="text/plain")
 
 @app.get("/api/v1/system/version", include_in_schema=False)
@@ -757,7 +678,7 @@ async def celery_health():
 
     def _ping():
         try:
-            return celery_app_instance.control.ping(timeout=1.0)
+            return celery_app_instance.control.ping(timeout=1.0)  # type: ignore[attr-defined]
         except Exception as e:
             return e
 
@@ -821,12 +742,7 @@ os.environ.setdefault("MODELS_DIR", str(models_path))
 os.environ.setdefault("STATIC_DIR", str(static_path))
 os.environ.setdefault("THUMBNAIL_ROOT", str(thumbnails_path))
 
-for label, path in (
-    ("Uploads", uploads_path),
-    ("Thumbnails", thumbnails_path),
-    ("Models", models_path),
-    ("Static", static_path),
-):
+for label, path in (("Uploads", uploads_path), ("Thumbnails", thumbnails_path), ("Models", models_path), ("Static", static_path)):
     try:
         path.mkdir(parents=True, exist_ok=True)
         (path / ".write_test").touch()
@@ -853,8 +769,6 @@ app.mount("/static", StaticFiles(directory=str(static_path), html=False, check_d
 # ──────────────────────────────────────────────────────────────────────────────
 # Minimal Celery-backed API for thumbnails (debug/ops)
 # ──────────────────────────────────────────────────────────────────────────────
-from pydantic import BaseModel, Field
-
 class ThumbnailJob(BaseModel):
     model_path: str = Field(..., description="Absolute path to STL/3MF on the server filesystem")
     model_id: str = Field(..., description="Model ID")
@@ -862,9 +776,13 @@ class ThumbnailJob(BaseModel):
 
 @app.post("/api/v1/thumbnail", include_in_schema=False)
 async def enqueue_thumbnail(job: ThumbnailJob):
+    try:
+        from app.tasks.previews import generate_model_previews  # import here to avoid hard dep
+    except Exception:
+        generate_model_previews = None
     if generate_model_previews is None:
         raise HTTPException(status_code=503, detail="Celery worker not available.")
-    task = generate_model_previews.delay(job.model_path, job.model_id, job.user_id)
+    task = generate_model_previews.delay(job.model_path, job.model_id, job.user_id)  # type: ignore[attr-defined]
     return {"status": "queued", "task_id": task.id}
 
 @app.get("/api/v1/thumbnail/{task_id}", include_in_schema=False)
@@ -898,17 +816,16 @@ def mount(router_module, prefix: str | None, tags: list[str] | None = None) -> N
     try:
         existing = getattr(router, "prefix", "") or ""
         if existing and effective_prefix:
-            # same, or overlapping? don't stack.
             if effective_prefix == existing or existing.startswith(effective_prefix) or effective_prefix.startswith(existing):
                 effective_prefix = ""
     except Exception:
-        pass
+        existing = ""
 
     app.include_router(router, prefix=effective_prefix, tags=tags)
     shown = existing if effective_prefix == "" else (effective_prefix or existing or "/")
     logger.info(f"🔌 Mounted: {shown} — Tags: {', '.join(tags or getattr(router, 'tags', []) or [])}")
 
-# Health (if present)
+# Optional health router
 try:
     from app.routes.health import router as health_router  # type: ignore
     if health_router:
@@ -917,29 +834,43 @@ except Exception:
     pass
 
 # Specific first; broad later; upload LAST.
-from app.routes import auth, users, avatar, system, filaments, admin, cart, inventory_levels, inventory_moves, user_inventory, checkout, models, metrics, upload  # noqa
+from app.routes import (
+    auth,
+    users,
+    avatar,
+    system,
+    filaments,
+    admin,
+    cart,
+    inventory_levels,
+    inventory_moves,
+    user_inventory,
+    checkout,
+    models as models_routes,
+    metrics,
+    upload,
+)
 
-mount(auth,      "/api/v1/auth",      ["auth"])
-mount(users,     "/api/v1/users",     ["users"])
-mount(avatar,    "/api/v1/avatar",    ["avatar"])
-mount(system,    "/api/v1/system",    ["system"])
+mount(auth, "/api/v1/auth", ["auth"])
+mount(users, "/api/v1/users", ["users"])
+mount(avatar, "/api/v1/avatar", ["avatar"])
+mount(system, "/api/v1/system", ["system"])
 mount(filaments, "/api/v1/filaments", ["filaments"])
-mount(admin,     "/api/v1/admin",     ["admin"])
-mount(cart,      "/api/v1/cart",      ["cart"])
+mount(admin, "/api/v1/admin", ["admin"])
+mount(cart, "/api/v1/cart", ["cart"])
 
-# Inventory routes (these modules commonly define sub-prefixes themselves;
-# the mount() helper will de-dupe if so)
+# Inventory routes (some modules define sub-prefixes; the helper de-dupes)
 mount(inventory_levels, "/api/v1", ["inventory"])
-mount(inventory_moves,  "/api/v1", ["inventory"])
-mount(user_inventory,   "/api/v1", ["user-inventory"])
+mount(inventory_moves, "/api/v1", ["inventory"])
+mount(user_inventory, "/api/v1", ["user-inventory"])
 
 if getattr(settings, "stripe_secret_key", ""):
     mount(checkout, "/api/v1/checkout", ["checkout"])
 else:
     logger.warning("⚠️ STRIPE_SECRET_KEY is not set. Checkout routes not mounted.")
 
-mount(models,    "/api/v1/models",    ["models"])
-mount(metrics,   "/metrics",          ["metrics"])
+mount(models_routes, "/api/v1/models", ["models"])
+mount(metrics, "/metrics", ["metrics"])
 
 UPLOAD_PREFIX = os.getenv("UPLOAD_API_PREFIX") or "/api/v1/upload"
 if UPLOAD_PREFIX.rstrip("/") == "/api/v1":
@@ -947,103 +878,215 @@ if UPLOAD_PREFIX.rstrip("/") == "/api/v1":
     UPLOAD_PREFIX = "/api/v1/upload"
 mount(upload, UPLOAD_PREFIX, ["upload"])
 
+# Bambu Connect (LAN) — mount if present
+try:
+    from app.routes import bambu_connect  # router has prefix="/bambu"
+    mount(bambu_connect, "/bambu", ["Bambu Connect"])
+except Exception:
+    pass
+
 # ──────────────────────────────────────────────────────────────────────────────
-# NEW: Read-only pricing/admin endpoints for the Admin UI (safe fallbacks)
+# Read-only pricing/admin endpoints for the Admin UI (v2-safe)
 # ──────────────────────────────────────────────────────────────────────────────
 pricing_read = APIRouter(prefix="/api/v1", tags=["pricing-read"])
 admin_read = APIRouter(prefix="/api/v1/admin", tags=["admin-read"])
 
-async def _safe_list(db: AsyncSession, model, label: str):
+class _ORMBase(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+class PricingSettingsOut(_ORMBase):
+    id: str | Any
+    effective_from: datetime
+    currency: str
+    electricity_cost_per_kwh: float
+    shop_overhead_per_day: float
+    productive_hours_per_day: Optional[float] = None
+    admin_note: Optional[str] = None
+
+class MaterialOut(_ORMBase):
+    id: str
+    name: str
+    type: Literal["FDM", "SLA"]
+    cost_per_kg: Optional[float] = None
+    cost_per_l: Optional[float] = None
+    density_g_cm3: Optional[float] = None
+    abrasive: bool
+    waste_allowance_pct: float
+    enabled: bool
+
+class PrinterOut(_ORMBase):
+    id: str
+    name: str
+    tech: Literal["FDM", "SLA"]
+    nozzle_diameter_mm: Optional[float] = None
+    chamber: Optional[bool] = None
+    enclosed: Optional[bool] = None
+    watts_idle: float
+    watts_printing: float
+    hourly_base_rate: float
+    maintenance_rate_per_hour: float
+    depreciation_per_hour: float
+    enabled: bool
+
+class LaborRoleOut(_ORMBase):
+    id: str
+    name: str
+    hourly_rate: float
+    min_bill_minutes: int
+
+class ProcessStepOut(_ORMBase):
+    id: str
+    name: str
+    default_minutes: int
+    labor_role_id: str
+    material_type_filter: Optional[Literal["FDM", "SLA"]] = None
+    multiplier_per_cm3: Optional[float] = None
+    enabled: bool
+
+class QualityTierOut(_ORMBase):
+    id: str
+    name: str
+    layer_height_mm: Optional[float] = None
+    infill_pct: Optional[int] = None
+    support_density_pct: Optional[int] = None
+    qc_time_minutes: int
+    price_multiplier: float
+    notes: Optional[str] = None
+
+class ConsumableOut(_ORMBase):
+    id: str
+    name: str
+    unit: str
+    cost_per_unit: float
+    usage_per_print: float
+
+class RuleOut(_ORMBase):
+    id: str
+    if_expression: str
+    then_modifiers: Dict[str, Any]
+
+class VersionRowOut(_ORMBase):
+    id: str
+    effective_from: datetime
+    note: Optional[str] = None
+
+async def _serialize_all(db: AsyncSession, model, out_schema, label: str):
     try:
         if model is None:
             logging.getLogger("uvicorn").warning("Model %s is None; returning []", label)
             return []
         res = await db.execute(select(model))
-        return list(res.scalars().all())
-    except Exception as e:
+        rows = res.scalars().all()
+        return [out_schema.model_validate(r, from_attributes=True) for r in rows]
+    except Exception:
         logging.getLogger("uvicorn").exception("List fetch failed for %s", label)
-        # DEV BEHAVIOR: don't 500 the UI; return []
         return []
 
-@pricing_read.get("/pricing/settings/latest")
+def _dt_utc(s: str) -> datetime:
+    try:
+        if s.endswith("Z"):
+            s = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    except Exception:
+        return datetime.now(timezone.utc)
+
+@pricing_read.get("/pricing/settings/latest", response_model=PricingSettingsOut)
 async def pricing_settings_latest(db: AsyncSession = Depends(get_async_db)):
     if PricingSettings is None:
-        # DEV FALLBACK so the admin page can render
-        return {
-            "id": "ver_dev",
-            "effective_from": "2025-01-01T00:00:00Z",
-            "currency": "CAD",
-            "electricity_cost_per_kwh": 0.18,
-            "shop_overhead_per_day": 35.0,
-            "productive_hours_per_day": 6.0,
-            "note": "dev-fallback (models not imported)",
-        }
-    try:
-        res = await db.execute(
-            select(PricingSettings).order_by(PricingSettings.effective_from.desc()).limit(1)
+        return PricingSettingsOut(
+            id="ver_dev",
+            effective_from=_dt_utc("2025-01-01T00:00:00Z"),
+            currency="CAD",
+            electricity_cost_per_kwh=0.18,
+            shop_overhead_per_day=35.0,
+            productive_hours_per_day=6.0,
+            admin_note="dev-fallback (models not imported)",
         )
+    try:
+        res = await db.execute(select(PricingSettings).order_by(PricingSettings.effective_from.desc()).limit(1))
         s = res.scalar_one_or_none()
         if not s:
-            # empty DB is a normal setup case; return a minimal default
-            return {
-                "id": "ver_empty",
-                "effective_from": "2025-01-01T00:00:00Z",
-                "currency": "CAD",
-                "electricity_cost_per_kwh": 0.18,
-                "shop_overhead_per_day": 35.0,
-                "productive_hours_per_day": 6.0,
-                "note": "seed-me",
-            }
-        return s
+            return PricingSettingsOut(
+                id="ver_empty",
+                effective_from=_dt_utc("2025-01-01T00:00:00Z"),
+                currency="CAD",
+                electricity_cost_per_kwh=0.18,
+                shop_overhead_per_day=35.0,
+                productive_hours_per_day=6.0,
+                admin_note="seed-me",
+            )
+        return PricingSettingsOut.model_validate(s, from_attributes=True)
     except Exception:
         logging.getLogger("uvicorn").exception("Fetch latest PricingSettings failed")
-        # DEV BEHAVIOR: keep UI alive
-        return {
-            "id": "ver_error",
-            "effective_from": "2025-01-01T00:00:00Z",
-            "currency": "CAD",
-            "electricity_cost_per_kwh": 0.18,
-            "shop_overhead_per_day": 35.0,
-            "productive_hours_per_day": 6.0,
-            "note": "error-fallback",
-        }
+        return PricingSettingsOut(
+            id="ver_error",
+            effective_from=_dt_utc("2025-01-01T00:00:00Z"),
+            currency="CAD",
+            electricity_cost_per_kwh=0.18,
+            shop_overhead_per_day=35.0,
+            productive_hours_per_day=6.0,
+            admin_note="error-fallback",
+        )
 
-@pricing_read.get("/pricing/materials")
+@pricing_read.get("/pricing/materials", response_model=List[MaterialOut])
 async def pricing_materials(db: AsyncSession = Depends(get_async_db)):
-    return await _safe_list(db, Material, "Material")
+    return await _serialize_all(db, Material, MaterialOut, "Material")
 
-@pricing_read.get("/pricing/printers")
+@pricing_read.get("/pricing/printers", response_model=List[PrinterOut])
 async def pricing_printers(db: AsyncSession = Depends(get_async_db)):
-    return await _safe_list(db, Printer, "Printer")
+    return await _serialize_all(db, Printer, PrinterOut, "Printer")
 
-@pricing_read.get("/pricing/labor-roles")
+@pricing_read.get("/pricing/labor-roles", response_model=List[LaborRoleOut])
 async def pricing_labor_roles(db: AsyncSession = Depends(get_async_db)):
-    return await _safe_list(db, LaborRole, "LaborRole")
+    return await _serialize_all(db, LaborRole, LaborRoleOut, "LaborRole")
 
-@pricing_read.get("/pricing/process-steps")
+@pricing_read.get("/pricing/process-steps", response_model=List[ProcessStepOut])
 async def pricing_process_steps(db: AsyncSession = Depends(get_async_db)):
-    return await _safe_list(db, ProcessStep, "ProcessStep")
+    return await _serialize_all(db, ProcessStep, ProcessStepOut, "ProcessStep")
 
-@pricing_read.get("/pricing/tiers")
+@pricing_read.get("/pricing/tiers", response_model=List[QualityTierOut])
 async def pricing_tiers(db: AsyncSession = Depends(get_async_db)):
-    return await _safe_list(db, QualityTier, "QualityTier")
+    return await _serialize_all(db, QualityTier, QualityTierOut, "QualityTier")
 
-@pricing_read.get("/pricing/consumables")
+@pricing_read.get("/pricing/consumables", response_model=List[ConsumableOut])
 async def pricing_consumables(db: AsyncSession = Depends(get_async_db)):
-    return await _safe_list(db, Consumable, "Consumable")
+    return await _serialize_all(db, Consumable, ConsumableOut, "Consumable")
 
-@admin_read.get("/rules")
+@pricing_read.get("/rules", response_model=List[RuleOut])
+async def rules_root(db: AsyncSession = Depends(get_async_db)):
+    return await _serialize_all(db, Rule, RuleOut, "Rule")
+
+@pricing_read.get("/pricing/rules", response_model=List[RuleOut])
+async def rules_pricing(db: AsyncSession = Depends(get_async_db)):
+    return await _serialize_all(db, Rule, RuleOut, "Rule")
+
+@admin_read.get("/rules", response_model=List[RuleOut])
 async def admin_rules_get(db: AsyncSession = Depends(get_async_db)):
-    return await _safe_list(db, Rule, "Rule")
+    return await _serialize_all(db, Rule, RuleOut, "Rule")
 
-# Small system snapshot the UI pokes sometimes
-@pricing_read.get("/system/snapshot")
-async def system_snapshot():
+@pricing_read.get("/system/snapshot", response_model=List[VersionRowOut])
+async def system_snapshot(db: AsyncSession = Depends(get_async_db)):
     try:
-        return get_system_status_snapshot()
+        if PricingVersion is not None:
+            res = await db.execute(select(PricingVersion).order_by(PricingVersion.effective_from.desc()))
+            rows = res.scalars().all()
+            return [VersionRowOut.model_validate(r, from_attributes=True) for r in rows]
+        if PricingSettings is not None:
+            res2 = await db.execute(select(PricingSettings).order_by(PricingSettings.effective_from.desc()))
+            rows2 = res2.scalars().all()
+            out: List[VersionRowOut] = []
+            for r in rows2:
+                out.append(
+                    VersionRowOut(
+                        id=str(getattr(r, "id", getattr(r, "effective_from", "unknown"))),
+                        effective_from=getattr(r, "effective_from", datetime.now(timezone.utc)),
+                        note=getattr(r, "admin_note", None),
+                    )
+                )
+            return out
     except Exception:
         logging.getLogger("uvicorn").exception("system_snapshot failed")
-        return {"status": "ok"}
+    return []
 
 # mount the new routers
 app.include_router(pricing_read)
@@ -1054,6 +1097,7 @@ app.include_router(admin_read)
 # ──────────────────────────────────────────────────────────────────────────────
 def _dump_routes_inventory() -> None:
     from collections import defaultdict
+
     seen = defaultdict(list)
     for r in app.routes:
         path = getattr(r, "path", None)
@@ -1092,9 +1136,11 @@ async def has_filaments():
 async def routes_debug():
     items = []
     for r in app.routes:
-        items.append({
-            "path": getattr(r, "path", None),
-            "name": getattr(r, "name", None),
-            "methods": sorted(list(getattr(r, "methods", set()) or [])),
-        })
+        items.append(
+            {
+                "path": getattr(r, "path", None),
+                "name": getattr(r, "name", None),
+                "methods": sorted(list(getattr(r, "methods", set()) or [])),
+            }
+        )
     return {"count": len(items), "routes": items}

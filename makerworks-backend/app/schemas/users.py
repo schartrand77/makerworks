@@ -6,7 +6,8 @@ PURE models only—no FastAPI/DB imports.
 """
 
 from typing import Optional, Literal
-from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
+from pydantic import ConfigDict, Field, EmailStr, field_validator
+from app.schemas._base import APIModel as BaseModel
 import re
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,30}$")

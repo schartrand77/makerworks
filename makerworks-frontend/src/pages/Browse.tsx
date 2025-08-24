@@ -2,11 +2,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from '@/api/client';
-import { Search as SearchIcon } from 'lucide-react';
+import { LayoutGrid, Search as SearchIcon } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useToast } from '@/context/ToastProvider';
 import getAbsoluteUrl from '@/lib/getAbsoluteUrl';
-import { Card } from '@/components/ui/Card'; // ✅ use the shared grey-glass card
+import PageHeader from '@/components/ui/PageHeader'; // consistent title
 
 interface Model {
   id: string;
@@ -21,11 +21,11 @@ interface Model {
 type SourceKey = 'local' | 'makerworld' | 'thingiverse' | 'printables' | 'thangs';
 
 const SOURCES: { key: SourceKey; label: string }[] = [
-  { key: 'local',       label: 'MakerWorks' },
-  { key: 'makerworld',  label: 'Makerworld' },
+  { key: 'local', label: 'MakerWorks' },
+  { key: 'makerworld', label: 'Makerworld' },
   { key: 'thingiverse', label: 'Thingiverse' },
-  { key: 'printables',  label: 'Printables' },
-  { key: 'thangs',      label: 'Thangs' },
+  { key: 'printables', label: 'Printables' },
+  { key: 'thangs', label: 'Thangs' },
 ];
 
 const BACKEND_BASE =
@@ -100,9 +100,9 @@ const Browse: React.FC = () => {
 
       const fetched: Model[] = (res.data.items || []).map((m) => {
         const defaultThumb = m?.id ? `/thumbnails/${m.id}.png` : null;
-        const rawThumb = m.thumbnail_url || m.thumbnail_path || defaultThumb;
+        const rawThumb = m.thumbnail_url || (m as any).thumbnail_path || defaultThumb;
 
-        const rawFile = m.stl_url || m.file_url || null;
+        const rawFile = (m as any).stl_url || m.file_url || null;
         const fileAbs = resolveMediaUrl(rawFile);
 
         return {
@@ -112,7 +112,7 @@ const Browse: React.FC = () => {
           thumbnail_url: resolveMediaUrl(rawThumb),
           file_url: fileAbs,
           stl_url: fileAbs,
-          uploader_username: m.uploader_username || null,
+          uploader_username: (m as any).uploader_username || null,
         } as Model;
       });
 
@@ -132,10 +132,15 @@ const Browse: React.FC = () => {
   const fetchFavorites = async () => {
     if (!user?.id) return;
     try {
-      const res = await axios.get<string[]>(`${BACKEND_BASE}/api/v1/users/${user.id}/favorites`);
+      const res = await axios.get<string[]>(
+        `${BACKEND_BASE}/api/v1/users/${user.id}/favorites`
+      );
       setFavorites(new Set(res.data || []));
-    } catch (err) {
-      console.error('[Browse] Failed to load favorites]:', err);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status !== 405) {
+        console.error('[Browse] Failed to load favorites]:', err);
+      }
     }
   };
 
@@ -199,18 +204,14 @@ const Browse: React.FC = () => {
     });
   };
 
-  // 🔧 Carry forward the model explicitly for the estimator
   const navigateToEstimate = (m: Model) => {
     if (!m?.id) return;
-
-    const src = m.stl_url ?? m.file_url ?? null; // prefer stl_url, fall back to file_url
+    const src = m.stl_url ?? m.file_url ?? null;
     const from = `${location.pathname}${location.search}`;
-
     navigate('/estimate', {
       state: {
-        modelId: m.id,        // estimator reads this
-        modelUrl: src,        // and this
-        // keep a richer bundle around if the estimator wants extra metadata
+        modelId: m.id,
+        modelUrl: src,
         fromModel: {
           id: m.id,
           name: m.name ?? null,
@@ -224,43 +225,40 @@ const Browse: React.FC = () => {
   };
 
   return (
-    <>
-      <main className="page-wrap compact-page space-y-5">
-        <h1 className="page-title">
-          <SearchIcon className="w-6 h-6 text-zinc-400" />
-          <span className="title-chip title-chip--plain">Browse Models</span>
-        </h1>
+    <main className="mx-auto max-w-6xl px-4 py-8 space-y-5">
+      <PageHeader icon={<LayoutGrid className="w-8 h-8 text-zinc-400" />} title="Browse Models" />
 
+      {/* Wrap controls + grid in the same grey page card Cart uses */}
+      <section className="card p-4 sm:p-6 rounded-3xl">
         {/* Controls */}
-        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center bg-transparent">
-          <input
-            type="text"
-            placeholder="Search models…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className={[
-              'glass-input rounded-full sm:flex-1',
-              'ring-1 ring-amber-400/40 border-amber-300/60',
-              'shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_1px_rgba(251,146,60,0.30),0_0_8px_rgba(251,146,60,0.14)]',
-              'focus:ring-amber-400/60 focus:border-amber-400/60',
-              'bg-transparent',
-            ].join(' ')}
-            aria-label="Search models"
-          />
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+          <div className="relative w-full sm:flex-1">
+            <input
+              type="text"
+              placeholder="Search models…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className={[
+                'w-full rounded-full px-4 h-10',
+                'bg-white/80 dark:bg-white/10 backdrop-blur',
+                'ring-1 ring-black/10 dark:ring-white/10 focus:ring-amber-400/60',
+              ].join(' ')}
+              aria-label="Search models"
+            />
+            <SearchIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          </div>
 
-          {/* Source select (centered text) */}
-          <div className="relative inline-flex items-center w-full sm:w-auto bg-transparent">
+          {/* Source select */}
+          <div className="relative inline-flex items-center w-full sm:w-auto">
             <select
               aria-label="Source"
               value={source}
               onChange={(e) => setSource(e.target.value as SourceKey)}
               className={[
-                'glass-input rounded-full w-full sm:w-[220px] h-9 pr-9 appearance-none',
-                'ring-1 ring-amber-400/40 border-amber-300/60',
-                'shadow-[inset_0_0_6px_rgba(251,146,60,0.18),inset_0_0_1px_rgba(251,146,60,0.30),0_0_8px_rgba(251,146,60,0.14)]',
-                'focus:ring-amber-400/60 focus:border-amber-400/60',
-                'bg-transparent',
-                'centered-select text-center',
+                'rounded-full px-3 pr-8 h-10',
+                'bg-white/80 dark:bg-white/10 backdrop-blur',
+                'ring-1 ring-black/10 dark:ring-white/10 focus:ring-amber-400/60',
+                'w-full sm:w-[220px] appearance-none text-center',
               ].join(' ')}
             >
               {SOURCES.map(({ key, label }) => (
@@ -271,7 +269,7 @@ const Browse: React.FC = () => {
             </select>
             <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-zinc-700/70 dark:text-zinc-300/70">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
           </div>
@@ -280,35 +278,31 @@ const Browse: React.FC = () => {
         {/* Grid */}
         {source === 'local' && (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" role="list" aria-label="Model results">
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" role="list" aria-label="Model results">
               {isLoading &&
                 Array.from({ length: 8 }).map((_, idx) => (
-                  <Card key={`skeleton-${idx}`} className="animate-pulse p-3" role="listitem">
+                  <article key={`skeleton-${idx}`} className="card card--rim-orange p-3 animate-pulse" role="listitem">
                     <div className="space-y-3">
                       <div className="w-full aspect-[4/3] bg-zinc-300/20 dark:bg-zinc-600/20 rounded-lg" />
                       <div className="h-4 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-3/4" />
                       <div className="h-3 bg-zinc-300/20 dark:bg-zinc-600/20 rounded w-full" />
                     </div>
-                  </Card>
+                  </article>
                 ))}
 
               {!isLoading && filteredModels.length === 0 && (
-                <div className="col-span-full text-center text-gray-500 dark:text-gray-400">
-                  No models found.
-                </div>
+                <div className="col-span-full text-center text-gray-500 dark:text-gray-400">No models found.</div>
               )}
 
               {!isLoading &&
                 filteredModels.map((model) => {
                   const modelKey = model.id || model.file_url || Math.random().toString();
-                  const thumbUrl = resolveMediaUrl(
-                    model.thumbnail_url || (model.id ? `/thumbnails/${model.id}.png` : null)
-                  );
+                  const thumbUrl = resolveMediaUrl(model.thumbnail_url || (model.id ? `/thumbnails/${model.id}.png` : null));
 
                   return (
-                    <Card
+                    <article
                       key={`model-${modelKey}`}
-                      className="p-4 cursor-pointer"
+                      className="card card--rim-orange p-4 cursor-pointer"
                       role="listitem"
                       onClick={() => navigateToModel(model)}
                     >
@@ -324,8 +318,8 @@ const Browse: React.FC = () => {
                         {model.id && favorites.has(model.id) ? '★' : '☆'}
                       </button>
 
-                      {/* Thumbnail: curved, centered, no white fill */}
-                      <div className="mw-thumb aspect-[4/3] rounded-xl mb-3 bg-zinc-900 dark:bg-zinc-900">
+                      {/* Thumbnail ring stays neutral to match Cart’s tiles */}
+                      <div className="mw-thumb aspect-[4/3] rounded-xl mb-3 bg-zinc-900 dark:bg-zinc-900 ring-1 ring-black/10 dark:ring-white/10">
                         <div className="mw-thumb-frame w-full h-full flex items-center justify-center">
                           {thumbUrl ? (
                             <img
@@ -346,9 +340,7 @@ const Browse: React.FC = () => {
                         </div>
                       </div>
 
-                      <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                        {model.name || 'Untitled'}
-                      </h4>
+                      <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{model.name || 'Untitled'}</h4>
 
                       <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5 line-clamp-2">
                         {model.description || 'No description provided.'}
@@ -387,7 +379,7 @@ const Browse: React.FC = () => {
                           View details
                         </button>
                       </div>
-                    </Card>
+                    </article>
                   );
                 })}
             </div>
@@ -405,22 +397,8 @@ const Browse: React.FC = () => {
             )}
           </>
         )}
-      </main>
-
-      {/* Local tweaks */}
-      <style>{`
-        /* Kill any chip glow on the page title for this page */
-        .title-chip--plain {
-          background: transparent !important;
-          border: none !important;
-          box-shadow: none !important;
-          filter: none !important;
-        }
-        /* Center the selected text in the dropdown (and its menu items) */
-        .centered-select { text-align-last: center; }
-        .centered-select option { text-align: center; }
-      `}</style>
-    </>
+      </section>
+    </main>
   );
 };
 

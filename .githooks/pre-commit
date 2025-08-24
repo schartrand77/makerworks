@@ -1,3 +1,3 @@
-#!/usr/bin/env sh
-set -e
-exec "$(dirname "$0")/../pre-commit" "$@"
+set -eu
+python3 .githooks/bump_version.py
+git add VERSION

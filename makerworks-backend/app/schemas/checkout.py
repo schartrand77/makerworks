@@ -1,6 +1,7 @@
 # app/schemas/checkout.py
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
+from app.schemas._base import APIModel as BaseModel
 from typing import List
 from datetime import datetime
 

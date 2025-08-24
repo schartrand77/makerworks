@@ -3,7 +3,8 @@
 from datetime import datetime
 from uuid import UUID
 from typing import Optional
-from pydantic import BaseModel, EmailStr, HttpUrl, field_serializer, ConfigDict
+from pydantic import EmailStr, HttpUrl, field_serializer, ConfigDict
+from app.schemas._base import APIModel as BaseModel
 
 
 class UserOut(BaseModel):

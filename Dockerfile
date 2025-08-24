@@ -1,66 +1,52 @@
-# syntax=docker/dockerfile:1.5
+# Dockerfile — makerworks (single-stage, monorepo-aware)
 
-###
-# 1. Install frontend deps with cache mount
-###
-FROM node:20-alpine AS deps
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    # let the entrypoint auto-run alembic at runtime (idempotent)
+    RUN_MIGRATIONS_ON_START=1
+
 WORKDIR /app
 
-COPY frontend/package.json frontend/package-lock.json* ./
+# System deps:
+# - libpq-dev: build headers for psycopg if needed
+# - postgresql-client: gives us `psql` so entrypoint can wait on DB
+RUN set -eux; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        postgresql-client \
+        curl; \
+    rm -rf /var/lib/apt/lists/*
 
-RUN --mount=type=cache,target=/root/.npm \
-    --mount=type=cache,target=/app/node_modules \
-    set -eux; \
-    npm config set fund false; \
-    npm config set audit false; \
-    if [ -f package-lock.json ]; then npm ci; else npm install; fi; \
-    cp -R /app/node_modules /tmp/node_modules
+# Allow different monorepo layouts (default matches your tree)
+ARG BACKEND_DIR=makerworks-backend
 
-###
-# 2. Build app
-###
-FROM node:20-alpine AS builder
-WORKDIR /app
+# Python deps (install psycopg v3 driver explicitly so Alembic can use +psycopg)
+COPY ${BACKEND_DIR}/requirements.txt /app/requirements.txt
+RUN python -m pip install --upgrade pip \
+ && pip install --no-cache-dir "psycopg[binary]>=3.1" "psycopg2-binary>=2.9" \
+ && pip install --no-cache-dir -r /app/requirements.txt
 
-COPY --from=deps /tmp/node_modules ./node_modules
-COPY frontend/package*.json ./
-COPY frontend/. .
+# App source
+COPY ${BACKEND_DIR}/app ./app
+COPY ${BACKEND_DIR}/alembic ./alembic
+COPY ${BACKEND_DIR}/alembic.ini ./
 
-# Optional env fallback for Vite build
-COPY frontend/.env.dev .env || true
+# Ensure Alembic versions dir exists even if ignored in .dockerignore
+RUN test -d alembic/versions || mkdir -p alembic/versions
 
-RUN --mount=type=cache,target=/app/.vite \
-    npm run build
+# Runtime entrypoint that: waits for DB → baseline if repo empty → stamp if no version table → upgrade head → start uvicorn
+# (expects the script to live in makerworks-backend/)
+COPY ${BACKEND_DIR}/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh && sed -i 's/\r$//' /app/docker-entrypoint.sh
 
-###
-# 3. Serve via nginx
-###
-FROM nginx:alpine AS production
-WORKDIR /usr/share/nginx/html
+EXPOSE 8000
 
-# Copy built files
-COPY --from=builder /app/dist ./
-
-# Ensure nginx config dir exists and remove default if present
-RUN mkdir -p /etc/nginx/conf.d && rm -f /etc/nginx/conf.d/default.conf
-
-# Copy our custom nginx config
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
-
-###
-# 4. Dev container for Vite HMR
-###
-FROM node:20-alpine AS dev
-WORKDIR /app
-
-COPY --from=deps /tmp/node_modules ./node_modules
-COPY frontend/package*.json ./
-COPY frontend/. .
-
-COPY frontend/.env.development .env || true
-
-EXPOSE 5173
-CMD ["npm", "run", "dev", "--", "--host"]
+# The entrypoint starts uvicorn by default if no args are given
+ENTRYPOINT ["./docker-entrypoint.sh"]
+# If you prefer, you can uncomment the next line to pass explicit args to uvicorn:
+# CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

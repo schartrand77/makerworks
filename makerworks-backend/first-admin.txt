@@ -1,0 +1,3 @@
+email=admin@example.com
+username=admin
+password=SJhp45?Ptdt&NJQr1n

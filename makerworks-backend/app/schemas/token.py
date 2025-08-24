@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from typing import Optional, Literal, List
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import EmailStr, Field
+from app.schemas._base import APIModel as BaseModel
 
 
 # ─────────────────────────────────────────────────────────────

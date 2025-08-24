@@ -1,3 +1,4 @@
+/* index.css — makerworks */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -306,7 +307,7 @@
 }
 
 /* ---------- Tiny polish for light-mode card previews ---------- */
-.card .aspect-\[4\/3\]{ background:rgba(255,255,255,.72); }
+:root .card .aspect-\[4\/3\]{ background:rgba(255,255,255,.72); }
 
 @keyframes puddleGlow{
   0%,100%{ transform:translateY(0) scale(1); opacity:.7; }

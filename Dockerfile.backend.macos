@@ -37,7 +37,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip \
- && pip install --no-cache-dir psycopg2-binary>=2.9 \
+ && pip install --no-cache-dir "psycopg[binary]>=3.1" "psycopg2-binary>=2.9" \
  && pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir gunicorn uvicorn
 
@@ -71,7 +71,8 @@ WORKDIR /app
 # Prefer OSMesa for headless rendering; code can switch to EGL if present
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYOPENGL_PLATFORM=osmesa
+    PYOPENGL_PLATFORM=osmesa \
+    RUN_MIGRATIONS_ON_START=1
 
 # Runtime tools + headless GL stack for pyrender/trimesh offscreen rendering
 RUN apt-get update && \

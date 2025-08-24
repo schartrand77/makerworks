@@ -1,28 +1,38 @@
-# Prevent secrets and envs from entering the backend image
+# ── Keep the repo visible; only ignore junk. Do NOT nuke the whole context. ──
+
+# Secrets & envs (allow dev template)
 .env
 .env.*
 !.env.dev
 
+# Keys
 keys/
 *.pem
 *.key
 
 # Python cache and bytecode
-__pycache__/
+**/__pycache__/
 *.py[cod]
-*.log
 
-# Virtual environments and local builds
+# Virtualenvs and local builds
 .venv/
 dist/
 build/
 .cache/
+
+# Logs & runtime data (mount these as volumes in compose/k8s)
+logs/**
+uploads/**
+*.log
+
+# DB files (local only)
 *.sqlite3
 *.db
 
+# Alembic version files are optional in the image; Dockerfile ensures dir exists
 alembic/versions
 
-# Test and coverage data
+# Tests and coverage
 .pytest_cache/
 .coverage
 *.test.*
@@ -33,9 +43,5 @@ alembic/versions
 .idea/
 *.swp
 
-# Frontend and unrelated files
-../makerworks-frontend/**
-
-# ✅ Exclude runtime data from image; mount as volumes instead
-uploads/**
-logs/**
+# Node stuff (if a frontend exists, don’t copy deps)
+node_modules/

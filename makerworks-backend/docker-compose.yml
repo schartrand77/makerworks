@@ -14,11 +14,10 @@ services:
       backend:
         condition: service_healthy
     environment:
-      # Browser hits the backend on the host
       VITE_API_BASE_URL: "http://localhost:8000/api/v1"
       VITE_BACKEND_URL:  "http://localhost:8000"
     networks:
-      - default
+      - makerworks-net
     ports:
       - "5173:5173"
     restart: unless-stopped
@@ -32,6 +31,8 @@ services:
       dockerfile: Dockerfile.macos
     container_name: makerworks_backend
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -41,21 +42,19 @@ services:
       DATABASE_URL: "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks"
       REDIS_URL: "redis://redis:6379/0"
 
-      # CORS & base URL so the API can emit absolute links
+      # CORS & base URL
       CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:3000","http://127.0.0.1:3000","http://localhost:8080"]'
       BASE_URL: "http://localhost:8000"
 
-      # Explicit in-container paths + public URL prefix
+      # Paths inside the container
       UPLOAD_DIR: "/app/uploads"
       THUMBNAILS_DIR: "/thumbnails"
       THUMBNAILS_URL_PREFIX: "/thumbnails"
       MODELS_DIR: "/models"
 
-      # Use CPU-safe Plotly path in Docker
+      # Thumbnail defaults
       THUMBNAIL_BACKEND: "plotly"
       THUMBNAIL_SIZE: "1024"
-
-      # ---- Thumbnail look defaults ----
       THUMBNAIL_AZIM_DEG: "90"
       THUMBNAIL_ELEV_DEG: "0"
       THUMBNAIL_SSAA: "4"
@@ -72,22 +71,36 @@ services:
       THUMBNAIL_SPEC_K: "0.03"
       THUMBNAIL_SPEC_P: "24"
       THUMBNAIL_RIM_K: "0.03"
-      THUMBNAIL_FLATTEN_BG: "white"
+      THUMBNAIL_FLATTEN_BG: ""   # transparent background (no flatten color)
+
+      # ---- Bambu Bridge (use the SAME key `babu` everywhere) ----
+      BAMBULAB_PRINTERS: "babu@192.168.1.66"
+      BAMBULAB_SERIALS:  "babu=00M09A410201174"
+      BAMBULAB_LAN_KEYS: "babu=5afba193"
+      BAMBULAB_TYPES:    "babu=X1C"
+      BAMBULAB_REGION:   "US"
+      BAMBULAB_AUTOCONNECT: "1"
+
+      # (optional) admin envs available to backend too (seed actually runs in migrate)
+      ADMIN_EMAIL: "admin@example.com"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "Admin#12345!"
+      ADMIN_FORCE_UPDATE: "false"   # NEVER rotate password
 
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:8000/api/v1/system/status || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 90s
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/_health > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+
     networks:
-      - default
+      - makerworks-net
     ports:
       - "8000:8000"
     restart: unless-stopped
     volumes:
       - ./makerworks-backend:/app
-      # Map host folders so API & previews write where you can see them
       - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/uploads:/app/uploads
       - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/thumbnails:/thumbnails:rw
       - /Users/stephenchartrand/Downloads/makerworks-repo/makerworks/models:/models
@@ -103,20 +116,55 @@ services:
         condition: service_healthy
     entrypoint: ["/bin/sh","-lc"]
     command: >
-      echo "⏳ Waiting for PostgreSQL..." ;
-      until psql "postgresql://makerworks:makerworks@postgres:5432/makerworks" -c "\q" >/dev/null 2>&1; do
-        sleep 1;
-      done ;
-      echo "✅ DB ready — running Alembic" ;
-      alembic upgrade head ;
-      echo "✅ Migrations complete"
+      set -euxo pipefail;
+      echo "⏳ Waiting for PostgreSQL...";
+      until psql "postgresql://makerworks:makerworks@postgres:5432/makerworks" -c "\q" >/dev/null 2>&1; do sleep 1; done;
+
+      echo "🔧 Preparing Alembic URL...";
+      : "${DATABASE_URL:=postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks}";
+      # POSIX-safe replacements (no bashisms)
+      ALEMBIC_URL="$(printf '%s\n' "$DATABASE_URL" | sed -e 's/+asyncpg/+psycopg/' -e 's/^postgresql:\/\//postgresql+psycopg:\/\//')";
+      PSQL_URL="$(printf '%s\n' "$ALEMBIC_URL" | sed -e 's/+psycopg//')";
+
+      echo "ℹ️ ALEMBIC_URL=${ALEMBIC_URL}";
+      echo "🔎 Ensuring migration repo has a head...";
+      if [ -z "$(ALEMBIC_URL="${ALEMBIC_URL}" alembic heads 2>/dev/null | tr -d ' \n')" ]; then
+        echo "🧱 No heads → creating empty baseline revision";
+        ALEMBIC_URL="${ALEMBIC_URL}" alembic revision -m "baseline" --empty;
+      fi;
+
+      echo "🔎 Checking alembic_version...";
+      if psql "${PSQL_URL}" -tAc "select 1 from information_schema.tables where table_schema='public' and table_name='alembic_version'" | grep -q 1; then
+        echo "✅ alembic_version exists";
+      else
+        COUNT="$(psql "${PSQL_URL}" -tAc "select count(*) from information_schema.tables where table_schema='public'")";
+        if [ "${COUNT}" != "0" ]; then
+          echo "⚠️ Found ${COUNT} tables → stamping head to match current schema";
+          ALEMBIC_URL="${ALEMBIC_URL}" alembic stamp head;
+        else
+          echo "📭 Empty DB → fresh upgrade will create schema";
+        fi;
+      fi;
+
+      echo "🚀 Applying migrations (upgrade head)…";
+      ALEMBIC_URL="${ALEMBIC_URL}" alembic upgrade head;
+
+      echo "👤 Seeding admin…";
+      python -m app.startup.admin_seed;
+
+      echo "✅ Migrations + admin seed complete";
     environment:
       <<: *buildkit-env
       DATABASE_URL: "postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks"
       REDIS_URL: "redis://redis:6379/0"
       RUN_MIGRATIONS: "true"
+      # admin seed happens here, right after migrations
+      ADMIN_EMAIL: "admin@example.com"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "Admin#12345!"   # one-time create; never rotated
+      ADMIN_FORCE_UPDATE: "false"
     networks:
-      - default
+      - makerworks-net
     restart: "no"
     volumes:
       - ./makerworks-backend:/app
@@ -139,6 +187,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - makerworks-net
 
   redis:
     image: redis:7-alpine
@@ -153,11 +203,14 @@ services:
       timeout: 3s
       interval: 5s
       retries: 10
+    networks:
+      - makerworks-net
 
 volumes:
   postgres_data:
   redis_data:
 
 networks:
-  default:
+  makerworks-net:
+    name: makerworks-net
     driver: bridge

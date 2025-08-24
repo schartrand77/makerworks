@@ -6,7 +6,8 @@ from enum import Enum
 from typing import Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
+from app.schemas._base import APIModel as BaseModel
 
 UUIDLike = Union[str, UUID]
 

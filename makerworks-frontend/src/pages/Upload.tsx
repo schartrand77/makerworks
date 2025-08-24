@@ -1,13 +1,19 @@
 // src/pages/Upload.tsx
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useDropzone } from 'react-dropzone'
-import toast, { Toaster } from 'react-hot-toast'
 import axios from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
-import './upload.vo.css'
+import { Toaster, toast } from 'sonner'
+import PageHeader from '@/components/ui/PageHeader'
+import { UploadCloud } from 'lucide-react'
 
+// Keep the same file rules
 const allowedModelExtensions = ['stl', '3mf', 'obj']
 const maxPhotoSizeBytes = 25 * 1024 * 1024
+
+// Theme helpers to match Cart/Checkout
+const AMBER_RING = 'border-amber-400/45 ring-1 ring-amber-400/40 hover:ring-amber-400/60 focus-within:ring-amber-400/70'
+const INNER_GLOW = 'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]'
 
 type PrintOrder = {
   id: string
@@ -16,7 +22,6 @@ type PrintOrder = {
   model_name?: string
   modelName?: string
 }
-
 type ModelLite = { id: string; name: string }
 
 function useDebounced<T>(value: T, delay = 300) {
@@ -29,7 +34,9 @@ function useDebounced<T>(value: T, delay = 300) {
 }
 
 const UploadPage: React.FC = () => {
-  const { user } = (useAuthStore as any)?.getState ? useAuthStore() : ({ user: undefined } as any)
+  // Zustand store (safe fallback if something’s odd in dev)
+  const storeMaybe = (useAuthStore as any)?.getState ? useAuthStore() : ({ user: undefined } as any)
+  const { user } = storeMaybe
 
   // MODEL
   const [modelLoading, setModelLoading] = useState(false)
@@ -40,12 +47,11 @@ const UploadPage: React.FC = () => {
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState('')
   const [credit, setCredit] = useState('')
-
   const [lastModelId, setLastModelId] = useState<string | null>(() => {
     try { return localStorage.getItem('last_model_id') || null } catch { return null }
   })
 
-  // TARGET (internal only; no ID shown to users)
+  // TARGET
   const [attachModelId, setAttachModelId] = useState<string>('')
 
   // SEARCH
@@ -53,23 +59,18 @@ const UploadPage: React.FC = () => {
   const debouncedSearch = useDebounced(searchTerm, 300)
   const [matches, setMatches] = useState<ModelLite[]>([])
   const [searching, setSearching] = useState(false)
-
-  // Friendly display of the chosen model (name only)
   const [selectedModelName, setSelectedModelName] = useState<string>('')
 
-  // PRINT CONTEXT (optional metadata)
+  // PRINT CONTEXT
   const [printedByMe, setPrintedByMe] = useState(false)
   const [orders, setOrders] = useState<PrintOrder[]>([])
   const [selectedPrintId, setSelectedPrintId] = useState<string>('')
 
-  // PHOTOS — three independent slots (null = empty)
+  // PHOTOS (3 slots)
   const [slotFiles, setSlotFiles] = useState<Array<File | null>>([null, null, null])
-  const [photosLoading, setPhotosLoading] = useState(false)
-  const [photosProgress, setPhotosProgress] = useState(0)
-  const [photosOpen, setPhotosOpen] = useState(false)
-
   const slotInputs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)]
 
+  // util
   const resolveUserId = (): string | undefined => {
     const idFromStore = (user as any)?.id
     if (idFromStore) return idFromStore
@@ -85,29 +86,32 @@ const UploadPage: React.FC = () => {
     return undefined
   }
 
-  // DROPZONE — MODEL
+  // DROPZONE — MODEL (accept by extension for reliability across browsers)
   const onDropModel = useCallback((accepted: File[], fileRejections: any[]) => {
     setModelRejected([]); setModelProgress(0)
     if (!accepted.length) {
-      toast.error('❌ No valid model selected.')
+      toast.error('No valid model selected.')
       const names = fileRejections.map((rej: any) => rej.file?.name || 'unknown')
       setModelRejected(names); return
     }
     const file = accepted[0]
     const ext = file.name.split('.').pop()?.toLowerCase()
     if (!allowedModelExtensions.includes(ext || '')) {
-      toast.error(`❌ Invalid file: ${file.name}. Allowed: ${allowedModelExtensions.join(', ')}`)
+      toast.error(`Invalid file: ${file.name}. Allowed: ${allowedModelExtensions.join(', ')}`)
       setModelRejected([file.name]); return
     }
     setModelFile(file)
   }, [])
 
   const { getRootProps: getModelRootProps, getInputProps: getModelInputProps, isDragActive: isModelDrag } = useDropzone({
-    onDrop: onDropModel, multiple: false, disabled: modelLoading,
-    accept: { 'model/stl': ['.stl'], 'application/octet-stream': ['.3mf', '.obj'] },
+    onDrop: onDropModel,
+    multiple: false,
+    disabled: modelLoading,
+    // map to extensions; MIME detection for .3mf/.obj is inconsistent across OSes/browsers
+    accept: { 'application/*': ['.stl', '.3mf', '.obj'], 'model/*': ['.stl'] },
   })
 
-  // PRINT HISTORY (optional)
+  // PRINT HISTORY
   useEffect(() => {
     if (!printedByMe) return
     let cancelled = false
@@ -154,7 +158,7 @@ const UploadPage: React.FC = () => {
     return () => { cancelled = true }
   }, [debouncedSearch])
 
-  // Resolve friendly name whenever our internal target changes
+  // Selected model name
   useEffect(() => {
     const internalId = attachModelId || lastModelId || ''
     if (!internalId) { setSelectedModelName(''); return }
@@ -175,7 +179,7 @@ const UploadPage: React.FC = () => {
   const uploadModelWithProgress = async (file: File) => {
     const userId = resolveUserId()
     if (!userId) {
-      toast.error('❌ Missing user id (X-User-Id). Sign in again.')
+      toast.error('Missing user id (X-User-Id). Sign in again.')
       throw new Error('Missing user id')
     }
     const formData = new FormData()
@@ -193,27 +197,26 @@ const UploadPage: React.FC = () => {
   }
 
   const handleUploadModel = async () => {
-    if (!modelFile) { toast.error('❌ No model file selected.'); return }
-    if (!name.trim()) { toast.error('❌ Name is required.'); return }
+    if (!modelFile) { toast.error('No model file selected.'); return }
+    if (!name.trim()) { toast.error('Name is required.'); return }
     setModelLoading(true)
     try {
       const res = await uploadModelWithProgress(modelFile)
       const modelId = (res?.data?.model?.id || res?.data?.id) as string | undefined
       const modelNameFromRes = res?.data?.model?.name ?? res?.data?.name ?? name
-      toast.success(`✅ Model uploaded${modelNameFromRes ? `: ${modelNameFromRes}` : ''}.`)
+      toast.success(modelNameFromRes ? `Model uploaded: ${modelNameFromRes}` : 'Model uploaded.')
       if (modelId) {
         setLastModelId(modelId)
         setAttachModelId(modelId)
         setSelectedModelName(modelNameFromRes || '')
         try { localStorage.setItem('last_model_id', modelId) } catch {}
-        setPhotosOpen(true)
       }
       setModelFile(null); setModelProgress(0)
       setName(''); setDescription(''); setTags(''); setCredit('')
     } catch (err: any) {
       const code = err?.response?.status
       const detail = err?.response?.data?.detail || err?.message || 'Unknown error'
-      toast.error(`❌ Upload failed${code ? ` (${code})` : ''}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
+      toast.error(`Upload failed${code ? ` (${code})` : ''}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
       console.error('[Upload] model error:', err)
     } finally { setModelLoading(false) }
   }
@@ -224,8 +227,8 @@ const UploadPage: React.FC = () => {
   const onSlotFileChange = (i: number, fileList: FileList | null) => {
     if (!fileList || !fileList[0]) return
     const f = fileList[0]
-    if (!f.type.startsWith('image/')) { toast.error('🚫 Not an image.'); return }
-    if (f.size > maxPhotoSizeBytes) { toast.error('🚫 File too large (max 25MB).'); return }
+    if (!f.type.startsWith('image/')) { toast.error('Not an image.'); return }
+    if (f.size > maxPhotoSizeBytes) { toast.error('File too large (max 25MB).'); return }
     setSlotFiles((prev) => { const next = [...prev]; next[i] = f; return next })
   }
 
@@ -244,298 +247,333 @@ const UploadPage: React.FC = () => {
     catch { return false }
   }
 
+  const photosSelectedCount = useMemo(() => slotFiles.filter(Boolean).length, [slotFiles])
+
   const handleSubmitAllPhotos = async () => {
     const internalId = attachModelId || lastModelId || ''
-    if (!internalId) { toast.error('❌ Choose or upload a model first.'); return }
+    if (!internalId) { toast.error('Choose or upload a model first.'); return }
     const files = slotFiles.filter(Boolean) as File[]
-    if (files.length === 0) { toast.error('❌ Choose at least one image.'); return }
+    if (files.length === 0) { toast.error('Choose at least one image.'); return }
     const exists = await verifyModelExists(internalId)
-    if (!exists) { toast.error('❌ That model is no longer available.'); return }
+    if (!exists) { toast.error('That model is no longer available.'); return }
 
     const userId = resolveUserId()
-    if (!userId) { toast.error('❌ Missing user id (X-User-Id). Sign in again.'); return }
+    if (!userId) { toast.error('Missing user id (X-User-Id). Sign in again.'); return }
 
     const form = new FormData()
     files.forEach((f) => form.append('files', f))
     form.append('as_print_photo', 'true')
     if (printedByMe && selectedPrintId) form.append('print_id', selectedPrintId)
 
-    setPhotosLoading(true); setPhotosProgress(0)
     try {
       await axios.post(`/upload/models/${internalId}/photos`, form, {
         headers: { 'Content-Type': 'multipart/form-data', 'X-User-Id': userId },
-        onUploadProgress: (e: ProgressEvent) => { if (e.total) setPhotosProgress(Math.round((e.loaded / e.total) * 100)) },
         validateStatus: (s) => s >= 200 && s < 300,
       })
-      toast.success(printedByMe ? '📸 Added your print photos.' : '📸 Photos submitted (may require approval).')
+      toast.success(printedByMe ? 'Added your print photos.' : 'Photos submitted (may require approval).')
       clearAllSlots()
     } catch (err: any) {
       const code = err?.response?.status
       const detail = err?.response?.data?.detail || err?.message || 'Unknown error'
-      toast.error(`❌ Photo upload failed${code ? ` (${code})` : ''}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
+      toast.error(`Photo upload failed${code ? ` (${code})` : ''}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
       console.error('[Upload] photos error:', err)
-    } finally { setPhotosLoading(false); setPhotosProgress(0) }
+    }
   }
 
   // UI
   return (
-    <div className="vo-root">
-      <Toaster position="top-right" />
-      <div className="vo-window" role="dialog" aria-labelledby="voTitle">
-        <header className="vo-header">
-          <h2 id="voTitle" className="vo-title"><span className="vo-title-emoji">⬆️</span> Upload</h2>
-        </header>
+    <div>
+      <Toaster position="top-right" richColors />
+      <main className="mx-auto max-w-6xl px-4 py-8">
+        <PageHeader icon={<UploadCloud className="w-8 h-8 text-zinc-400" />} title="Upload" />
 
-        <main className="vo-body">
-          <section className="vo-pane" aria-label="Upload content">
-            {/* STEP 1 — MODEL */}
-            <div className="vo-row">
-              <div className="vo-col">
-                <h3 className="vo-h3">Model</h3>
-                <p className="vo-muted">Drop an STL/3MF/OBJ or click to browse.</p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* LEFT — MODEL */}
+          <section className={['rounded-2xl bg-white/70 dark:bg-white/10 backdrop-blur-xl p-6', AMBER_RING, INNER_GLOW].join(' ')}>
+            <h3 className="text-lg font-medium mb-2">Model</h3>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Drop an STL/3MF/OBJ or click to browse.</p>
 
-                <div {...getModelRootProps()} className={`vo-drop ${isModelDrag ? 'is-drag' : ''}`} aria-busy={modelLoading}>
-                  <input {...getModelInputProps()} />
-                  <div className="vo-drop-inner">
-                    <div className="vo-drop-icon">📦</div>
-                    <div>
-                      <div className="vo-drop-title">{isModelDrag ? 'Release to upload' : 'Drag & drop here'}</div>
-                      <div className="vo-drop-sub">Accepted: .stl, .3mf, .obj</div>
-                    </div>
+            <div
+              {...getModelRootProps()}
+              className={[
+                'group grid place-items-center aspect-[16/9] rounded-xl border border-dashed',
+                'bg-white/60 dark:bg-white/5 cursor-pointer',
+                AMBER_RING,
+              ].join(' ')}
+              aria-busy={modelLoading}
+            >
+              <input {...getModelInputProps()} />
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">📦</span>
+                <div>
+                  <div className="font-medium">
+                    {isModelDrag ? 'Release to upload' : 'Drag & drop here'}
                   </div>
+                  <div className="text-xs opacity-70">Accepted: .stl, .3mf, .obj</div>
                 </div>
-
-                {modelFile && (
-                  <div className="vo-file">
-                    <div className="vo-file-meta">
-                      <div className="vo-file-name">{modelFile.name}</div>
-                      <div className="vo-file-size">{(modelFile.size / 1024).toFixed(1)} KB</div>
-                    </div>
-
-                    <button
-                      className="mw-btn mw-btn-xs mw-btn--red"
-                      onClick={() => setModelFile(null)}
-                      disabled={modelLoading}
-                      aria-label="Remove file"
-                    >
-                      Remove file
-                    </button>
-
-                    {modelLoading && (
-                      <div className="vo-progress">
-                        <div className="vo-progress-bar" style={{ width: `${modelProgress}%` }} />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="vo-grid">
-                  <label className="vo-field">
-                    <span>Name *</span>
-                    <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Model name" />
-                  </label>
-                  <label className="vo-field">
-                    <span>Tags</span>
-                    <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="benchy, calibration" />
-                  </label>
-                </div>
-
-                <label className="vo-field">
-                  <span>Description</span>
-                  <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe the model" rows={4} />
-                </label>
-
-                <label className="vo-field">
-                  <span>Credit</span>
-                  <input type="text" value={credit} onChange={(e) => setCredit(e.target.value)} placeholder="Original creator’s name" />
-                </label>
-
-                {modelRejected.length > 0 && (
-                  <div className="vo-error">
-                    <strong>Rejected:</strong> {modelRejected.join(', ')}
-                  </div>
-                )}
-
-                <div className="vo-actions vo-primary">
-                  <button
-                    className="mw-btn mw-btn-lg"
-                    onClick={handleUploadModel}
-                    disabled={modelLoading || !modelFile || !name.trim()}
-                  >
-                    {modelLoading ? `Uploading… ${modelProgress}%` : 'Upload Model'}
-                  </button>
-                </div>
-              </div>
-
-              {/* STEP 2 — CHOOSE WHERE PHOTOS GO (public-friendly; no IDs) */}
-              <div className="vo-col">
-                <h3 className="vo-h3">Attach Photos To</h3>
-
-                <label className="vo-field">
-                  <span>Search by name</span>
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Start typing a model name…"
-                  />
-                </label>
-
-                {!searching && matches.length > 0 && (
-                  <div className="vo-search">
-                    {matches.map((m) => (
-                      <button
-                        key={m.id}
-                        className="vo-search-item"
-                        onClick={() => { setAttachModelId(m.id); setSelectedModelName(m.name); setPhotosOpen(true); toast.success(`Selected: ${m.name}`) }}
-                      >
-                        {m.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {searching && <div className="vo-muted" style={{ marginTop: 6 }}>Searching…</div>}
-
-                {/* Selected model (name only) */}
-                <div className="vo-muted" style={{ marginTop: 10 }}>
-                  Selected model: <strong>{selectedModelName || '—'}</strong>
-                </div>
-
-                {/* Checkbox + "Use last uploaded" */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
-                  <label className="vo-check" style={{ margin: 0 }}>
-                    <input type="checkbox" checked={printedByMe} onChange={(e) => setPrintedByMe(e.target.checked)} />
-                    <span>I printed this</span>
-                  </label>
-
-                  <button
-                    type="button"
-                    className="mw-btn mw-btn-xs mw-btn--quiet"
-                    onClick={() => {
-                      if (lastModelId) {
-                        setAttachModelId(lastModelId)
-                        toast.success('Using your last uploaded model')
-                        setPhotosOpen(true)
-                      }
-                    }}
-                    disabled={!lastModelId}
-                    title={lastModelId ? 'Use your last uploaded model' : 'No previous uploads yet'}
-                  >
-                    Use last uploaded
-                  </button>
-                </div>
-
-                {printedByMe && (
-                  <label className="vo-field" style={{ marginTop: 8 }}>
-                    <span>Recent prints (optional)</span>
-                    <select
-                      value={selectedPrintId}
-                      onChange={(e) => {
-                        const id = e.target.value
-                        setSelectedPrintId(id)
-                        const order = orders.find((o) => o.id === id)
-                        const mId = order?.modelId || order?.model_id
-                        const mName = order?.modelName || order?.model_name
-                        if (mId) { setAttachModelId(mId); if (mName) setSelectedModelName(mName); setPhotosOpen(true) }
-                      }}
-                    >
-                      <option value="">— None —</option>
-                      {orders.map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.modelName || o.model_name || 'Model'}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
               </div>
             </div>
 
-            {/* STEP 3 — PHOTOS */}
-            {(attachModelId || lastModelId) && (
-              <>
-                <div className="vo-divider" />
-
-                <details className="vo-photos" open={photosOpen} onToggle={(e) => setPhotosOpen((e.target as HTMLDetailsElement).open)}>
-                  <summary className="vo-photos-summary">
-                    <span>Photos (up to 3)</span>
-                    <span className="vo-muted">{slotFiles.filter(Boolean).length}/3 selected</span>
-                  </summary>
-
-                  <div className="vo-slots">
-                    {[0,1,2].map((i) => {
-                      const f = slotFiles[i]
-                      const url = f ? URL.createObjectURL(f) : null
-                      return (
-                        <div key={i} className={`vo-slot ${f ? 'has-image' : ''}`} onClick={() => onPickSlot(i)} role="button" tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onPickSlot(i) }}
-                          title={f ? 'Click to replace' : 'Click to upload'}>
-                          {f ? (
-                            <>
-                              <img src={url!} alt={`Selected image ${i+1}`} onLoad={() => url && URL.revokeObjectURL(url)} />
-                              <button
-                                type="button"
-                                className="mw-btn mw-btn-xs mw-btn--red vo-slot-x"
-                                title="Clear"
-                                onClick={(e) => { e.stopPropagation(); clearSlot(i) }}
-                                aria-label={`Clear image ${i+1}`}
-                              >
-                                ✕
-                              </button>
-                            </>
-                          ) : (
-                            <div className="vo-slot-inner">
-                              <div className="vo-slot-plus">＋</div>
-                              <div className="vo-slot-hint">Add photo</div>
-                            </div>
-                          )}
-                          <input
-                            ref={slotInputs[i]}
-                            type="file"
-                            accept="image/*"
-                            hidden
-                            onChange={(e) => onSlotFileChange(i, e.target.files)}
-                          />
-                        </div>
-                      )
-                    })}
+            {modelFile && (
+              <div className="mt-4 rounded-xl p-3 bg-white/60 dark:bg-white/10 border border-white/20">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{modelFile.name}</div>
+                    <div className="text-xs opacity-70">{(modelFile.size / 1024).toFixed(1)} KB</div>
                   </div>
+                  <button
+                    className="mw-btn mw-btn-xs mw-btn--red"
+                    onClick={() => setModelFile(null)}
+                    disabled={modelLoading}
+                    aria-label="Remove file"
+                  >
+                    Remove file
+                  </button>
+                </div>
 
-                  {photosLoading && (
-                    <div className="vo-progress" style={{ marginTop: 10 }}>
-                      <div className="vo-progress-bar" style={{ width: `${photosProgress}%` }} />
-                    </div>
-                  )}
-
-                  <div className="vo-actions between" style={{ marginTop: 12 }}>
-                    <button
-                      className="mw-btn mw-btn-sm mw-btn--quiet"
-                      onClick={clearAllSlots}
-                      disabled={photosLoading || slotFiles.every(s => !s)}
-                    >
-                      Clear all
-                    </button>
-                    <button
-                      className="mw-btn mw-btn-lg"
-                      onClick={handleSubmitAllPhotos}
-                      disabled={photosLoading || slotFiles.every(s => !s)}
-                      title="Upload selected photos for the chosen model"
-                    >
-                      {photosLoading ? `Submitting… ${photosProgress}%` : 'Submit All'}
-                    </button>
+                {modelLoading && (
+                  <div className="mt-3 h-2 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 transition-[width] duration-200"
+                      style={{ width: `${modelProgress}%` }}
+                    />
                   </div>
-                </details>
-              </>
-            )}
-
-            {lastModelId && (
-              <div className="vo-muted" style={{ marginTop: 8 }}>
-                Last uploaded model saved to your session.
+                )}
               </div>
             )}
+
+            <div className="mt-4 grid sm:grid-cols-2 gap-4">
+              <label className="block">
+                <span className="block text-sm mb-1">Name *</span>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Model name"
+                  className="w-full rounded-lg px-3 py-2 bg-white/80 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-sm mb-1">Tags</span>
+                <input
+                  type="text"
+                  value={tags}
+                  onChange={(e) => setTags(e.target.value)}
+                  placeholder="benchy, calibration"
+                  className="w-full rounded-lg px-3 py-2 bg-white/80 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10"
+                />
+              </label>
+            </div>
+
+            <label className="block mt-4">
+              <span className="block text-sm mb-1">Description</span>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Describe the model"
+                rows={4}
+                className="w-full rounded-lg px-3 py-2 bg-white/80 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10"
+              />
+            </label>
+
+            <label className="block mt-4">
+              <span className="block text-sm mb-1">Credit</span>
+              <input
+                type="text"
+                value={credit}
+                onChange={(e) => setCredit(e.target.value)}
+                placeholder="Original creator’s name"
+                className="w-full rounded-lg px-3 py-2 bg-white/80 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10"
+              />
+            </label>
+
+            {modelRejected.length > 0 && (
+              <div className="mt-3 text-sm text-red-600">
+                <strong>Rejected:</strong> {modelRejected.join(', ')}
+              </div>
+            )}
+
+            <div className="mt-5">
+              <button
+                className="mw-btn mw-btn-lg"
+                onClick={handleUploadModel}
+                disabled={modelLoading || !modelFile || !name.trim()}
+              >
+                {modelLoading ? `Uploading… ${modelProgress}%` : 'Upload Model'}
+              </button>
+            </div>
           </section>
-        </main>
-      </div>
+
+          {/* RIGHT — ATTACH + PHOTOS */}
+          <section className={['rounded-2xl bg-white/70 dark:bg-white/10 backdrop-blur-xl p-6', AMBER_RING, INNER_GLOW].join(' ')}>
+            <h3 className="text-lg font-medium mb-4">Attach Photos To</h3>
+
+            <label className="block">
+              <span className="block text-sm mb-1">Search by name</span>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Start typing a model name…"
+                className="w-full rounded-lg px-3 py-2 bg-white/80 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10"
+              />
+            </label>
+
+            {!searching && matches.length > 0 && (
+              <div className="mt-2 rounded-xl border border-white/20 overflow-hidden">
+                {matches.map((m, idx) => (
+                  <button
+                    key={m.id}
+                    className={[
+                      'w-full text-left px-3 py-2 text-sm',
+                      idx % 2 ? 'bg-white/40 dark:bg-white/5' : 'bg-white/60 dark:bg-white/10',
+                      'hover:bg-amber-50/70 dark:hover:bg-amber-500/10',
+                    ].join(' ')}
+                    onClick={() => { setAttachModelId(m.id); setSelectedModelName(m.name); toast.success(`Selected: ${m.name}`) }}
+                  >
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {searching && <div className="mt-2 text-sm text-zinc-500">Searching…</div>}
+
+            <div className="mt-4">
+              <label className="block">
+                <span className="block text-sm mb-1">Selected model</span>
+                <div className="rounded-lg px-3 py-2 bg-white/60 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10" aria-live="polite">
+                  {selectedModelName || '—'}
+                </div>
+              </label>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={printedByMe} onChange={(e) => setPrintedByMe(e.target.checked)} />
+                <span>I printed this</span>
+              </label>
+
+              <button
+                type="button"
+                className="mw-btn mw-btn-xs mw-btn--quiet"
+                onClick={() => {
+                  if (lastModelId) {
+                    setAttachModelId(lastModelId)
+                    toast.success('Using your last uploaded model')
+                  }
+                }}
+                disabled={!lastModelId}
+                title={lastModelId ? 'Use your last uploaded model' : 'No previous uploads yet'}
+              >
+                Use last uploaded
+              </button>
+            </div>
+
+            {printedByMe && (
+              <label className="block mt-3">
+                <span className="block text-sm mb-1">Recent prints (optional)</span>
+                <select
+                  value={selectedPrintId}
+                  onChange={(e) => {
+                    const id = e.target.value
+                    setSelectedPrintId(id)
+                    const order = orders.find((o) => o.id === id)
+                    const mId = order?.modelId || order?.model_id
+                    const mName = order?.modelName || order?.model_name
+                    if (mId) { setAttachModelId(mId); if (mName) setSelectedModelName(mName) }
+                  }}
+                  className="w-full rounded-lg px-3 py-2 bg-white/80 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10"
+                >
+                  <option value="">— None —</option>
+                  {orders.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.modelName || o.model_name || 'Model'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {/* PHOTOS */}
+            <div className="mt-6">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm font-medium">Photos (up to 3)</span>
+                <span className="text-xs text-zinc-600 dark:text-zinc-400">{photosSelectedCount}/3 selected</span>
+              </div>
+
+              <div className="mt-2 grid grid-cols-3 gap-3">
+                {[0,1,2].map((i) => {
+                  const f = slotFiles[i]
+                  const url = f ? URL.createObjectURL(f) : null
+                  return (
+                    <div
+                      key={i}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onPickSlot(i)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onPickSlot(i) }}
+                      className={[
+                        'relative aspect-square rounded-xl overflow-hidden',
+                        'bg-white/60 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10',
+                        'grid place-items-center',
+                      ].join(' ')}
+                      title={f ? 'Click to replace' : 'Click to upload'}
+                    >
+                      {f ? (
+                        <>
+                          <img
+                            src={url!}
+                            alt={`Selected image ${i+1}`}
+                            className="w-full h-full object-cover"
+                            onLoad={() => url && URL.revokeObjectURL(url)}
+                          />
+                          <button
+                            type="button"
+                            className="mw-btn mw-btn-xs mw-btn--red absolute top-2 right-2"
+                            title="Clear"
+                            onClick={(e) => { e.stopPropagation(); clearSlot(i) }}
+                            aria-label={`Clear image ${i+1}`}
+                          >
+                            ✕
+                          </button>
+                        </>
+                      ) : (
+                        <div className="text-center">
+                          <div className="text-2xl leading-none">＋</div>
+                          <div className="text-[11px] opacity-70">Add photo</div>
+                        </div>
+                      )}
+                      <input
+                        ref={slotInputs[i]}
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        onChange={(e) => onSlotFileChange(i, e.target.files)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="mt-4">
+                <button
+                  className="mw-btn mw-btn-lg"
+                  onClick={handleSubmitAllPhotos}
+                  disabled={slotFiles.every(s => !s)}
+                  title="Upload selected photos for the chosen model"
+                >
+                  Submit All
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* tiny hint */}
+        {lastModelId && (
+          <div className="mt-4 text-xs text-zinc-500">Last uploaded model saved to your session.</div>
+        )}
+      </main>
     </div>
   )
 }

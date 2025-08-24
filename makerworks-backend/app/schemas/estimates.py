@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional, Tuple
 
-from pydantic import BaseModel, Field, conlist, confloat
+from pydantic import Field, conlist, confloat
+from app.schemas._base import APIModel as BaseModel
 from app.schemas.enums import CurrencyEnum
 
 

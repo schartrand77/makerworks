@@ -25,8 +25,7 @@ services:
     image: redis:7-alpine
     container_name: makerworks_redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    ports: ["6379:6379"]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -41,23 +40,20 @@ services:
       dockerfile: Dockerfile.macos
     container_name: makerworks_migrate
     restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      echo "⏳ Waiting for PostgreSQL..."
-      until PGPASSWORD=makerworks psql -h postgres -U makerworks -d makerworks -c '\q'; do
-        sleep 1
-      done
-      echo "🔖 Stamping initial stub..."
-      alembic -c alembic.ini stamp 06615bc439f5
-      echo "🚀 Applying migrations..."
-      alembic -c alembic.ini upgrade head
     working_dir: /app
     volumes:
       - ./makerworks-backend:/app
+      - ./secrets:/secrets
     environment:
       <<: *buildkit-env
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
-      RUN_MIGRATIONS: "true"
+      # Seeder config (used ONLY by the migrate job)
+      ADMIN_EMAIL: "admin@example.com"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "admin"      # ← your fixed password; seeder uses once, never rotates
+      FIRST_ADMIN_FILE: "/secrets/first-admin.txt"
+    entrypoint: ["/bin/sh","-lc"]
+    command: ./app/scripts/migrate-and-seed.sh
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,6 +64,7 @@ services:
       dockerfile: Dockerfile.macos
     container_name: makerworks_backend
     restart: unless-stopped
+    working_dir: /app
     ports: ["8000:8000"]
     volumes:
       - ./makerworks-backend:/app
@@ -81,18 +78,17 @@ services:
       <<: *buildkit-env
       DATABASE_URL: postgresql+asyncpg://makerworks:makerworks@postgres:5432/makerworks
       BASE_URL: http://localhost:8000
-      # CORS for local dev (5173 Vite; add 8080 if you run prod preview)
       CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:8080"]'
-      # explicit inside-container paths (match binds above)
       UPLOAD_DIR: /app/uploads
       THUMBNAILS_DIR: /thumbnails
       MODELS_DIR: /models
-      # Redis wiring (multiple formats because codebases love bikeshedding names)
+      THUMBNAIL_FLATTEN_BG: ""
       REDIS_URL: redis://redis:6379/0
       REDIS_URI: redis://redis:6379/0
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_DB: "0"
+      BAMBULAB_AUTOCONNECT: "1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,9 +112,7 @@ services:
       timeout: 10s
       start_period: 90s
       retries: 5
-    working_dir: /app
 
-  # Dev frontend (Vite on 5173)
   frontend:
     build:
       context: ./makerworks-frontend

@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react'
 import axios from '@/api/client'
 import ModelViewer from '@/components/ui/ModelViewer'
 import getAbsoluteUrl from '@/lib/getAbsoluteUrl'
-import GlassCard from '@/components/ui/GlassCard'
 
 interface Dimensions { x: number; y: number; z: number }
 interface Model {
@@ -189,32 +188,44 @@ const ModelPage: React.FC = () => {
   return (
     <main
       className={[
-        'relative min-h-[100svh] pt-3 pb-8 px-4',
+        // center the one small card
+        'relative min-h-[100svh] px-4 py-10 grid place-items-center',
+        // subtle background like before
         'bg-[radial-gradient(60%_40%_at_20%_0%,rgba(99,102,241,0.15),transparent_60%),',
         'radial-gradient(50%_50%_at_100%_20%,rgba(16,185,129,0.12),transparent_60%),',
         'linear-gradient(180deg,rgba(0,0,0,0.035),rgba(0,0,0,0.035))]',
       ].join(' ')}
     >
-      <GlassCard className="mx-auto max-w-7xl p-4 rounded-3xl backdrop-blur-2xl ring-1 ring-white/15 shadow-[0_10px_50px_-15px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.4)]">
-        <div className="mb-3 flex items-center justify-between gap-3">
+      {/* ONE SMALL CENTERED CARD (same shell as Cart) */}
+      <article className="card card--rim-orange w-full max-w-xl p-4 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <Link to={backHref} onClick={handleBack} className="mw-btn mw-btn-sm mw-btn--quiet" title="Back">← Back</Link>
-          <button onClick={handleEstimate} disabled={!canEstimate} className="mw-btn mw-btn-lg" title={canEstimate ? 'Send this model to the estimator' : 'Model not ready yet'}>
+          <button
+            onClick={handleEstimate}
+            disabled={!canEstimate}
+            className="mw-btn mw-btn-sm sm:mw-btn-md"
+            title={canEstimate ? 'Send this model to the estimator' : 'Model not ready yet'}
+          >
             Get estimate →
           </button>
         </div>
 
-        <div className="relative w-full">
-          <ModelViewer
-            key={src || 'no-src'}
-            src={src || undefined}
-            color="#9a9a9a"
-            fitMargin={1.6}
-            className="h-[36vh] sm:h-[42vh] lg:h-[46vh] rounded-2xl"
-          />
+        <div className="relative">
+          <div className="rounded-xl ring-1 ring-amber-300/35 dark:ring-amber-300/25 overflow-hidden bg-zinc-900/95">
+            <div className="aspect-[4/3] w-full">
+              <ModelViewer
+                key={src || 'no-src'}
+                src={src || undefined}
+                color="#9a9a9a"
+                fitMargin={1.6}
+                className="h-full w-full"
+              />
+            </div>
+          </div>
 
           {/* TEXT-ONLY OVERLAY (no container) */}
           {(model?.name || model?.description) && (
-            <div className="absolute left-2 right-2 bottom-2 sm:left-3 sm:right-3 sm:bottom-3 pointer-events-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]">
+            <div className="absolute left-2 right-2 bottom-2 pointer-events-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]">
               <div className="flex flex-col gap-1.5">
                 <div className="text-[12px] sm:text-sm font-semibold text-white/90 leading-tight">
                   {model?.name || 'Untitled'}
@@ -229,19 +240,17 @@ const ModelPage: React.FC = () => {
             </div>
           )}
         </div>
-      </GlassCard>
 
-      {/* bottom strip: 3 real photos (fixed clipping) */}
-      <GlassCard className="mx-auto max-w-7xl mt-3 p-3 sm:p-4 rounded-3xl backdrop-blur-2xl ring-1 ring-white/15 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.35)]">
-        <div className="w-full h-[9vh] sm:h-[10.5vh] lg:h-[11.5vh]">
+        {/* tiny photo strip inside the same card */}
+        <div className="mt-4">
           {loadingPhotos ? (
-            <div className="grid grid-cols-3 gap-3 h-full">
+            <div className="grid grid-cols-3 gap-2">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-full rounded-2xl bg-white/10 animate-pulse" />
+                <div key={i} className="h-16 sm:h-20 rounded-lg bg-white/20 animate-pulse" />
               ))}
             </div>
           ) : photos.length > 0 ? (
-            <div className="grid grid-cols-3 gap-3 h-full">
+            <div className="grid grid-cols-3 gap-2">
               {photos.map((p) => {
                 const full = p.url || undefined
                 const thumb = p.thumbnail_url || p.url || ''
@@ -251,14 +260,14 @@ const ModelPage: React.FC = () => {
                     href={full}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block h-full group overflow-hidden rounded-2xl ring-1 ring-white/15"
+                    className="block h-16 sm:h-20 group overflow-hidden rounded-lg ring-1 ring-white/15"
                     title={p.caption || 'Open full image'}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={thumb || undefined}
                       alt={p.caption || 'Printed model photo'}
-                      className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+                      className="w-full h-full object-cover transition-transform group-hover:scale-[1.03]"
                       onError={(e) => { if (full && e.currentTarget.src !== full) e.currentTarget.src = full }}
                       draggable={false}
                     />
@@ -267,16 +276,16 @@ const ModelPage: React.FC = () => {
               })}
               {photos.length < 3 &&
                 Array.from({ length: 3 - photos.length }).map((_, i) => (
-                  <div key={`blank-${i}`} className="h-full rounded-2xl ring-1 ring-white/10 bg-white/5" />
+                  <div key={`blank-${i}`} className="h-16 sm:h-20 rounded-lg ring-1 ring-white/10 bg-white/5" />
                 ))}
             </div>
           ) : (
-            <div className="h-full flex items-center justify-center text-sm text-white/80 rounded-2xl bg-white/5 ring-1 ring-white/10">
+            <div className="h-16 sm:h-20 grid place-items-center text-xs text-white/80 rounded-lg bg-white/5 ring-1 ring-white/10">
               No photos yet.
             </div>
           )}
         </div>
-      </GlassCard>
+      </article>
     </main>
   )
 }

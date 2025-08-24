@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from app.schemas._base import APIModel as BaseModel
 
 HEX6 = r"^#?[0-9A-Fa-f]{6}$"
 

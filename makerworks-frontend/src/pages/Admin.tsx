@@ -7,10 +7,11 @@ import UsersTab from './admin/UsersTab';
 import FilamentsTab from './admin/FilamentsTab';
 import ModelsTab from './admin/ModelsTab';
 import InventoryTab from './admin/InventoryTab';
-import EstimatesTab from './admin/Estimates'; // ✅ new import
+import EstimatesTab from './admin/Estimates';
+import Printers from './admin/Printers'; // ✅ NEW: Bambu bridge UI
 
-type TabKey = 'users' | 'filaments' | 'inventory' | 'models' | 'estimates';
-const TABS = ['users', 'filaments', 'inventory', 'models', 'estimates'] as const;
+type TabKey = 'users' | 'filaments' | 'inventory' | 'models' | 'printers' | 'estimates';
+const TABS = ['users', 'filaments', 'inventory', 'models', 'printers', 'estimates'] as const;
 
 function isTab(value: unknown): value is TabKey {
   return typeof value === 'string' && (TABS as readonly string[]).includes(value);
@@ -61,7 +62,7 @@ export default function Admin() {
       if (e.key === 'ArrowLeft') nextIdx = (currentIndex - 1 + TABS.length) % TABS.length;
       if (e.key === 'Home') nextIdx = 0;
       if (e.key === 'End') nextIdx = TABS.length - 1;
-      setTabSafe(TABS[nextIdx]);
+      setTabSafe(TABS[nextIdx] as TabKey);
       const btn = document.getElementById(`tab-${TABS[nextIdx]}`);
       btn?.focus();
     },
@@ -105,7 +106,7 @@ export default function Admin() {
               aria-controls={`panel-${t}`}
               data-active={active ? 'true' : 'false'}
               className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
-              onClick={() => setTabSafe(t)}
+              onClick={() => setTabSafe(t as TabKey)}
             >
               {label}
             </button>
@@ -124,6 +125,9 @@ export default function Admin() {
       </div>
       <div id="panel-models" role="tabpanel" aria-labelledby="tab-models" hidden={tab !== 'models'}>
         {tab === 'models' && <ModelsTab />}
+      </div>
+      <div id="panel-printers" role="tabpanel" aria-labelledby="tab-printers" hidden={tab !== 'printers'}>
+        {tab === 'printers' && <Printers />}
       </div>
       <div id="panel-estimates" role="tabpanel" aria-labelledby="tab-estimates" hidden={tab !== 'estimates'}>
         {tab === 'estimates' && <EstimatesTab />}

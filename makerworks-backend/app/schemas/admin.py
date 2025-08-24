@@ -2,7 +2,8 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, ConfigDict, Field, HttpUrl, computed_field
+from pydantic import EmailStr, ConfigDict, Field, HttpUrl, computed_field
+from app.schemas._base import APIModel as BaseModel
 
 
 class UserOut(BaseModel):

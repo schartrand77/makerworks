@@ -13,3 +13,4 @@ thumbnails/
 *.dylib
 cookies.txt
 secrets/
+makerworks-backend/uploads/

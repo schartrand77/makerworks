@@ -1,7 +1,7 @@
 # app/routes/filaments.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Mapping
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -25,8 +25,10 @@ except Exception as e:  # pragma: no cover
 try:
     from app.deps import require_admin  # type: ignore
 except Exception:  # pragma: no cover
+
     async def require_admin() -> None:
         return None
+
 
 router = APIRouter(tags=["filaments"])
 
@@ -42,7 +44,10 @@ def _normalize_hex(h: Optional[str]) -> Optional[str]:
     return f"#{s}"
 
 
-def _display_name(category: Optional[str], color_name: Optional[str]) -> Optional[str]:
+def _display_name(
+    category: Optional[str],
+    color_name: Optional[str],
+) -> Optional[str]:
     cat = (category or "").strip()
     col = (color_name or "").strip()
     if not cat and not col:
@@ -54,43 +59,28 @@ def _display_name(category: Optional[str], color_name: Optional[str]) -> Optiona
     return f"{cat} {col}"
 
 
-async def _load_barcodes_map(db: AsyncSession, ids: List[UUID]) -> Dict[UUID, List[str]]:
-    if not ids:
-        return {}
-    q = text(
-        """
-        SELECT filament_id::uuid AS fid, code
-        FROM public.barcodes
-        WHERE filament_id = ANY(:ids)
-        """
-    )
-    rows = (await db.execute(q, {"ids": [str(i) for i in ids]})).all()
-    out: Dict[UUID, List[str]] = {}
-    for fid, code in rows:
-        out.setdefault(fid, []).append(code)
-    return out
-
-
-def _row_to_out(row: Any, barcodes: List[str]) -> FilamentOut:
+def _row_to_out(row: Mapping[str, Any]) -> FilamentOut:
+    price = row["price_per_kg"]
     return FilamentOut(
-        id=row.id,
-        name=row.name,
-        material=row.material,
-        category=row.category,
-        type=row.type,
-        color_name=row.color_name,
-        color_hex=row.color_hex,
-        price_per_kg=float(row.price_per_kg) if row.price_per_kg is not None else 0.0,
-        is_active=bool(row.is_active),
-        barcodes=barcodes,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
+        id=row["id"],
+        name=row["name"],
+        material=row["material"],
+        category=row["category"],
+        type=row["type"],
+        color_name=row["color_name"],
+        color_hex=row["color_hex"],
+        price_per_kg=float(price) if price is not None else 0.0,
+        is_active=bool(row["is_active"]),
+        barcodes=list(row.get("barcodes") or []),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 
 # -----------------------
 # Routes
 # -----------------------
+
 
 @router.head("/filaments", include_in_schema=False)
 async def head_filaments(_: AsyncSession = Depends(get_db)) -> Response:
@@ -99,40 +89,52 @@ async def head_filaments(_: AsyncSession = Depends(get_db)) -> Response:
 
 
 @router.get("/filaments", response_model=List[FilamentOut])
-async def list_filaments(db: AsyncSession = Depends(get_db)) -> List[FilamentOut]:
+async def list_filaments(
+    db: AsyncSession = Depends(get_db),
+) -> List[FilamentOut]:
     q = text(
         """
-        SELECT id, name, material, category, type, color_name, color_hex,
-               price_per_kg, is_active, created_at, updated_at
-        FROM public.filaments
-        ORDER BY created_at DESC
+        SELECT f.id, f.name, f.material, f.category,
+               f.type, f.color_name, f.color_hex,
+               f.price_per_kg, f.is_active, f.created_at, f.updated_at,
+               COALESCE(
+                   array_agg(b.code) FILTER (WHERE b.code IS NOT NULL),
+                   '{}'
+               ) AS barcodes
+        FROM public.filaments f
+        LEFT JOIN public.barcodes b ON f.id = b.filament_id
+        GROUP BY f.id
+        ORDER BY f.created_at DESC
         """
     )
-    rows = (await db.execute(q)).fetchall()
-    ids = [r.id for r in rows]
-    bc_map = await _load_barcodes_map(db, ids)
-    return [_row_to_out(r, bc_map.get(r.id, [])) for r in rows]
+    rows = (await db.execute(q)).mappings().all()
+    return [_row_to_out(r) for r in rows]
 
 
 @router.post(
     "/filaments",
     response_model=FilamentOut,
-    status_code=status.HTTP_200_OK,  # keep 200 for current frontend expectation
+    # keep 200 for current frontend expectation
+    status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_admin)],
 )
-async def create_filament(payload: FilamentCreate, db: AsyncSession = Depends(get_db)) -> FilamentOut:
+async def create_filament(
+    payload: FilamentCreate, db: AsyncSession = Depends(get_db)
+) -> FilamentOut:
     fid = uuid4()
     color_hex = _normalize_hex(payload.color_hex)
     name = _display_name(payload.category, payload.color_name)
 
     insert_q = text(
         """
-        INSERT INTO public.filaments
-            (id, name, category, color_hex, price_per_kg, material, type,
-             color_name, is_active, created_at, updated_at)
-        VALUES
-            (:id, :name, :category, :color_hex, :price_per_kg, :material, :type,
-             :color_name, :is_active, now(), now())
+        INSERT INTO public.filaments (
+            id, name, category, color_hex, price_per_kg, material, type,
+            color_name, is_active, created_at, updated_at
+        )
+        VALUES (
+            :id, :name, :category, :color_hex, :price_per_kg, :material, :type,
+            :color_name, :is_active, now(), now()
+        )
         """
     )
     params = {
@@ -144,7 +146,9 @@ async def create_filament(payload: FilamentCreate, db: AsyncSession = Depends(ge
         "material": payload.material,
         "type": payload.category,  # mirror current UI concept
         "color_name": payload.color_name,
-        "is_active": bool(payload.is_active) if payload.is_active is not None else True,
+        "is_active": (
+            bool(payload.is_active) if payload.is_active is not None else True
+        ),
     }
     await db.execute(insert_q, params)
 
@@ -163,15 +167,21 @@ async def create_filament(payload: FilamentCreate, db: AsyncSession = Depends(ge
 
     fetch_q = text(
         """
-        SELECT id, name, material, category, type, color_name, color_hex,
-               price_per_kg, is_active, created_at, updated_at
-        FROM public.filaments
-        WHERE id = :id
+        SELECT f.id, f.name, f.material, f.category,
+               f.type, f.color_name, f.color_hex,
+               f.price_per_kg, f.is_active, f.created_at, f.updated_at,
+               COALESCE(
+                   array_agg(b.code) FILTER (WHERE b.code IS NOT NULL),
+                   '{}'
+               ) AS barcodes
+        FROM public.filaments f
+        LEFT JOIN public.barcodes b ON f.id = b.filament_id
+        WHERE f.id = :id
+        GROUP BY f.id
         """
     )
-    row = (await db.execute(fetch_q, {"id": str(fid)})).one()
-    bc_map = await _load_barcodes_map(db, [fid])
-    return _row_to_out(row, bc_map.get(fid, []))
+    row = (await db.execute(fetch_q, {"id": str(fid)})).mappings().one()
+    return _row_to_out(row)
 
 
 @router.patch(
@@ -180,7 +190,9 @@ async def create_filament(payload: FilamentCreate, db: AsyncSession = Depends(ge
     dependencies=[Depends(require_admin)],
 )
 async def update_filament(
-    filament_id: UUID, payload: FilamentUpdate, db: AsyncSession = Depends(get_db)
+    filament_id: UUID,
+    payload: FilamentUpdate,
+    db: AsyncSession = Depends(get_db),
 ) -> FilamentOut:
     sets: List[str] = []
     params: Dict[str, Any] = {"id": str(filament_id)}
@@ -202,14 +214,24 @@ async def update_filament(
 
     # Recompute name if category or color_name changed
     if payload.category is not None or payload.color_name is not None:
-        cur = (await db.execute(
-            text("SELECT category, color_name FROM public.filaments WHERE id = :id"),
-            {"id": str(filament_id)},
-        )).one_or_none()
+        cur = (
+            await db.execute(
+                text(
+                    """
+                    SELECT category, color_name
+                    FROM public.filaments
+                    WHERE id = :id
+                    """
+                ),
+                {"id": str(filament_id)},
+            )
+        ).one_or_none()
         if cur is None:
             raise HTTPException(status_code=404, detail="Filament not found")
-        new_cat = payload.category if payload.category is not None else cur.category
-        new_col = payload.color_name if payload.color_name is not None else cur.color_name
+        cat = payload.category
+        new_cat = cat if cat is not None else cur.category
+        col = payload.color_name
+        new_col = col if col is not None else cur.color_name
         add("name", _display_name(new_cat, new_col))
 
     if sets:
@@ -238,28 +260,43 @@ async def update_filament(
 
     await db.commit()
 
-    row = (await db.execute(
-        text(
-            """
-            SELECT id, name, material, category, type, color_name, color_hex,
-                   price_per_kg, is_active, created_at, updated_at
-            FROM public.filaments
-            WHERE id = :id
-            """
-        ),
-        {"id": str(filament_id)},
-    )).one_or_none()
+    row = (
+        (
+            await db.execute(
+                text(
+                    """
+                    SELECT f.id, f.name, f.material, f.category,
+                           f.type, f.color_name, f.color_hex,
+                           f.price_per_kg, f.is_active,
+                           f.created_at, f.updated_at,
+                           COALESCE(
+                               array_agg(b.code) FILTER (
+                                   WHERE b.code IS NOT NULL
+                               ),
+                               '{}'
+                           ) AS barcodes
+                    FROM public.filaments f
+                    LEFT JOIN public.barcodes b ON f.id = b.filament_id
+                    WHERE f.id = :id
+                    GROUP BY f.id
+                    """
+                ),
+                {"id": str(filament_id)},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="Filament not found")
 
-    bc_map = await _load_barcodes_map(db, [filament_id])
-    return _row_to_out(row, bc_map.get(filament_id, []))
+    return _row_to_out(row)
 
 
 @router.delete(
     "/filaments/{filament_id}",
-    status_code=status.HTTP_200_OK,           # Option B: return JSON with 200
-    response_model=Dict[str, Any],            # simple JSON shape
+    status_code=status.HTTP_200_OK,  # Option B: return JSON with 200
+    response_model=Dict[str, Any],  # simple JSON shape
     dependencies=[Depends(require_admin)],
 )
 async def delete_filament(

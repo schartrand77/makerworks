@@ -199,16 +199,28 @@ const Browse: React.FC = () => {
     });
   };
 
+  // 🔧 Carry forward the model explicitly for the estimator
   const navigateToEstimate = (m: Model) => {
     if (!m?.id) return;
-    const payload = {
-      id: m.id,
-      name: m.name ?? null,
-      description: m.description ?? null,
-      src: m.stl_url ?? m.file_url ?? null,
-      thumbnail_url: m.thumbnail_url ?? null,
-    };
-    navigate('/estimate', { state: { fromModel: payload, from: `${location.pathname}${location.search}` } });
+
+    const src = m.stl_url ?? m.file_url ?? null; // prefer stl_url, fall back to file_url
+    const from = `${location.pathname}${location.search}`;
+
+    navigate('/estimate', {
+      state: {
+        modelId: m.id,        // estimator reads this
+        modelUrl: src,        // and this
+        // keep a richer bundle around if the estimator wants extra metadata
+        fromModel: {
+          id: m.id,
+          name: m.name ?? null,
+          description: m.description ?? null,
+          src,
+          thumbnail_url: m.thumbnail_url ?? null,
+        },
+        from,
+      },
+    });
   };
 
   return (

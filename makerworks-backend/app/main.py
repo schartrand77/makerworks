@@ -16,12 +16,13 @@ from typing import Optional, Sequence
 from urllib.parse import urlparse
 import json as _json
 
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status, APIRouter, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import text, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -94,10 +95,12 @@ try:
         async_engine = None  # type: ignore
 
     try:
-        from app.db.database import init_db
+        from app.db.database import init_db, get_async_db  # ← ADDED get_async_db
     except Exception:
         def init_db():  # type: ignore
             return None
+        async def get_async_db():  # type: ignore
+            raise RuntimeError("DB not available")
 
     # Routers: import modules (NOT aggregated router here)
     from app.routes import (
@@ -137,6 +140,47 @@ try:
         from app.worker import celery_app as celery_app_instance  # type: ignore
     except Exception:
         celery_app_instance = None  # type: ignore
+
+    # ← REPLACED: pricing models import with robust loader
+    import importlib
+    from types import ModuleType
+
+    PricingSettings = Material = Printer = LaborRole = ProcessStep = QualityTier = Consumable = Rule = None  # type: ignore
+
+    def _try_import_models() -> None:
+        """Try multiple likely module paths for pricing models and log success."""
+        global PricingSettings, Material, Printer, LaborRole, ProcessStep, QualityTier, Consumable, Rule
+        candidates = [
+            "app.models.pricing",
+            "app.models.pricing_models",
+            "app.models",                 # sometimes everything is exported here
+            "app.db.models.pricing",
+            "app.db.models",
+        ]
+        names = ["PricingSettings","Material","Printer","LaborRole","ProcessStep","QualityTier","Consumable","Rule"]
+        logger_local = logging.getLogger("uvicorn")
+
+        for modname in candidates:
+            try:
+                mod: ModuleType = importlib.import_module(modname)
+            except Exception:
+                continue
+            found = 0
+            for n in names:
+                try:
+                    val = getattr(mod, n)
+                    globals()[n] = val
+                    found += 1
+                except AttributeError:
+                    pass
+            if found:
+                logger_local.info(f"✅ Loaded pricing models from {modname} ({found}/{len(names)})")
+                if all(globals().get(n) is not None for n in names):
+                    return
+        missing = [n for n in names if globals().get(n) is None]
+        logger_local.warning(f"⚠️ Pricing models partially loaded; missing: {missing}")
+
+    _try_import_models()
 
 except Exception:
     formatted_tb = "".join(traceback.format_exc())
@@ -618,12 +662,12 @@ async def lifespan(_: _FastAPI):
 
         # 6) Ensure admin user exists (handles sync/async)
         try:
-            if ensure_admin_user is None:
-                logger.warning("⚠️ ensure_admin_user not available; skipping admin seed.")
-            else:
-                logger.info("[admin_seed] ensure_admin_user() starting…")
-                await _run_maybe_async(ensure_admin_user)
-                logger.info("[admin_seed] ensure_admin_user() finished.")
+          if ensure_admin_user is None:
+              logger.warning("⚠️ ensure_admin_user not available; skipping admin seed.")
+          else:
+              logger.info("[admin_seed] ensure_admin_user() starting…")
+              await _run_maybe_async(ensure_admin_user)
+              logger.info("[admin_seed] ensure_admin_user() finished.")
         except Exception as e:
             logger.exception("[admin_seed] ensure_admin_user crashed: %s", e)
 
@@ -671,11 +715,16 @@ async def healthz_v1():
 async def system_status_public():
     return {"status": "ok"}
 
+# NEW: simple /_health that returns OK (your curl was using this)
+@app.get("/_health", include_in_schema=False)
+async def underscore_health():
+    return {"ok": True}
+
 # Celery health (optional)
 @app.get("/api/v1/celery/health", include_in_schema=False)
 async def celery_health():
     if celery_app_instance is None:
-        raise HTTPException(status_code=503, detail="Celery worker not available.")
+        raise HTTPException(status_code=503, detail="Celry worker not available.")
     loop = asyncio.get_event_loop()
 
     def _ping():
@@ -869,6 +918,108 @@ if UPLOAD_PREFIX.rstrip("/") == "/api/v1":
     logger.warning("⚠️ UPLOAD_API_PREFIX is '/api/v1' which can shadow other routes; switching to '/api/v1/upload'.")
     UPLOAD_PREFIX = "/api/v1/upload"
 mount(upload, UPLOAD_PREFIX, ["upload"])
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NEW: Read-only pricing/admin endpoints for the Admin UI (safe fallbacks)
+# ──────────────────────────────────────────────────────────────────────────────
+pricing_read = APIRouter(prefix="/api/v1", tags=["pricing-read"])
+admin_read = APIRouter(prefix="/api/v1/admin", tags=["admin-read"])
+
+async def _safe_list(db: AsyncSession, model, label: str):
+    try:
+        if model is None:
+            logging.getLogger("uvicorn").warning("Model %s is None; returning []", label)
+            return []
+        res = await db.execute(select(model))
+        return list(res.scalars().all())
+    except Exception as e:
+        logging.getLogger("uvicorn").exception("List fetch failed for %s", label)
+        # DEV BEHAVIOR: don't 500 the UI; return []
+        return []
+
+@pricing_read.get("/pricing/settings/latest")
+async def pricing_settings_latest(db: AsyncSession = Depends(get_async_db)):
+    if PricingSettings is None:
+        # DEV FALLBACK so the admin page can render
+        return {
+            "id": "ver_dev",
+            "effective_from": "2025-01-01T00:00:00Z",
+            "currency": "CAD",
+            "electricity_cost_per_kwh": 0.18,
+            "shop_overhead_per_day": 35.0,
+            "productive_hours_per_day": 6.0,
+            "note": "dev-fallback (models not imported)",
+        }
+    try:
+        res = await db.execute(
+            select(PricingSettings).order_by(PricingSettings.effective_from.desc()).limit(1)
+        )
+        s = res.scalar_one_or_none()
+        if not s:
+            # empty DB is a normal setup case; return a minimal default
+            return {
+                "id": "ver_empty",
+                "effective_from": "2025-01-01T00:00:00Z",
+                "currency": "CAD",
+                "electricity_cost_per_kwh": 0.18,
+                "shop_overhead_per_day": 35.0,
+                "productive_hours_per_day": 6.0,
+                "note": "seed-me",
+            }
+        return s
+    except Exception:
+        logging.getLogger("uvicorn").exception("Fetch latest PricingSettings failed")
+        # DEV BEHAVIOR: keep UI alive
+        return {
+            "id": "ver_error",
+            "effective_from": "2025-01-01T00:00:00Z",
+            "currency": "CAD",
+            "electricity_cost_per_kwh": 0.18,
+            "shop_overhead_per_day": 35.0,
+            "productive_hours_per_day": 6.0,
+            "note": "error-fallback",
+        }
+
+@pricing_read.get("/pricing/materials")
+async def pricing_materials(db: AsyncSession = Depends(get_async_db)):
+    return await _safe_list(db, Material, "Material")
+
+@pricing_read.get("/pricing/printers")
+async def pricing_printers(db: AsyncSession = Depends(get_async_db)):
+    return await _safe_list(db, Printer, "Printer")
+
+@pricing_read.get("/pricing/labor-roles")
+async def pricing_labor_roles(db: AsyncSession = Depends(get_async_db)):
+    return await _safe_list(db, LaborRole, "LaborRole")
+
+@pricing_read.get("/pricing/process-steps")
+async def pricing_process_steps(db: AsyncSession = Depends(get_async_db)):
+    return await _safe_list(db, ProcessStep, "ProcessStep")
+
+@pricing_read.get("/pricing/tiers")
+async def pricing_tiers(db: AsyncSession = Depends(get_async_db)):
+    return await _safe_list(db, QualityTier, "QualityTier")
+
+@pricing_read.get("/pricing/consumables")
+async def pricing_consumables(db: AsyncSession = Depends(get_async_db)):
+    return await _safe_list(db, Consumable, "Consumable")
+
+@admin_read.get("/rules")
+async def admin_rules_get(db: AsyncSession = Depends(get_async_db)):
+    return await _safe_list(db, Rule, "Rule")
+
+# Small system snapshot the UI pokes sometimes
+@pricing_read.get("/system/snapshot")
+async def system_snapshot():
+    try:
+        return get_system_status_snapshot()
+    except Exception:
+        logging.getLogger("uvicorn").exception("system_snapshot failed")
+        return {"status": "ok"}
+
+# mount the new routers
+app.include_router(pricing_read)
+app.include_router(admin_read)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Route inventory & duplicate detector (dev aid)

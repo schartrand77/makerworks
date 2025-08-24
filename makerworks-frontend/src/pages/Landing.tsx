@@ -12,46 +12,91 @@ const MOTTO = ['dream.', 'design.', 'deliver.']
 function useAppVersion() {
   const [version, setVersion] = useState<string>('')
 
-  // Prefer build-time env (if set), else call API
+  // Build-time fallback (used only if network checks fail)
   const envVersion =
     (import.meta.env as any)?.VITE_APP_VERSION &&
     String((import.meta.env as any).VITE_APP_VERSION).trim()
 
-  const apiUrl = useMemo(() => {
-    const base = (import.meta.env as any)?.VITE_API_BASE
-      ? String((import.meta.env as any).VITE_API_BASE).replace(/\/+$/, '')
+  // NOT PROXIED: try (1) VITE_API_BASE, (2) dev guess (5173→8000), (3) relative LAST
+  const bases = useMemo(() => {
+    const out: string[] = []
+    const envBase = (import.meta.env as any)?.VITE_API_BASE
+      ? String((import.meta.env as any).VITE_API_BASE).trim().replace(/\/+$/, '')
       : ''
-    const path = '/api/v1/system/version'
-    return base ? `${base}${path}` : path
+    if (envBase) out.push(envBase)
+
+    const devGuess =
+      typeof window !== 'undefined' && window.location.port === '5173'
+        ? `${window.location.protocol}//${window.location.hostname}:8000`
+        : ''
+    if (devGuess) out.push(devGuess)
+
+    out.push('') // last resort (only works if proxying or serving behind same origin)
+    return out
   }, [])
 
   useEffect(() => {
-    if (envVersion) {
-      setVersion(envVersion)
-      return
-    }
-
     let cancelled = false
+    const ctrl = new AbortController()
+
     ;(async () => {
-      try {
-        const res = await fetch(apiUrl, { credentials: 'include' })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json().catch(() => ({}))
-        const v =
-          (data?.version && String(data.version)) ||
-          (data?.app_version && String(data.app_version)) ||
-          (data?.tag && String(data.tag)) ||
-          ''
-        if (!cancelled) setVersion(v)
-      } catch (err) {
-        console.debug('[Landing] version fetch failed:', err)
-        if (!cancelled) setVersion('')
+      // 1) literal VERSION file
+      for (const base of bases) {
+        const url = base ? `${base}/VERSION` : '/VERSION'
+        try {
+          const res = await fetch(url, {
+            method: 'GET',
+            credentials: 'omit',
+            cache: 'no-store',
+            signal: ctrl.signal,
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const txt = (await res.text()).trim()
+          if (txt) {
+            if (!cancelled) setVersion(txt)
+            return
+          }
+        } catch {
+          /* try next base */
+        }
       }
+
+      // 2) JSON endpoint fallback
+      for (const base of bases) {
+        const url = (base ? `${base}` : '') + '/api/v1/system/version'
+        try {
+          const res = await fetch(url, {
+            method: 'GET',
+            credentials: 'omit',
+            cache: 'no-store',
+            headers: { Accept: 'application/json' },
+            signal: ctrl.signal,
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const data = await res.json().catch(() => ({}))
+          const v =
+            (data?.version && String(data.version)) ||
+            (data?.app_version && String(data.app_version)) ||
+            (data?.tag && String(data.tag)) ||
+            ''
+          if (v) {
+            if (!cancelled) setVersion(v)
+            return
+          }
+        } catch {
+          /* try next base */
+        }
+      }
+
+      // 3) Nothing worked → fallback to build-time env (may be "dev")
+      if (!cancelled) setVersion(envVersion || '')
     })()
+
     return () => {
       cancelled = true
+      ctrl.abort()
     }
-  }, [envVersion, apiUrl])
+  }, [envVersion, bases])
 
   return version
 }
@@ -147,9 +192,7 @@ const Landing = () => {
               </div>
             </div>
 
-            {/* Row 3: (empty spacer) handled by grid */}
-
-            {/* Row 4: Button (pushed down) */}
+            {/* Row 4: Button */}
             <GlassButton
               onClick={() => navigate('/auth/signin')}
               variant="brand"
@@ -317,9 +360,7 @@ const Landing = () => {
           .mw-motto-word.is-on::after { opacity: 1; }
 
           /* === Landing-only fluorescent flicker halo ======================= */
-          /* Add class="mw-card--flicker" to the Landing card (GlassCard) */
           .mw-card--flicker { position: relative; isolation: isolate; }
-
           .mw-card--flicker::after {
             content: "";
             position: absolute;
@@ -327,71 +368,26 @@ const Landing = () => {
             border-radius: inherit;
             pointer-events: none;
             z-index: -1;
-
-            /* two-layer glow: green core + faint white halo */
             background:
-              radial-gradient(60% 55% at 50% 50%,
-                rgba(22,163,74,0.18) 0%,
-                rgba(22,163,74,0.08) 40%,
-                rgba(22,163,74,0.00) 72%),
-              radial-gradient(120% 90% at 50% 50%,
-                rgba(255,255,255,0.14) 0%,
-                rgba(255,255,255,0.00) 60%);
+              radial-gradient(60% 55% at 50% 50%, rgba(22,163,74,0.18) 0%, rgba(22,163,74,0.08) 40%, rgba(22,163,74,0.00) 72%),
+              radial-gradient(120% 90% at 50% 50%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.00) 60%);
             filter: blur(24px);
             opacity: 0.85;
-
-            /* 1) warmup = irregular flicker once
-               2) hum = gentle ongoing shimmer */
-            animation:
-              mw-bulb-warmup 1.6s steps(24, end) 1 both,
-              mw-bulb-hum 2.2s ease-in-out infinite 1.6s;
+            animation: mw-bulb-warmup 1.6s steps(24, end) 1 both, mw-bulb-hum 2.2s ease-in-out infinite 1.6s;
             will-change: opacity, filter;
           }
+          .dark .mw-card--flicker::after { opacity: 0.9; filter: blur(26px); }
+          .mw-card--flicker:has(.mw-enter:hover)::after { opacity: 0.98; filter: blur(30px); }
 
-          .dark .mw-card--flicker::after {
-            opacity: 0.9;
-            filter: blur(26px);
-          }
-
-          /* Slight boost when the LED button inside is hovered */
-          .mw-card--flicker:has(.mw-enter:hover)::after {
-            opacity: 0.98;
-            filter: blur(30px);
-          }
-
-          /* Irregular startup flicker: a few pops, then settles */
           @keyframes mw-bulb-warmup {
-            0%   { opacity: 0.00; }
-            5%   { opacity: 0.95; }
-            7%   { opacity: 0.20; }
-            12%  { opacity: 0.88; }
-            16%  { opacity: 0.25; }
-            22%  { opacity: 0.97; }
-            27%  { opacity: 0.32; }
-            33%  { opacity: 1.00; }
-            40%  { opacity: 0.38; }
-            48%  { opacity: 0.94; }
-            58%  { opacity: 0.52; }
-            68%  { opacity: 0.98; }
-            78%  { opacity: 0.70; }
-            88%  { opacity: 0.92; }
-            100% { opacity: 0.85; }
+            0%{opacity:0.00} 5%{opacity:0.95} 7%{opacity:0.20} 12%{opacity:0.88} 16%{opacity:0.25} 22%{opacity:0.97}
+            27%{opacity:0.32} 33%{opacity:1.00} 40%{opacity:0.38} 48%{opacity:0.94} 58%{opacity:0.52} 68%{opacity:0.98}
+            78%{opacity:0.70} 88%{opacity:0.92} 100%{opacity:0.85}
           }
+          @keyframes mw-bulb-hum { 0%,100%{opacity:0.82;filter:blur(24px)} 45%{opacity:0.78;filter:blur(23px)} 55%{opacity:0.86;filter:blur(24.5px)} }
 
-          /* Subtle ongoing hum so it feels alive but not annoying */
-          @keyframes mw-bulb-hum {
-            0%, 100% { opacity: 0.82; filter: blur(24px); }
-            45%      { opacity: 0.78; filter: blur(23px); }
-            55%      { opacity: 0.86; filter: blur(24.5px); }
-          }
-
-          /* Respect reduced motion: no flicker, just a steady glow */
           @media (prefers-reduced-motion: reduce) {
-            .mw-card--flicker::after {
-              animation: none !important;
-              opacity: 0.86;
-              filter: blur(24px);
-            }
+            .mw-card--flicker::after { animation: none !important; opacity: 0.86; filter: blur(24px); }
           }
         `}
       </style>

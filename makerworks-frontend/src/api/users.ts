@@ -22,6 +22,7 @@ export interface UserMe {
 
 /** Only fields the backend actually allows you to PATCH on /users/me */
 export interface UpdateMePayload {
+  username?: string | null
   name?: string | null
   bio?: string | null
   avatar_url?: string | null
@@ -31,6 +32,7 @@ export interface UpdateMePayload {
 
 /** Keys we will send to the server; everything else is dropped */
 const ALLOWED_KEYS: (keyof UpdateMePayload)[] = [
+  'username',
   'name',
   'bio',
   'avatar_url',
@@ -44,20 +46,43 @@ function emptyToNull<T extends string | null | undefined>(v: T): string | null |
   return v
 }
 
+function isAbsoluteUrl(u?: string | null): boolean {
+  if (!u) return false
+  return /^[a-z]+:\/\//i.test(u)
+}
+
 /** Sanitize outbound PATCH body to avoid 422s */
 export function sanitizeUpdateMe(input: Record<string, any>): UpdateMePayload {
   const out: UpdateMePayload = {}
   for (const k of ALLOWED_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(input, k)) {
-      // coerce empties on string-ish fields
-      if (k === 'name' || k === 'bio' || k === 'avatar_url' || k === 'language') {
-        // @ts-expect-error runtime coercion
-        out[k] = emptyToNull(input[k])
-      } else if (k === 'theme') {
-        const t = String(input[k] ?? '').toLowerCase()
-        out.theme = t === 'dark' ? 'dark' : t === 'light' ? 'light' : null
-      }
+    if (!Object.prototype.hasOwnProperty.call(input, k)) continue
+
+    if (k === 'theme') {
+      const t = String(input[k] ?? '').toLowerCase()
+      out.theme = t === 'dark' ? 'dark' : t === 'light' ? 'light' : null
+      continue
     }
+
+    // string-ish fields
+    const v = emptyToNull(input[k] as any)
+
+    if (k === 'avatar_url') {
+      // Only send if absolute; skip relative paths to avoid Pydantic URL 422s
+      if (typeof v === 'string' && v && !isAbsoluteUrl(v)) {
+        continue
+      }
+      out.avatar_url = v as any
+      continue
+    }
+
+    if (k === 'username') {
+      // Trim; let server enforce exact regex/uniqueness
+      out.username = typeof v === 'string' ? v.trim() : (v as any)
+      continue
+    }
+
+    // name, bio, language
+    ;(out as any)[k] = v
   }
   return out
 }
@@ -72,9 +97,8 @@ export async function getMe(): Promise<UserMe> {
 export async function updateMe(partial: Record<string, any>): Promise<UserMe> {
   const body = sanitizeUpdateMe(partial)
 
-  // If caller passed garbage only, avoid a 422 from an empty payload by throwing early
   if (Object.keys(body).length === 0) {
-    throw new Error('Nothing to update: provide one of name, bio, avatar_url, language, theme')
+    throw new Error('Nothing to update: provide one of username, name, bio, avatar_url, language, theme')
   }
 
   const res = await api.patch('/users/me', body, {

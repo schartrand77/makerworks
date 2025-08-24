@@ -1,104 +1,200 @@
-/* === MakerWorks LED system (global) ====================================== */
+/* === MakerWorks LED system (unified) =======================================
+   One button style to rule them all:
+   - Pill shape (enforced with !important to beat stray utilities)
+   - Transparent base (no solid fill)
+   - Ring-only look (no outer glow by default)
+   - Text color unified to a lighter emerald (balanced for light/dark)
+   - Sizes via helpers (.mw-btn-xs/sm/md/lg/xl)
+   - Variants by ring color (green default; red/amber/blue optional)
+   - Matching pill tabs (.mw-tab) for Admin & navbar
+   ========================================================================== */
 
-/* ——— Green LED button (default) ——— */
-.mw-enter{ --mw-ring:#16a34a; }
-.mw-enter{
-  background:transparent !important;                 /* never solid */
-  color:inherit !important;                           /* ignore framework text colors */
+/* --- Theme tokens -------------------------------------------------------- */
+:root{
+  --mw-ring:        #16a34a; /* emerald-600 default (green) */
+  --mw-ring-blue:   #3b82f6; /* blue-500   */
+  --mw-ring-amber:  #f59e0b; /* amber-500  */
+  --mw-ring-red:    #ef4444; /* red-500    */
+
+  --mw-inner-hi:    rgba(255,255,255,.65); /* subtle inner highlight */
+  --mw-focus-white: rgba(255,255,255,.60);
+
+  /* unified button/tab text color (light UI) */
+  --mw-btn-text: color-mix(in oklab, var(--mw-ring) 38%, black);
+}
+/* dark theme override */
+.dark{
+  --mw-btn-text: color-mix(in oklab, var(--mw-ring) 70%, white);
+}
+
+/* Utility: hard pill radius anywhere you need it */
+.mw-pill{ border-radius:9999px !important; }
+
+/* --- Base pill button (use on every button) ------------------------------ */
+.mw-btn,
+button.mw-btn,
+a.mw-btn,
+.mw-enter,          /* legacy alias: “enter/confirm/primary” */
+.mw-danger {        /* legacy alias: “danger”, gets red ring below */
+  /* shape + layout */
+  display:inline-flex; align-items:center; justify-content:center;
+  height:2.5rem; padding:0 1rem; font-size:.875rem; font-weight:500;
+  border-radius:9999px !important;
+
+  /* core look */
+  background:transparent !important;     /* never solid */
+  /* fallback first, then var-based unified emerald text */
+  color:#34d399 !important;              /* fallback (emerald-400) */
+  color:var(--mw-btn-text) !important;   /* unified lighter green text */
   border:1px solid var(--mw-ring) !important;
-  box-shadow:
-    inset 0 0 8px 1.5px rgba(22,163,74,.36),
-    0 0 10px 2.5px rgba(22,163,74,.34);
-  transition: box-shadow 180ms ease, transform 80ms ease, border-color 180ms ease;
-}
-.mw-enter:hover{
-  background:transparent !important;
-  transform:translateY(-1px);
-  box-shadow:
-    inset 0 0 12px 2.5px rgba(22,163,74,.58),
-    0 0 16px 5px rgba(22,163,74,.60),
-    0 0 32px 12px rgba(22,163,74,.24);
-}
-.mw-enter:focus-visible{
-  outline:none !important;
-  box-shadow:
-    inset 0 0 13px 2.5px rgba(22,163,74,.58),
-    0 0 0 2px rgba(255,255,255,.6),
-    0 0 0 4px var(--mw-ring),
-    0 0 20px 5px rgba(22,163,74,.48);
-}
-.mw-enter:disabled{ opacity:.6; cursor:not-allowed; }
 
-/* size helpers (don’t force colors) */
-.mw-btn-sm{ display:inline-flex; align-items:center; justify-content:center; height:2.25rem; padding:0 .75rem; font-size:.875rem; border-radius:9999px; }
-.mw-btn-md{ display:inline-flex; align-items:center; justify-content:center; height:2.5rem;  padding:0 1rem;   font-size:.875rem; border-radius:9999px; }
-
-/* ——— Danger (red) button ———
-   Ring at rest, NO glow until hover. Mirrors Sign Out/Delete behavior. */
-.mw-danger{
-  background:transparent !important;
-  color:inherit !important;
-  border:1px solid rgba(239,68,68,.70) !important;    /* red-500 */
-  box-shadow:none;
-  transition: box-shadow 180ms ease, transform 80ms ease, border-color 180ms ease;
+  /* ring-only vibe: a crisp inner highlight, no outer glow */
+  box-shadow: inset 0 1px 0 var(--mw-inner-hi);
+  transition:
+    border-color 180ms ease,
+    transform 80ms ease,
+    box-shadow 180ms ease;
+  -webkit-tap-highlight-color: transparent;
 }
+
+/* Hover/Focus — with safe fallbacks if color-mix missing */
+.mw-btn:hover,
+button.mw-btn:hover,
+a.mw-btn:hover,
+.mw-enter:hover,
 .mw-danger:hover{
   transform:translateY(-1px);
-  border-color:rgba(239,68,68,.90) !important;
-  box-shadow:
-    inset 0 0 12px 3px rgba(239,68,68,.70),
-    0 0 18px 8px rgba(239,68,68,.70),
-    0 0 44px 18px rgba(239,68,68,.28);
+  box-shadow: inset 0 1px 0 var(--mw-inner-hi);
+  border-color: var(--mw-ring) !important; /* fallback */
 }
+@supports (color: color-mix(in oklab, black 50%, white)){
+  .mw-btn:hover,
+  button.mw-btn:hover,
+  a.mw-btn:hover,
+  .mw-enter:hover,
+  .mw-danger:hover{
+    border-color: color-mix(in oklab, var(--mw-ring) 85%, black) !important;
+  }
+}
+
+.mw-btn:focus-visible,
+button.mw-btn:focus-visible,
+a.mw-btn:focus-visible,
+.mw-enter:focus-visible,
 .mw-danger:focus-visible{
   outline:none !important;
   box-shadow:
-    0 0 0 2px rgba(239,68,68,.45),
-    inset 0 0 0 1px rgba(239,68,68,.55);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 2px var(--mw-focus-white),
+    0 0 0 4px var(--mw-ring);
 }
 
-/* ——— LED card halo container ———
-   Any card with .mw-led halos ONLY when a LED button inside is hovered. */
+.mw-btn:disabled,
+button.mw-btn:disabled,
+a.mw-btn:disabled,
+.mw-enter:disabled,
+.mw-danger:disabled{
+  opacity:.55; cursor:not-allowed; transform:none;
+}
+
+/* --- Sizes (choose one; shape stays identical) --------------------------- */
+.mw-btn-xs{ height:2rem;    padding:0 .75rem;  font-size:.8125rem; border-radius:9999px !important; }
+.mw-btn-sm{ height:2.25rem; padding:0 .875rem; font-size:.875rem;  border-radius:9999px !important; }
+.mw-btn-md{ height:2.5rem;  padding:0 1rem;    font-size:.875rem;  border-radius:9999px !important; }  /* default */
+.mw-btn-lg{ height:2.75rem; padding:0 1.125rem; font-size:.9375rem; border-radius:9999px !important; }
+.mw-btn-xl{ height:3rem;    padding:0 1.25rem;  font-size:1rem;     border-radius:9999px !important; }
+
+/* --- Variants by ring color (same lighting & shape) ---------------------- */
+/* default green already set via --mw-ring */
+.mw-btn--blue{  --mw-ring: var(--mw-ring-blue); }
+.mw-btn--amber{ --mw-ring: var(--mw-ring-amber); }
+.mw-btn--red,
+.mw-danger{     --mw-ring: var(--mw-ring-red);   }
+
+/* Quiet/ghost: same pill, dimmer ring */
+.mw-btn--quiet{ border-color: color-mix(in oklab, var(--mw-ring) 45%, transparent) !important; }
+@supports not (color: color-mix(in oklab, black 50%, white)){
+  .mw-btn--quiet{ border-color: rgba(22,163,74,.45) !important; }
+}
+.mw-btn--quiet:hover{
+  border-color: color-mix(in oklab, var(--mw-ring) 70%, black) !important;
+}
+@supports not (color: color-mix(in oklab, black 50%, white)){
+  .mw-btn--quiet:hover{ border-color: #14833d !important; }
+}
+
+/* --- Navbar / header pills ------------------------------------------------ */
+/* Make anything that looks like a nav item a pill by default */
+header nav a,
+header nav button,
+.mw-nav a,
+.mw-nav button{
+  border-radius:9999px !important;
+}
+
+/* --- Tabs / chips (Admin, etc.) ----------------------------------------- */
+.mw-tab, .mw-chip{
+  display:inline-flex; align-items:center; justify-content:center;
+  height:2.25rem; padding:0 .9rem; font-size:.875rem; font-weight:500;
+  border-radius:9999px !important;
+  background:transparent !important;
+  color:#34d399 !important;              /* fallback */
+  color:var(--mw-btn-text) !important;
+  border:1px solid var(--mw-ring) !important;
+  box-shadow: inset 0 1px 0 var(--mw-inner-hi);
+  transition:border-color 180ms ease, transform 80ms ease, box-shadow 180ms ease;
+}
+.mw-tab:hover, .mw-chip:hover{ transform: translateY(-1px); }
+.mw-tab.is-active, .mw-chip.is-active{
+  border-color: var(--mw-ring) !important;
+  box-shadow:
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 1px color-mix(in oklab, var(--mw-ring) 18%, transparent);
+}
+@supports not (color: color-mix(in oklab, black 50%, white)){
+  .mw-tab.is-active, .mw-chip.is-active{
+    box-shadow:
+      inset 0 1px 0 var(--mw-inner-hi),
+      0 0 0 1px rgba(22,163,74,.18);
+  }
+}
+
+/* --- Card halo container (subtle, ring-only aesthetic) ------------------- */
 .mw-led{ position:relative; transition: box-shadow 180ms ease, border-color 180ms ease; }
 
-/* green button hovering -> green under-glow on the card */
+/* green (default) button hovering -> faint under-glow on the card border */
+.mw-led:has(.mw-btn:hover),
 .mw-led:has(.mw-enter:hover){
-  border-color:rgba(22,163,74,.55) !important;
+  border-color: color-mix(in oklab, var(--mw-ring) 55%, transparent) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.65),
-    0 0 0 1px rgba(22,163,74,.14),
-    0 0 12px rgba(22,163,74,.12),
-    0 0 24px rgba(22,163,74,.10);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 1px color-mix(in oklab, var(--mw-ring) 18%, transparent);
 }
+.dark .mw-led:has(.mw-btn:hover),
 .dark .mw-led:has(.mw-enter:hover){
-  border-color:rgba(22,163,74,.70) !important;
+  border-color: color-mix(in oklab, var(--mw-ring) 70%, transparent) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.65),
-    0 0 0 1px rgba(22,163,74,.22),
-    0 0 24px rgba(22,163,74,.24),
-    0 0 60px rgba(22,163,74,.22);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 1px color-mix(in oklab, var(--mw-ring) 26%, transparent);
 }
 
-/* red button hovering -> red under-glow on the card */
+/* red variant hovering -> same treatment, red ring (no extra bloom) */
+.mw-led:has(.mw-btn.mw-btn--red:hover),
 .mw-led:has(.mw-danger:hover){
-  border-color:rgba(239,68,68,.65) !important;
+  border-color: color-mix(in oklab, var(--mw-ring-red) 60%, transparent) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.65),
-    0 0 0 1px rgba(239,68,68,.26),
-    0 2px 20px rgba(239,68,68,.22),
-    0 8px 42px rgba(239,68,68,.20),
-    0 12px 68px rgba(239,68,68,.16);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 1px color-mix(in oklab, var(--mw-ring-red) 22%, transparent);
 }
+.dark .mw-led:has(.mw-btn.mw-btn--red:hover),
 .dark .mw-led:has(.mw-danger:hover){
+  border-color: color-mix(in oklab, var(--mw-ring-red) 72%, transparent) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.65),
-    0 0 0 1px rgba(239,68,68,.34),
-    0 0 24px rgba(239,68,68,.28),
-    0 0 56px rgba(239,68,68,.24),
-    0 0 96px rgba(239,68,68,.18);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 1px color-mix(in oklab, var(--mw-ring-red) 28%, transparent);
 }
 
-/* ——— Browse/Cart thumbnail frame (rounded, no-fill) ——— */
+/* --- Thumbnail frame (unchanged) ---------------------------------------- */
 .mw-thumb{ border:0 !important; box-shadow:none !important; overflow:visible; }
 .mw-thumb-frame{
   background:transparent;
@@ -112,56 +208,49 @@
   object-fit:contain; object-position:center; margin:0 auto;
 }
 
-/* ——— Profile page glue ———
-   Your Save Profile was blue because it didn’t have .mw-enter and
-   framework classes were winning. This forces the LED style for any
-   button inside the profile card scope and gives the card the green halo. */
+/* --- Profile page glue (still forces pills within profile scope) --------- */
 .mw-profile-scope button{
   background:transparent !important;
-  color:inherit !important;
-  border:1px solid #16a34a !important;
-  border-radius:9999px;
+  color:#34d399 !important;
+  color:var(--mw-btn-text) !important;
+  border:1px solid var(--mw-ring) !important;
+  border-radius:9999px !important;
   padding:.38rem .9rem;
   font-size:.9rem;
   font-weight:500;
-  box-shadow:
-    inset 0 0 8px 1.5px rgba(22,163,74,.36),
-    0 0 10px 2.5px rgba(22,163,74,.34);
-  transition: box-shadow 180ms ease, transform 80ms ease, border-color 180ms ease;
+  box-shadow: inset 0 1px 0 var(--mw-inner-hi);
+  transition: border-color 180ms ease, transform 80ms ease, box-shadow 180ms ease;
 }
 .mw-profile-scope button:hover{
   transform:translateY(-.5px);
-  box-shadow:
-    inset 0 0 12px 2.5px rgba(22,163,74,.58),
-    0 0 16px 5px rgba(22,163,74,.60),
-    0 0 32px 12px rgba(22,163,74,.24);
+  border-color: var(--mw-ring) !important;
+}
+@supports (color: color-mix(in oklab, black 50%, white)){
+  .mw-profile-scope button:hover{
+    border-color: color-mix(in oklab, var(--mw-ring) 85%, black) !important;
+  }
 }
 .mw-profile-scope button:focus-visible{
   outline:none !important;
   box-shadow:
-    inset 0 0 13px 2.5px rgba(22,163,74,.58),
-    0 0 0 2px rgba(255,255,255,.6),
-    0 0 0 4px #16a34a,
-    0 0 20px 5px rgba(22,163,74,.48);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 2px var(--mw-focus-white),
+    0 0 0 4px var(--mw-ring);
 }
 .mw-profile-scope:has(button:hover){
-  border-color:rgba(22,163,74,.55) !important;
+  border-color: color-mix(in oklab, var(--mw-ring) 55%, transparent) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.65),
-    0 0 0 1px rgba(22,163,74,.14),
-    0 0 12px rgba(22,163,74,.12),
-    0 0 24px rgba(22,163,74,.10);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 1px color-mix(in oklab, var(--mw-ring) 18%, transparent);
 }
 .dark .mw-profile-scope:has(button:hover){
-  border-color:rgba(22,163,74,.70) !important;
+  border-color: color-mix(in oklab, var(--mw-ring) 70%, transparent) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.65),
-    0 0 0 1px rgba(22,163,74,.22),
-    0 0 24px rgba(22,163,74,.24),
-    0 0 60px rgba(22,163,74,.22);
+    inset 0 1px 0 var(--mw-inner-hi),
+    0 0 0 1px color-mix(in oklab, var(--mw-ring) 26%, transparent);
 }
 
-/* === Landing-only fluorescent flicker halo =============================== */
+/* === Landing-only fluorescent flicker halo (kept) ======================== */
 /* Add class="mw-card--flicker" to the Landing card (e.g., GlassCard) */
 .mw-card--flicker { position: relative; isolation: isolate; }
 
@@ -199,6 +288,7 @@
 }
 
 /* Slight boost when any LED button inside is hovered */
+.mw-card--flicker:has(.mw-btn:hover),
 .mw-card--flicker:has(.mw-enter:hover)::after{
   opacity:.98;
   filter: blur(30px);

@@ -1,3 +1,12 @@
+# app/schemas/__init__.py
+"""
+Central exports for Pydantic schemas.
+
+We intentionally re-export from `.users` (plural) to avoid accidental imports of
+any legacy singular module (`schemas.user`). If you still have `schemas/user.py`,
+rename it to `_user_legacy.py` or delete it.
+"""
+
 from .checkout import CheckoutRequest
 from .filaments import (
     FilamentCreate,

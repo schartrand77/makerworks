@@ -40,10 +40,9 @@ function abs(url?: string | null) {
   return getAbsoluteUrl(url) || url
 }
 
-/** Compact, adaptive controls hint (styled to match Estimate page) */
-function ControlsHint() {
+/** Controls hint as plain text (no chips, no container) */
+function ControlsHintText() {
   const [coarse, setCoarse] = useState(false)
-
   useEffect(() => {
     if (typeof window === 'undefined' || !('matchMedia' in window)) return
     const mq = window.matchMedia('(pointer: coarse)')
@@ -74,39 +73,13 @@ function ControlsHint() {
         ['Scroll / pinch', 'zoom'],
       ]
 
+  const text = items.map(([a, b]) => `${a} · ${b}`).join('   •   ')
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] sm:text-xs select-none text-zinc-700 dark:text-zinc-300">
-      {items.map(([a, b]) => (
-        <div
-          key={a}
-          className="px-2.5 py-1 rounded-full backdrop-blur-xl bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/15 text-zinc-900 dark:text-white"
-        >
-          <span className="font-medium">{a}</span>
-          <span className="opacity-70"> · {b}</span>
-        </div>
-      ))}
+    <div className="text-[10px] sm:text-[11px] text-white/70 select-none leading-relaxed">
+      {text}
     </div>
   )
 }
-
-/** VisionOS-y pill, emerald ring only (no glow) */
-const ledClasses = (active: boolean) =>
-  [
-    // pill + layout
-    'relative inline-flex h-10 items-center justify-center rounded-full px-4 text-sm font-medium transition',
-    // glass base
-    'backdrop-blur-xl bg-white/70 dark:bg-white/10',
-    // readable text
-    'text-emerald-950 dark:text-emerald-200',
-    // crisp emerald ring
-    'border border-emerald-500/40 dark:border-emerald-400/35',
-    // subtle inner highlight only (no external bloom)
-    'shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
-    // interactive ring emphasis, still glow-free
-    'hover:border-emerald-500/60 dark:hover:border-emerald-400/60',
-    // states
-    active ? 'cursor-pointer' : 'opacity-55 cursor-not-allowed',
-  ].join(' ')
 
 const ModelPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -114,27 +87,18 @@ const ModelPage: React.FC = () => {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [loadingPhotos, setLoadingPhotos] = useState<boolean>(false)
 
-  // --- smart back behaviour ---
+  // smart back
   const location = useLocation() as any
   const navigate = useNavigate()
   const backFromState: string | undefined = location?.state?.from
   const backHref = backFromState || '/browse'
   const handleBack = (e: React.MouseEvent) => {
     e.preventDefault()
-    // 1) explicit state from Browse
-    if (backFromState) {
-      navigate(backFromState)
-      return
-    }
-    // 2) in-app history
+    if (backFromState) { navigate(backFromState); return }
     try {
       const ref = document.referrer
-      if (ref && new URL(ref).origin === window.location.origin) {
-        navigate(-1)
-        return
-      }
-    } catch { /* noop */ }
-    // 3) safe fallback
+      if (ref && new URL(ref).origin === window.location.origin) { navigate(-1); return }
+    } catch {}
     navigate('/browse')
   }
 
@@ -173,36 +137,20 @@ const ModelPage: React.FC = () => {
     return () => { cancelled = true }
   }, [id])
 
-  // Browser tab title mirrors Browse’s fallback
-  useEffect(() => {
-    const prev = document.title
-    const name = model?.name || 'Untitled'
-    document.title = `MakerWorks — ${name}`
-    return () => { document.title = prev }
-  }, [model?.name])
-
-  // Fetch up to 3 real-world print photos
+  // bottom-strip photos
   useEffect(() => {
     let cancelled = false
     const loadPhotos = async () => {
       if (!id) return
       setLoadingPhotos(true)
       try {
-        const res = await axios.get<{ items?: Photo[] } | Photo[]>(`/models/${id}/photos`)
+        const res = await axios.get<{ items?: Photo[] } | Photo[]>(`/upload/models/${id}/photos`)
         if (cancelled) return
         const arr = Array.isArray(res.data) ? res.data : res.data.items || []
         const mapped = (arr || [])
-          .map((p) => ({
-            ...p,
-            url: abs(p.url),
-            thumbnail_url: abs(p.thumbnail_url ?? p.url),
-          }))
+          .map((p) => ({ ...p, url: abs(p.url), thumbnail_url: abs(p.thumbnail_url ?? p.url) }))
           .filter((p) => p.thumbnail_url)
-          .sort((a, b) => {
-            const ta = a.created_at ? Date.parse(a.created_at) : 0
-            const tb = b.created_at ? Date.parse(b.created_at) : 0
-            return tb - ta
-          })
+          .sort((a, b) => (Date.parse(b.created_at || '') || 0) - (Date.parse(a.created_at || '') || 0))
           .slice(0, 3)
         setPhotos(mapped)
       } catch (e) {
@@ -216,81 +164,45 @@ const ModelPage: React.FC = () => {
     return () => { cancelled = true }
   }, [id])
 
-  const src = useMemo(
-    () => model?.stl_url ?? model?.file_url ?? null,
-    [model?.stl_url, model?.file_url]
-  )
+  const src = useMemo(() => model?.stl_url ?? model?.file_url ?? null, [model?.stl_url, model?.file_url])
 
-  // --- Get estimate button handler (passes model to /estimate) ---
   const handleEstimate = (e: React.MouseEvent) => {
     e.preventDefault()
     if (!id) return
-    const payload = {
-      id,
-      name: model?.name ?? null,
-      description: model?.description ?? null,
-      src, // stl/file url
-      thumbnail_url: model?.thumbnail_url ?? null,
-    }
-    navigate('/estimate', { state: { fromModel: payload, from: `/models/${id}` } })
+    const modelUrl = src || null
+    navigate('/estimate', {
+      state: {
+        modelId: id,
+        modelUrl,
+        fromModel: { id, name: model?.name ?? null, description: model?.description ?? null, src: modelUrl, thumbnail_url: model?.thumbnail_url ?? null },
+        from: `/models/${id}`,
+      },
+    })
   }
 
   if (!id) {
-    return (
-      <main className="flex justify-center items-center h-[60svh] text-zinc-500 text-lg">
-        Invalid model.
-      </main>
-    )
+    return <main className="flex justify-center items-center h-[60svh] text-zinc-500 text-lg">Invalid model.</main>
   }
 
-  const canEstimate = !!id
+  const canEstimate = !!(id && src)
 
   return (
     <main
       className={[
-        // closer to navbar
         'relative min-h-[100svh] pt-3 pb-8 px-4',
-        // bg
         'bg-[radial-gradient(60%_40%_at_20%_0%,rgba(99,102,241,0.15),transparent_60%),',
         'radial-gradient(50%_50%_at_100%_20%,rgba(16,185,129,0.12),transparent_60%),',
         'linear-gradient(180deg,rgba(0,0,0,0.035),rgba(0,0,0,0.035))]',
       ].join(' ')}
     >
-      {/* Top bar */}
-      <div className="mx-auto max-w-7xl mb-2 flex items-center justify-between gap-3">
-        {/* Back: prefer state.from, then history, then /browse */}
-        <Link
-          to={backHref}
-          onClick={handleBack}
-          className="rounded-full backdrop-blur-xl bg-white/70 dark:bg-white/10 border border-black/10 dark:border-white/20 text-zinc-900 dark:text-white px-3 py-1.5 text-sm hover:bg-white/80 dark:hover:bg-white/15 transition"
-          title="Back"
-        >
-          ← Back
-        </Link>
-
-        {/* Right side: Get estimate pill (emerald ring style) */}
-        <button
-          onClick={handleEstimate}
-          disabled={!canEstimate}
-          title={canEstimate ? 'Send this model to the estimator' : 'Model not ready yet'}
-          className={ledClasses(!!canEstimate)}
-        >
-          Get estimate →
-        </button>
-      </div>
-
-      {/* Title (match Browse: same fallbacks & classes) */}
-      <header className="mx-auto max-w-7xl mb-3">
-        <h1 className="text-lg sm:text-xl font-semibold mb-1 text-zinc-900 dark:text-zinc-100">
-          {model?.name || 'Untitled'}
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-3xl">
-          {model?.description || 'No description provided.'}
-        </p>
-      </header>
-
-      {/* Card 1: Viewer (match Estimate viewer layout & sizing) */}
       <GlassCard className="mx-auto max-w-7xl p-4 rounded-3xl backdrop-blur-2xl ring-1 ring-white/15 shadow-[0_10px_50px_-15px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.4)]">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <Link to={backHref} onClick={handleBack} className="mw-btn mw-btn-sm mw-btn--quiet" title="Back">← Back</Link>
+          <button onClick={handleEstimate} disabled={!canEstimate} className="mw-btn mw-btn-lg" title={canEstimate ? 'Send this model to the estimator' : 'Model not ready yet'}>
+            Get estimate →
+          </button>
+        </div>
+
         <div className="relative w-full">
           <ModelViewer
             key={src || 'no-src'}
@@ -299,20 +211,33 @@ const ModelPage: React.FC = () => {
             fitMargin={1.6}
             className="h-[36vh] sm:h-[42vh] lg:h-[46vh] rounded-2xl"
           />
+
+          {/* TEXT-ONLY OVERLAY (no container) */}
+          {(model?.name || model?.description) && (
+            <div className="absolute left-2 right-2 bottom-2 sm:left-3 sm:right-3 sm:bottom-3 pointer-events-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]">
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[12px] sm:text-sm font-semibold text-white/90 leading-tight">
+                  {model?.name || 'Untitled'}
+                </div>
+                {model?.description && (
+                  <div className="text-[11px] sm:text-[12px] text-white/75 leading-snug line-clamp-2">
+                    {model.description}
+                  </div>
+                )}
+                <ControlsHintText />
+              </div>
+            </div>
+          )}
         </div>
-        <ControlsHint />
       </GlassCard>
 
-      {/* Card 2: 3 thumbnails (¼ the viewer height) */}
-      <GlassCard className="mx-auto max-w-7xl mt-3 p-3 sm:p-4 rounded-3xl backdrop-blur-2xl ring-1 ring-white/15 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.35)] overflow-hidden">
+      {/* bottom strip: 3 real photos (fixed clipping) */}
+      <GlassCard className="mx-auto max-w-7xl mt-3 p-3 sm:p-4 rounded-3xl backdrop-blur-2xl ring-1 ring-white/15 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.35)]">
         <div className="w-full h-[9vh] sm:h-[10.5vh] lg:h-[11.5vh]">
           {loadingPhotos ? (
             <div className="grid grid-cols-3 gap-3 h-full">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-full rounded-2xl bg-white/10 animate-pulse"
-                />
+                <div key={i} className="h-full rounded-2xl bg-white/10 animate-pulse" />
               ))}
             </div>
           ) : photos.length > 0 ? (
@@ -326,19 +251,15 @@ const ModelPage: React.FC = () => {
                     href={full}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block h-full group"
+                    className="block h-full group overflow-hidden rounded-2xl ring-1 ring-white/15"
                     title={p.caption || 'Open full image'}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={thumb || undefined}
                       alt={p.caption || 'Printed model photo'}
-                      className="w-full h-full object-cover rounded-2xl ring-1 ring-white/15 transition-transform group-hover:scale-[1.02]"
-                      onError={(e) => {
-                        if (full && e.currentTarget.src !== full) {
-                          e.currentTarget.src = full
-                        }
-                      }}
+                      className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+                      onError={(e) => { if (full && e.currentTarget.src !== full) e.currentTarget.src = full }}
                       draggable={false}
                     />
                   </a>
@@ -346,10 +267,7 @@ const ModelPage: React.FC = () => {
               })}
               {photos.length < 3 &&
                 Array.from({ length: 3 - photos.length }).map((_, i) => (
-                  <div
-                    key={`blank-${i}`}
-                    className="h-full rounded-2xl ring-1 ring-white/10 bg-white/5"
-                  />
+                  <div key={`blank-${i}`} className="h-full rounded-2xl ring-1 ring-white/10 bg-white/5" />
                 ))}
             </div>
           ) : (

@@ -6,17 +6,20 @@ import { toast } from 'sonner'
 
 interface Filament {
   id: string
-  type: string // e.g., PLA, PETG
-  color: string // display name, e.g., "Sun Orange"
-  hex: string   // "#RRGGBB"
+  type: string      // Material: PLA, PETG, …
+  color: string     // Display name: "Sun Orange"
+  hex: string       // "#RRGGBB"
+  category?: string // Finish/texture bucket: "Matte", "Silk", "Carbon", etc (optional)
 }
 
 interface EstimateForm {
   height: number
   width: number
   length: number
-  filamentType: string
-  colors: string[] // selected color hexes (derived from AMS slots)
+  filamentType: string  // legacy; mirrored from `material` for now
+  material: string       // new: PLA, PETG, …
+  category: string       // new: Matte, Silk, etc. (depends on material)
+  colors: string[]       // selected color hexes (derived from AMS slots)
   customText: string
   speed: 'standard' | 'quality' | 'elite'
 }
@@ -128,7 +131,9 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
     height: 50,
     width: 50,
     length: 50,
-    filamentType: '',
+    filamentType: '', // legacy mirror of material
+    material: '',
+    category: '',
     colors: [],
     customText: '',
     speed: 'standard',
@@ -165,6 +170,35 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
     return m
   }, [filaments])
 
+  /** Unique materials present in inventory */
+  const materials = useMemo(() => {
+    const set = new Set<string>()
+    for (const f of filaments) if (f.type) set.add(f.type)
+    return Array.from(set).sort()
+  }, [filaments])
+
+  /** Categories filtered by selected material (fallback: "Standard") */
+  const categories = useMemo(() => {
+    if (!form.material) return []
+    const set = new Set<string>()
+    for (const f of filaments) {
+      if (f.type === form.material) set.add(f.category?.trim() || 'Standard')
+    }
+    return Array.from(set).sort()
+  }, [filaments, form.material])
+
+  /** Filaments filtered by (material, category) to populate slot dropdowns */
+  const filteredFilaments = useMemo(() => {
+    if (!form.material) return []
+    const wantedCat = form.category || 'Standard'
+    return filaments.filter(
+      (f) =>
+        f.type === form.material &&
+        (f.category?.trim() || 'Standard') === wantedCat
+    )
+  }, [filaments, form.material, form.category])
+
+  /** Keep form.colors in sync with selected AMS filaments (dedup hex) */
   useEffect(() => {
     const list = [ams.s1, ams.s2, ams.s3, ams.s4]
       .map((id) => (id ? byId.get(String(id))?.hex : undefined))
@@ -175,6 +209,35 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
 
     setForm((f) => ({ ...f, colors: dedup.slice(0, 4) }))
   }, [ams, byId])
+
+  /** When material changes:
+   *  - mirror into legacy filamentType
+   *  - reset category if it's not valid for new material
+   *  - clear AMS selections (cannot mix materials)
+   */
+  useEffect(() => {
+    setForm((f) => ({
+      ...f,
+      filamentType: f.material, // legacy mirror
+      category: categories.includes(f.category) ? f.category : (categories[0] || ''),
+    }))
+    // nuke AMS since material changed
+    setAms({})
+  }, [form.material]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** If category changes, keep AMS but prune any slots that no longer match */
+  useEffect(() => {
+    if (!form.material) return
+    const ok = new Set(filteredFilaments.map((f) => String(f.id)))
+    setAms((prev) => {
+      const next = { ...prev }
+      ;(['s1','s2','s3','s4'] as const).forEach((k) => {
+        const id = next[k]
+        if (id && !ok.has(String(id))) next[k] = undefined
+      })
+      return next
+    })
+  }, [form.material, form.category, filteredFilaments])
 
   const amsSlots = useMemo(
     () => [
@@ -224,24 +287,37 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
             </div>
           </section>
 
-          {/* Filament Type */}
+          {/* Material & Category (dependent) */}
           <section className="space-y-2">
-            <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Filament Type</h3>
+            <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Material</h3>
             <select
-              value={form.filamentType}
-              onChange={(e) => setForm((f) => ({ ...f, filamentType: e.target.value }))}
+              value={form.material}
+              onChange={(e) => setForm((f) => ({ ...f, material: e.target.value }))}
               className="w-full rounded-md border border-black/15 dark:border-white/15 p-2 text-sm dark:bg-zinc-800"
+              disabled={loadingFilaments}
             >
-              <option value="">Select filament</option>
-              {filaments
-                .map((f) => f.type)
-                .filter((v, i, a) => a.indexOf(v) === i)
-                .map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
+              <option value="">Select material</option>
+              {materials.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
             </select>
+
+            <div className="pt-3">
+              <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Category</h3>
+              <select
+                value={form.category}
+                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                className="w-full rounded-md border border-black/15 dark:border-white/15 p-2 text-sm dark:bg-zinc-800"
+                disabled={loadingFilaments || !form.material}
+              >
+                {!form.material && <option value="">Select material first</option>}
+                {form.material && categories.length === 0 && <option value="">No categories</option>}
+                {form.material &&
+                  categories.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+              </select>
+            </div>
           </section>
 
           {/* AMS Picker */}
@@ -275,12 +351,14 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
                       className="w-full rounded-md border border-black/15 dark:border-white/15 bg-white/80 dark:bg-zinc-800 p-2 text-sm"
                       value={(ams as any)[key] || ''}
                       onChange={(e) => updateSlot(key, e.target.value)}
-                      disabled={loadingFilaments}
+                      disabled={loadingFilaments || !form.material || !form.category}
                     >
-                      <option value="">— Empty —</option>
-                      {filaments.map((f) => (
+                      <option value="">
+                        {form.material ? (form.category ? '— Empty —' : 'Select category') : 'Select material'}
+                      </option>
+                      {filteredFilaments.map((f) => (
                         <option key={f.id} value={f.id}>
-                          {f.type} · {f.color}
+                          {f.type} · {f.category?.trim() || 'Standard'} · {f.color}
                         </option>
                       ))}
                     </select>
@@ -306,7 +384,7 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
           <section className="space-y-2">
             <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Print Speed</h3>
             <div className="flex flex-wrap gap-4">
-              {(['standard', 'quality', 'elite'] as const).map((speed) => (
+              {(['standard', 'quality', 'elite' ] as const).map((speed) => (
                 <label key={speed} className="text-xs flex items-center gap-2">
                   <input
                     type="radio"
@@ -323,7 +401,7 @@ export default function EstimateCard({ modelUrl }: { modelUrl: string }) {
           {/* Summary */}
           <section className="pt-2 text-xs opacity-70">
             Selected: {form.height}×{form.width}×{form.length}mm,{' '}
-            {form.filamentType || '—'}, {form.colors.length} color(s), speed: {form.speed}
+            {form.material || '—'}{form.category ? ` / ${form.category}` : ''}, {form.colors.length} color(s), speed: {form.speed}
           </section>
         </div>
       </div>

@@ -5,18 +5,19 @@ import {
   createFilament,
   updateFilament,
   deleteFilament,
+  addBarcode,
 } from "../../api/filaments";
 
 type Filament = {
   id: string;
   name?: string;
-  material?: string | null;   // PLA / PETG / ABS ...
-  category?: string | null;   // Matte / Silk / CF ...
-  type?: string | null;       // backend sometimes mirrors category here
+  material?: string | null; // PLA / PETG / ABS ...
+  category?: string | null; // Matte / Silk / CF ...
+  type?: string | null; // backend sometimes mirrors category here
   color_name?: string | null;
   color_hex?: string | null;
-  color?: string | null;      // some responses use color
-  hex?: string | null;        // some responses use hex
+  color?: string | null; // some responses use color
+  hex?: string | null; // some responses use hex
   price_per_kg?: number | string | null;
   pricePerKg?: number | string | null; // camelCase variant from backend
   is_active?: boolean;
@@ -42,6 +43,13 @@ const EMPTY_DRAFT: Draft = {
   is_active: true,
   barcode: "",
 };
+
+function normalizeHex(v: string | undefined | null): string {
+  const s = (v ?? "").toString().trim();
+  if (!s) return "#000000";
+  const core = s.replace(/^#+/, "");
+  return `#${core}`.slice(0, 7);
+}
 
 export default function FilamentsTab() {
   const [items, setItems] = useState<Filament[]>([]);
@@ -110,6 +118,7 @@ export default function FilamentsTab() {
             f.color_hex,
             f.hex,
             String(f.price_per_kg ?? f.pricePerKg ?? ""),
+            Array.isArray(f.barcodes) ? f.barcodes.join(" ") : "",
           ]
             .filter(Boolean)
             .join(" ")
@@ -143,11 +152,11 @@ export default function FilamentsTab() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     try {
-      const payload: any = { ...newDraft };
-      // normalize hex
-      if (!payload.color_hex?.toString().startsWith("#")) {
-        payload.color_hex = `#${(payload.color_hex || "").toString().replace(/^#+/, "")}`;
-      }
+      const payload: any = {
+        ...newDraft,
+        color_hex: normalizeHex(newDraft.color_hex),
+      };
+
       // coerce/validate price
       const price = Number(payload.price_per_kg);
       if (!Number.isFinite(price) || price <= 0) {
@@ -155,13 +164,23 @@ export default function FilamentsTab() {
         return;
       }
       payload.price_per_kg = price;
-      // drop empty barcode
-      if (typeof payload.barcode === "string" && payload.barcode.trim() === "") {
-        delete payload.barcode;
+
+      const hasBarcode =
+        typeof payload.barcode === "string" && payload.barcode.trim() !== "";
+      // empty barcode should not be sent in the POST body
+      if (!hasBarcode) delete payload.barcode;
+
+      // Debug log matches your console style
+      // eslint-disable-next-line no-console
+      console.debug("[filaments] POST /filaments payload →", payload);
+
+      const created = await createFilament(payload);
+
+      // If user typed a barcode, attach it explicitly so we don't assume POST handled it
+      if (hasBarcode && created?.id) {
+        await addBarcode(created.id, newDraft.barcode!.trim());
       }
 
-      console.debug("[filaments] POST /filaments payload →", payload);
-      await createFilament(payload);
       // Always reload to sync (server may compute name, mirror fields, attach barcodes)
       await reload();
       setNewDraft({ ...EMPTY_DRAFT });
@@ -176,7 +195,7 @@ export default function FilamentsTab() {
       material: f.material ?? "",
       category: f.category ?? f.type ?? "",
       color_name: f.color_name ?? f.color ?? "",
-      color_hex: f.color_hex ?? f.hex ?? "#000000",
+      color_hex: normalizeHex(f.color_hex ?? f.hex ?? "#000000"),
       price_per_kg: String(f.price_per_kg ?? f.pricePerKg ?? ""),
       is_active: !!f.is_active,
       barcode: "", // single entry input (append-only)
@@ -187,23 +206,34 @@ export default function FilamentsTab() {
     e.preventDefault();
     if (!editId) return;
     try {
-      const payload: any = { ...editDraft };
-      if (!payload.color_hex?.toString().startsWith("#")) {
-        payload.color_hex = `#${(payload.color_hex || "").toString().replace(/^#+/, "")}`;
-      }
-      const price = Number(payload.price_per_kg);
-      if (payload.price_per_kg !== "" && (!Number.isFinite(price) || price <= 0)) {
-        alert("Please enter a valid price per kg (> 0).");
-        return;
-      }
-      if (payload.price_per_kg !== "") payload.price_per_kg = price;
-      else delete payload.price_per_kg;
+      const payload: any = {
+        ...editDraft,
+        color_hex: normalizeHex(editDraft.color_hex),
+      };
 
-      if (typeof payload.barcode === "string" && payload.barcode.trim() === "") {
-        delete payload.barcode;
+      // validate/coerce price if provided
+      if (payload.price_per_kg !== "") {
+        const price = Number(payload.price_per_kg);
+        if (!Number.isFinite(price) || price <= 0) {
+          alert("Please enter a valid price per kg (> 0).");
+          return;
+        }
+        payload.price_per_kg = price;
+      } else {
+        delete payload.price_per_kg;
       }
+
+      // do not send barcode in PATCH; use explicit POST /barcodes
+      const barcode: string | undefined =
+        typeof payload.barcode === "string" && payload.barcode.trim() !== ""
+          ? payload.barcode.trim()
+          : undefined;
+      delete payload.barcode;
 
       await updateFilament(editId, payload);
+      if (barcode) {
+        await addBarcode(editId, barcode);
+      }
       await reload();
       setEditId(null);
     } catch (e: any) {
@@ -451,6 +481,7 @@ export default function FilamentsTab() {
                               barcode: e.target.value,
                             }))
                           }
+                          placeholder="Add barcode"
                         />
                       </td>
                       <td className="p-2">
@@ -498,13 +529,32 @@ export default function FilamentsTab() {
                   );
                 }
 
+                const hex = (displayHex(f) || "").toString();
+                const swatchHex =
+                  /^#?[0-9A-Fa-f]{6}$/.test(hex) ? normalizeHex(hex) : "#000000";
+
                 return (
                   <tr key={f.id}>
                     <td className="p-2">{rowNumber}</td>
                     <td className="p-2">{f.material ?? "—"}</td>
                     <td className="p-2">{displayCategory(f)}</td>
                     <td className="p-2">{displayColorName(f)}</td>
-                    <td className="p-2">{displayHex(f)}</td>
+                    <td className="p-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          aria-hidden
+                          style={{
+                            width: "1rem",
+                            height: "1rem",
+                            borderRadius: "9999px",
+                            border: "1px solid rgba(0,0,0,.2)",
+                            background: swatchHex,
+                          }}
+                          title={swatchHex}
+                        />
+                        <span>{displayHex(f)}</span>
+                      </div>
+                    </td>
                     <td className="p-2">{displayBarcode(f)}</td>
                     <td className="p-2">{displayPrice(f)}</td>
                     <td className="p-2">{f.is_active ? "Yes" : "No"}</td>
@@ -539,6 +589,13 @@ export default function FilamentsTab() {
         .mw-btn{border:1px solid rgba(0,0,0,.2); padding:.45rem .75rem; border-radius:.45rem;}
         .mw-btn-sm{border:1px solid rgba(0,0,0,.2); padding:.25rem .5rem; border-radius:.35rem; font-size:.85rem;}
       `}</style>
+
+      {/* Error banner (non-blocking) */}
+      {err && (
+        <div className="p-3 rounded border border-red-300 bg-red-50 dark:bg-red-950/20 text-red-800 dark:text-red-200">
+          {err}
+        </div>
+      )}
     </div>
   );
 }

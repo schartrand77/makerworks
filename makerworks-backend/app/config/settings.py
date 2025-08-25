@@ -107,10 +107,18 @@ class Settings(BaseSettings):
 
     # ── File system roots (Docker binds vs. local dev) ───────────────────────
     # IMPORTANT: default to *relative* paths so bare-metal dev doesn’t try to mkdir('/uploads')
-    UPLOAD_DIR: str = Field(default="uploads", env="UPLOAD_DIR")
+    UPLOAD_DIR: str = Field(default="uploads", env="UPLOAD_DIR")  # canonical
     THUMBNAILS_DIR: Optional[str] = Field(default="thumbnails", env="THUMBNAILS_DIR")
     MODELS_DIR: str = Field(default="models", env="MODELS_DIR")
     STATIC_DIR: str = Field(default="app/static", env="STATIC_DIR")
+
+    # ── Backups (DB + media) ────────────────────────────────────────────────
+    BACKUP_PROVIDER: str = Field(default="local", env="BACKUP_PROVIDER")  # local | s3
+    BACKUP_DIR: str = Field(default="backups", env="BACKUP_DIR")          # used when provider=local
+    S3_BUCKET: Optional[str] = Field(default=None, env="S3_BUCKET")
+    S3_PREFIX: Optional[str] = Field(default="makerworks", env="S3_PREFIX")
+    S3_ENDPOINT_URL: Optional[str] = Field(default=None, env="S3_ENDPOINT_URL")  # for MinIO; omit for AWS
+    S3_SSE: Optional[str] = Field(default=None, env="S3_SSE")  # AES256 | aws:kms
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     # Accepts JSON list or CSV string. We normalize later.
@@ -243,6 +251,11 @@ class Settings(BaseSettings):
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    @property
+    def backup_path(self) -> Path:
+        # Local backup destination (ignored if BACKUP_PROVIDER = s3)
+        return _resolve_dir(self.BACKUP_DIR, "backups", base=_repo_root(), ensure_writable=True)
+
     # ── Back-compat lowercase aliases (some modules still expect these) ──────
     @property
     def env(self) -> str: return self.ENV
@@ -283,13 +296,27 @@ class Settings(BaseSettings):
     def admin_username(self) -> str: return self.ADMIN_USERNAME
     @property
     def admin_password(self) -> str: return self.ADMIN_PASSWORD
-    # Legacy raw paths
+    # Legacy/raw paths
     @property
     def uploads_path(self) -> str: return str(self.base_upload_path)
     @property
     def thumbnails_dir_raw(self) -> str: return str(self.thumbnails_path)
     @property
     def model_dir_raw(self) -> str: return str(self.models_path)
+
+    # Backup aliases (string forms for env injection)
+    @property
+    def backup_provider(self) -> str: return self.BACKUP_PROVIDER
+    @property
+    def backup_dir(self) -> str: return str(self.backup_path)
+    @property
+    def s3_bucket(self) -> Optional[str]: return self.S3_BUCKET
+    @property
+    def s3_prefix(self) -> Optional[str]: return self.S3_PREFIX
+    @property
+    def s3_endpoint_url(self) -> Optional[str]: return self.S3_ENDPOINT_URL
+    @property
+    def s3_sse(self) -> Optional[str]: return self.S3_SSE
 
 
 @lru_cache()
@@ -309,11 +336,12 @@ def get_settings() -> Settings:
     s.FRONTEND_ORIGIN = _default_if_blank(s.FRONTEND_ORIGIN or "", s.DOMAIN)
 
     # Ensure directories exist (these are already write-checked in resolver)
-    for p in (s.base_upload_path, s.thumbnails_path, s.models_path, s.static_path):
+    for p in (s.base_upload_path, s.thumbnails_path, s.models_path, s.static_path, s.backup_path):
         p.mkdir(parents=True, exist_ok=True)
 
     # Backfill env for libs that read os.environ directly
     os.environ.setdefault("UPLOAD_DIR", str(s.base_upload_path))
+    os.environ.setdefault("UPLOADS_DIR", str(s.base_upload_path))  # ← alias for backup service
     os.environ.setdefault("THUMBNAILS_DIR", str(s.thumbnails_path))  # ← fixed key
     os.environ.setdefault("MODELS_DIR", str(s.models_path))
     os.environ.setdefault("STATIC_DIR", str(s.static_path))
@@ -323,6 +351,18 @@ def get_settings() -> Settings:
     os.environ.setdefault("ADMIN_EMAIL", s.ADMIN_EMAIL)
     os.environ.setdefault("ADMIN_USERNAME", s.ADMIN_USERNAME)
     os.environ.setdefault("ADMIN_PASSWORD", s.ADMIN_PASSWORD)
+
+    # Backup-related envs (so the backup service can run without importing Settings)
+    os.environ.setdefault("BACKUP_PROVIDER", s.BACKUP_PROVIDER)
+    os.environ.setdefault("BACKUP_DIR", str(s.backup_path))
+    if s.S3_BUCKET:
+        os.environ.setdefault("S3_BUCKET", s.S3_BUCKET)
+    if s.S3_PREFIX:
+        os.environ.setdefault("S3_PREFIX", s.S3_PREFIX)
+    if s.S3_ENDPOINT_URL:
+        os.environ.setdefault("S3_ENDPOINT_URL", s.S3_ENDPOINT_URL)
+    if s.S3_SSE:
+        os.environ.setdefault("S3_SSE", s.S3_SSE)
 
     return s
 

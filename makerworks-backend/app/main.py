@@ -841,6 +841,7 @@ from app.routes import (
     system,
     filaments,
     admin,
+    admin_backup,  # ← NEW
     cart,
     inventory_levels,
     inventory_moves,
@@ -857,6 +858,7 @@ mount(avatar, "/api/v1/avatar", ["avatar"])
 mount(system, "/api/v1/system", ["system"])
 mount(filaments, "/api/v1/filaments", ["filaments"])
 mount(admin, "/api/v1/admin", ["admin"])
+mount(admin_backup, "/api/v1", ["admin.backup"])  # ← NEW: /api/v1/admin/backup/*
 mount(cart, "/api/v1/cart", ["cart"])
 
 # Inventory routes (some modules define sub-prefixes; the helper de-dupes)

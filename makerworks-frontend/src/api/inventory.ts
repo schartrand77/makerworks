@@ -3,6 +3,21 @@
 import http from '@/api/client'
 import qs from 'qs'
 
+/**
+ * Figure out if http.defaults.baseURL already includes `/api/v1`.
+ * If yes → prefix = '' ; if no → prefix = '/api/v1'
+ * This keeps callers clean regardless of how client.ts is configured.
+ */
+const API_PREFIX = (() => {
+  const base = (http?.defaults?.baseURL || '').replace(/\/+$/, '')
+  return /\/api\/v1$/i.test(base) ? '' : '/api/v1'
+})()
+
+/** Join with the detected API prefix */
+function apiPath(p: string) {
+  return `${API_PREFIX}${p}`
+}
+
 /** Utility to serialize query params (skips null/empty). */
 function withQS(params?: Record<string, any>) {
   return {
@@ -72,7 +87,7 @@ export interface ProductVariant {
 }
 
 /* ──────────────────────────────────────────────
- * USER INVENTORY (/api/v1/user/inventory)
+ * USER INVENTORY (/user/inventory)
  * ────────────────────────────────────────────── */
 
 /** GET /api/v1/user/inventory */
@@ -81,7 +96,7 @@ export async function listUserItems(params?: {
   page_size?: number
   q?: string
 }) {
-  const { data } = await http.get('/api/v1/user/inventory', withQS(params))
+  const { data } = await http.get(apiPath('/user/inventory'), withQS(params))
   // backend returns { items, total, page, page_size }
   return data as Paginated<UserItem>
 }
@@ -93,7 +108,7 @@ export async function addUserItem(payload: {
   cost_cents?: number
   notes?: string
 }) {
-  const { data } = await http.post('/api/v1/user/inventory', payload, {
+  const { data } = await http.post(apiPath('/user/inventory'), payload, {
     withCredentials: true,
   })
   // typically { id }
@@ -109,7 +124,7 @@ export async function updateUserItem(
     notes: string
   }>
 ) {
-  const { data } = await http.patch(`/api/v1/user/inventory/${id}`, payload, {
+  const { data } = await http.patch(apiPath(`/user/inventory/${id}`), payload, {
     withCredentials: true,
   })
   return data as { status: 'ok' }
@@ -117,14 +132,14 @@ export async function updateUserItem(
 
 /** DELETE /api/v1/user/inventory/{id} */
 export async function deleteUserItem(id: string) {
-  const { data } = await http.delete(`/api/v1/user/inventory/${id}`, {
+  const { data } = await http.delete(apiPath(`/user/inventory/${id}`), {
     withCredentials: true,
   })
   return data as { status: 'ok' }
 }
 
 /* ──────────────────────────────────────────────
- * ADMIN INVENTORY (/api/v1/inventory/*)
+ * ADMIN INVENTORY (/inventory/*)
  * Levels + Moves
  * ────────────────────────────────────────────── */
 
@@ -135,10 +150,13 @@ export async function listLevels(params?: {
   variant_id?: string
   warehouse_id?: string
 }) {
-  const { data } = await http.get('/api/v1/inventory/levels', withQS(params))
+  const { data } = await http.get(apiPath('/inventory/levels'), withQS(params))
   // Some backends return a plain array; normalize to { items, total }
   if (Array.isArray(data)) {
-    return { items: data as InventoryLevel[], total: (data as any[]).length } satisfies Paginated<InventoryLevel>
+    return {
+      items: data as InventoryLevel[],
+      total: (data as any[]).length,
+    } satisfies Paginated<InventoryLevel>
   }
   return data as Paginated<InventoryLevel>
 }
@@ -150,7 +168,7 @@ export async function upsertLevel(payload: {
   on_hand?: number
   reserved?: number
 }) {
-  const { data } = await http.patch('/api/v1/inventory/levels', payload, {
+  const { data } = await http.patch(apiPath('/inventory/levels'), payload, {
     withCredentials: true,
   })
   return data as InventoryLevel
@@ -164,9 +182,12 @@ export async function listMoves(params?: {
   warehouse_id?: string
   type?: string
 }) {
-  const { data } = await http.get('/api/v1/inventory/moves', withQS(params))
+  const { data } = await http.get(apiPath('/inventory/moves'), withQS(params))
   if (Array.isArray(data)) {
-    return { items: data as StockMove[], total: (data as any[]).length } satisfies Paginated<StockMove>
+    return {
+      items: data as StockMove[],
+      total: (data as any[]).length,
+    } satisfies Paginated<StockMove>
   }
   return data as Paginated<StockMove>
 }
@@ -180,7 +201,7 @@ export async function createMove(payload: {
   to_warehouse_id?: string | null
   note?: string | null
 }) {
-  const { data } = await http.post('/api/v1/inventory/moves', payload, {
+  const { data } = await http.post(apiPath('/inventory/moves'), payload, {
     withCredentials: true,
   })
   return data as { status: string }

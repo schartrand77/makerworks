@@ -3,7 +3,7 @@
 
 This is a full base migration that creates the current schema from scratch:
 - All core tables (users, model_uploads, model_metadata, favorites, estimates, estimate_settings,
-  filaments, filament_pricing, checkout_sessions, upload_jobs, audit_logs)
+  filaments, filament_pricing, checkout_sessions, upload_jobs, audit_logs, backup_jobs)
 - Inventory tables (brands, categories, products, product_variants, media, warehouses,
   inventory_levels, suppliers, supplier_skus, stock_moves, user_items)
 - Filament barcodes table (barcodes) with per-filament codes and uniqueness
@@ -370,6 +370,7 @@ def upgrade() -> None:
         sa.Column("id", UUID, primary_key=True, nullable=False),
         sa.Column("variant_id", UUID, sa.ForeignKey("public.product_variants.id", ondelete="CASCADE"), nullable=False),
         sa.Column("warehouse_id", UUID, sa.ForeignKey("public.warehouses.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("to_warehouse_id", UUID, sa.ForeignKey("public.warehouses.id", ondelete="RESTRICT"), nullable=True),  # for transfers
         sa.Column("qty", sa.Integer(), nullable=False),
         sa.Column("type", sa.Enum("purchase", "sale", "adjust", "transfer", name="stock_move_type"), nullable=False),
         sa.Column("note", sa.String(255), nullable=True),
@@ -377,6 +378,8 @@ def upgrade() -> None:
         schema="public",
     )
     op.create_index("ix_public_stock_moves_variant", "stock_moves", ["variant_id"], unique=False, schema="public")
+    # Helpful for list paging/sorting in API (created desc, id desc)
+    op.create_index("ix_public_stock_moves_created_id", "stock_moves", ["created_at", "id"], unique=False, schema="public")
 
     # user_items (per-user personal/maker inventory)
     op.create_table(
@@ -438,6 +441,27 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
         schema="public",
     )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # backup_jobs (tracks DB+media snapshot jobs)
+    # ──────────────────────────────────────────────────────────────────────
+    op.create_table(
+        "backup_jobs",
+        sa.Column("id", UUID, primary_key=True, nullable=False),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("status", sa.String(length=16), nullable=False, server_default=sa.text("'running'")),  # running|ok|error
+        sa.Column("kind", sa.String(length=16), nullable=False, server_default=sa.text("'manual'")),     # manual|scheduled
+        sa.Column("created_by", UUID, sa.ForeignKey("public.users.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("location", sa.Text(), nullable=True),     # local dir or s3://bucket/prefix/stamp
+        sa.Column("db_bytes", sa.BigInteger(), nullable=True),
+        sa.Column("media_bytes", sa.BigInteger(), nullable=True),
+        sa.Column("total_bytes", sa.BigInteger(), nullable=True),
+        sa.Column("manifest_sha256", sa.String(length=64), nullable=True),
+        sa.Column("error", sa.Text(), nullable=True),
+        schema="public",
+    )
+    op.create_index("ix_backup_jobs_started", "backup_jobs", ["started_at"], unique=False, schema="public")
 
     # ──────────────────────────────────────────────────────────────────────
     # PRICING (global settings, materials, printers, labor, steps, tiers,
@@ -706,14 +730,10 @@ def downgrade() -> None:
     op.drop_index("ix_pricing_settings_effective_from", table_name="pricing_settings", schema="public")
     op.drop_table("pricing_settings", schema="public")
 
-    # Drop tables in reverse dependency order (rest of schema)
-    op.drop_table("audit_logs", schema="public")
-    op.drop_table("upload_jobs", schema="public")
-    op.drop_table("checkout_sessions", schema="public")
-
     # Inventory group (reverse)
     op.drop_index("ix_public_user_items_user", table_name="user_items", schema="public")
     op.drop_table("user_items", schema="public")
+    op.drop_index("ix_public_stock_moves_created_id", table_name="stock_moves", schema="public")
     op.drop_index("ix_public_stock_moves_variant", table_name="stock_moves", schema="public")
     op.drop_table("stock_moves", schema="public")
     op.drop_constraint("uq_public_supplier_variant", "supplier_skus", schema="public", type_="unique")
@@ -724,7 +744,6 @@ def downgrade() -> None:
     op.drop_table("media", schema="public")
     op.drop_index("ix_public_variant_sku", table_name="product_variants", schema="public")
     op.drop_index("ix_public_variant_product", table_name="product_variants", schema="public")
-    # drop the GIN index created via raw SQL
     op.execute("DROP INDEX IF EXISTS public.ix_public_variant_attributes_gin")
     op.drop_table("product_variants", schema="public")
     op.drop_index("ix_public_products_brand", table_name="products", schema="public")
@@ -732,16 +751,13 @@ def downgrade() -> None:
     op.drop_table("products", schema="public")
     op.drop_table("categories", schema="public")
     op.drop_table("brands", schema="public")
-    # safer in case of any lingering dependency
     op.execute("DROP TYPE IF EXISTS stock_move_type CASCADE")
 
     # Filament-related (reverse)
     op.drop_table("filament_pricing", schema="public")
-    # barcodes depends on filaments → drop first
     op.drop_index("barcodes_filament_id_idx", table_name="barcodes", schema="public")
     op.drop_constraint("barcodes_code_key", "barcodes", schema="public", type_="unique")
     op.drop_table("barcodes", schema="public")
-    # drop canonical uniqueness + legacy index before table
     op.drop_constraint(
         "uq_public_filaments_name_category_colorhex",
         "filaments",
@@ -755,7 +771,7 @@ def downgrade() -> None:
     )
     op.drop_table("filaments", schema="public")
 
-    # The rest
+    # Admin/system
     op.drop_table("estimate_settings", schema="public")
     op.drop_table("estimates", schema="public")
     op.drop_table("favorites", schema="public")
@@ -765,6 +781,12 @@ def downgrade() -> None:
     op.drop_index("ix_public_model_uploads_geometry_hash", table_name="model_uploads", schema="public")
     op.drop_index("ix_public_model_uploads_user_id", table_name="model_uploads", schema="public")
     op.drop_table("model_uploads", schema="public")
+
+    # backup_jobs
+    op.drop_index("ix_backup_jobs_started", table_name="backup_jobs", schema="public")
+    op.drop_table("backup_jobs", schema="public")
+
+    # users last
     op.drop_index("ix_public_users_username", table_name="users", schema="public")
     op.drop_index("ix_public_users_email", table_name="users", schema="public")
     op.drop_table("users", schema="public")

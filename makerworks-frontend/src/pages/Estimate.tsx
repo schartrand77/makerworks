@@ -3,13 +3,11 @@ import { useLocation, useSearchParams } from 'react-router-dom'
 import PageLayout from '@/components/layout/PageLayout'
 import PageHeader from '@/components/ui/PageHeader'
 import EstimateCard from '@/components/estimate/EstimateCard'
-import axios from '@/api/client'
-import { toast } from 'sonner'
 
 type NavState = {
   modelUrl?: string
   modelId?: string
-  fileUrl?: string // in case the caller passes a resolved file URL
+  fileUrl?: string
 }
 
 export default function Estimate() {
@@ -17,59 +15,33 @@ export default function Estimate() {
   const navState = (location.state || {}) as NavState
   const [searchParams] = useSearchParams()
 
-  // Pull model hints from state first, then from query string
-  const hintedModelUrl = useMemo(() => {
-    return (
-      navState.modelUrl ||
-      navState.fileUrl ||
-      searchParams.get('modelUrl') ||
-      ''
-    )
-  }, [navState.modelUrl, navState.fileUrl, searchParams])
+  const hintedModelUrl = useMemo(
+    () => navState.modelUrl || navState.fileUrl || searchParams.get('modelUrl') || '',
+    [navState.modelUrl, navState.fileUrl, searchParams]
+  )
 
-  const hintedModelId = useMemo(() => {
-    return navState.modelId || searchParams.get('modelId') || ''
-  }, [navState.modelId, searchParams])
+  const hintedModelId = useMemo(
+    () => navState.modelId || searchParams.get('modelId') || '',
+    [navState.modelId, searchParams]
+  )
 
   const [modelUrl, setModelUrl] = useState<string>(hintedModelUrl)
 
-  // Preload filaments so the estimate form can populate its dropdown.
-  useEffect(() => {
-    axios
-      .get('/filaments')
-      .then(() => toast.success('Filaments loaded'))
-      .catch(() => toast.error('Failed to load filaments'))
-  }, [])
-
-  // If we didn’t receive a direct URL but did get an ID, resolve it to a URL.
+  // Resolve model URL from id if needed
   useEffect(() => {
     let cancelled = false
-
-    async function resolveModelUrlFromId(id: string) {
+    async function run(id: string) {
       try {
-        // Adjust fields to your actual /models/{id} response shape
-        const { data } = await axios.get(`/models/${encodeURIComponent(id)}`)
+        const r = await fetch(`/api/v1/models/${encodeURIComponent(id)}`, { credentials: 'include' })
+        const data = await r.json().catch(() => ({}))
         const resolved =
-          data?.primary_file_url ||
-          data?.file_url ||
-          data?.files?.[0]?.url ||
-          ''
-        if (!cancelled) {
-          if (resolved) {
-            setModelUrl(resolved)
-          } else {
-            toast.error('Could not resolve model URL from ID')
-          }
-        }
+          data?.primary_file_url || data?.file_url || data?.files?.[0]?.url || ''
+        if (!cancelled && resolved) setModelUrl(resolved)
       } catch {
-        if (!cancelled) toast.error('Failed to load model details')
+        /* ignore */
       }
     }
-
-    if (!modelUrl && hintedModelId) {
-      resolveModelUrlFromId(hintedModelId)
-    }
-
+    if (!modelUrl && hintedModelId) run(hintedModelId)
     return () => {
       cancelled = true
     }
@@ -79,7 +51,6 @@ export default function Estimate() {
     <PageLayout>
       <div className="space-y-6">
         <PageHeader title="Estimate Print Job" />
-        {/* modelUrl may be empty if nothing was carried forward; EstimateCard should handle that */}
         <EstimateCard modelUrl={modelUrl} />
       </div>
     </PageLayout>

@@ -82,13 +82,13 @@ def _row_to_out(row: Mapping[str, Any]) -> FilamentOut:
 # -----------------------
 
 
-@router.head("/filaments", include_in_schema=False)
+@router.head("", include_in_schema=False)
 async def head_filaments(_: AsyncSession = Depends(get_db)) -> Response:
     # Explicit HEAD to avoid occasional 405s from caches/middle-proxies
     return Response(status_code=200)
 
 
-@router.get("/filaments", response_model=List[FilamentOut])
+@router.get("", response_model=List[FilamentOut])
 async def list_filaments(
     db: AsyncSession = Depends(get_db),
 ) -> List[FilamentOut]:
@@ -112,7 +112,7 @@ async def list_filaments(
 
 
 @router.post(
-    "/filaments",
+    "",
     response_model=FilamentOut,
     # keep 200 for current frontend expectation
     status_code=status.HTTP_200_OK,
@@ -185,7 +185,7 @@ async def create_filament(
 
 
 @router.patch(
-    "/filaments/{filament_id}",
+    "/{filament_id}",
     response_model=FilamentOut,
     dependencies=[Depends(require_admin)],
 )
@@ -294,7 +294,7 @@ async def update_filament(
 
 
 @router.delete(
-    "/filaments/{filament_id}",
+    "/{filament_id}",
     status_code=status.HTTP_200_OK,  # Option B: return JSON with 200
     response_model=Dict[str, Any],  # simple JSON shape
     dependencies=[Depends(require_admin)],

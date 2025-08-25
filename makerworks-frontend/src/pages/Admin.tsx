@@ -1,5 +1,5 @@
 // src/pages/Admin.tsx
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback, PropsWithChildren } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import PageLayout from '@/components/layout/PageLayout';
 import { useUser } from '@/hooks/useUser';
@@ -8,17 +8,60 @@ import FilamentsTab from './admin/FilamentsTab';
 import ModelsTab from './admin/ModelsTab';
 import InventoryTab from './admin/InventoryTab';
 import EstimatesTab from './admin/Estimates';
-import Printers from './admin/Printers'; // ✅ NEW: Bambu bridge UI
+import Printers from './admin/Printers';
+import BackupsTab from '@/pages/admin/BackupsTab';
 
-type TabKey = 'users' | 'filaments' | 'inventory' | 'models' | 'printers' | 'estimates';
-const TABS = ['users', 'filaments', 'inventory', 'models', 'printers', 'estimates'] as const;
+// LED / visionOS theme
+import '@/styles/mw-led.css';
+
+// Konami + Arkanoid
+import { useKonami } from '@/utils/useKonami';
+import ArkanoidOverlay from '@/components/Arkanoid/ArkanoidOverlay';
+
+type TabKey =
+  | 'users'
+  | 'filaments'
+  | 'inventory'
+  | 'models'
+  | 'printers'
+  | 'estimates'
+  | 'backups'; // ← NEW
+
+const TABS = [
+  'users',
+  'filaments',
+  'inventory',
+  'models',
+  'printers',
+  'estimates',
+  'backups', // ← NEW (last so it won’t disrupt existing indexes)
+] as const;
 
 function isTab(value: unknown): value is TabKey {
   return typeof value === 'string' && (TABS as readonly string[]).includes(value);
 }
 
+/** VisionOS-style card wrapper with amber ring (matches Cart sections). */
+function AdminPanelCard({
+  id,
+  active,
+  children,
+  className = '',
+}: PropsWithChildren<{ id: string; active: boolean; className?: string }>) {
+  return (
+    <div id={id} role="tabpanel" aria-labelledby={`tab-${id.replace('panel-', '')}`} hidden={!active}>
+      {/* mw-card = glass surface; mw-btn--amber sets the ring color for this section */}
+      <section className={`mw-card mw-btn--amber p-4 ${className}`}>
+        <div className="mw-led">{children}</div>
+      </section>
+    </div>
+  );
+}
+
 export default function Admin() {
   const { user, isAdmin, loading } = useUser();
+  const [showArkanoid, setShowArkanoid] = useState(false);
+  useKonami(() => setShowArkanoid(true), { ignoreInputs: true });
 
   const [searchParams, setSearchParams] = useSearchParams();
   const initialFromUrl = searchParams.get('tab');
@@ -88,61 +131,65 @@ export default function Admin() {
 
   return (
     <PageLayout title="Admin Panel" maxWidth="xl" padding="p-4">
-      <div
-        role="tablist"
-        aria-label="Admin sections"
-        className="mw-admin-tabs mb-4 flex flex-wrap gap-2"
-        onKeyDown={onKeyDown}
-      >
-        {TABS.map((t) => {
-          const active = tab === t;
-          const label = t.charAt(0).toUpperCase() + t.slice(1);
-          return (
-            <button
-              key={t}
-              id={`tab-${t}`}
-              role="tab"
-              aria-selected={active}
-              aria-controls={`panel-${t}`}
-              data-active={active ? 'true' : 'false'}
-              className="mw-enter mw-btn-sm rounded-full font-medium text-gray-800 dark:text-gray-200"
-              onClick={() => setTabSafe(t as TabKey)}
-            >
-              {label}
-            </button>
-          );
-        })}
+      {/* Tab strip stays GREEN (default). No amber variant here. */}
+      <div className="mw-led mb-4">
+        <div
+          role="tablist"
+          aria-label="Admin sections"
+          className="mw-admin-tabs flex flex-wrap gap-2"
+          onKeyDown={onKeyDown}
+        >
+          {TABS.map((t) => {
+            const active = tab === t;
+            const label = t.charAt(0).toUpperCase() + t.slice(1);
+            return (
+              <button
+                key={t}
+                id={`tab-${t}`}
+                role="tab"
+                aria-selected={active}
+                aria-controls={`panel-${t}`}
+                className={`mw-tab mw-btn-sm ${active ? 'is-active' : ''}`}
+                onClick={() => setTabSafe(t as TabKey)}
+                title="Tip: Up Up Down Down Left Right Left Right B A (Enter)"
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div id="panel-users" role="tabpanel" aria-labelledby="tab-users" hidden={tab !== 'users'}>
-        {tab === 'users' && <UsersTab />}
-      </div>
-      <div id="panel-filaments" role="tabpanel" aria-labelledby="tab-filaments" hidden={tab !== 'filaments'}>
-        {tab === 'filaments' && <FilamentsTab />}
-      </div>
-      <div id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" hidden={tab !== 'inventory'}>
-        {tab === 'inventory' && <InventoryTab />}
-      </div>
-      <div id="panel-models" role="tabpanel" aria-labelledby="tab-models" hidden={tab !== 'models'}>
-        {tab === 'models' && <ModelsTab />}
-      </div>
-      <div id="panel-printers" role="tabpanel" aria-labelledby="tab-printers" hidden={tab !== 'printers'}>
-        {tab === 'printers' && <Printers />}
-      </div>
-      <div id="panel-estimates" role="tabpanel" aria-labelledby="tab-estimates" hidden={tab !== 'estimates'}>
-        {tab === 'estimates' && <EstimatesTab />}
-      </div>
+      {/* Panels: each uses amber ring to match Cart’s section treatment */}
+      <AdminPanelCard id="panel-users" active={tab === 'users'}>
+        <UsersTab />
+      </AdminPanelCard>
 
-      <style>{`
-        .mw-admin-tabs .mw-enter[data-active="true"]{
-          border-color:#16a34a !important;
-          box-shadow:
-            inset 0 0 12px 2.5px rgba(22,163,74,0.60),
-            0 0 18px 6px rgba(22,163,74,0.65),
-            0 0 36px 14px rgba(22,163,74,0.28);
-          transform: none;
-        }
-      `}</style>
+      <AdminPanelCard id="panel-filaments" active={tab === 'filaments'}>
+        <FilamentsTab />
+      </AdminPanelCard>
+
+      <AdminPanelCard id="panel-inventory" active={tab === 'inventory'}>
+        <InventoryTab />
+      </AdminPanelCard>
+
+      <AdminPanelCard id="panel-models" active={tab === 'models'}>
+        <ModelsTab />
+      </AdminPanelCard>
+
+      <AdminPanelCard id="panel-printers" active={tab === 'printers'}>
+        <Printers />
+      </AdminPanelCard>
+
+      <AdminPanelCard id="panel-estimates" active={tab === 'estimates'}>
+        <EstimatesTab />
+      </AdminPanelCard>
+
+      <AdminPanelCard id="panel-backups" active={tab === 'backups'}>
+        <BackupsTab />
+      </AdminPanelCard>
+
+      {showArkanoid && <ArkanoidOverlay onClose={() => setShowArkanoid(false)} />}
     </PageLayout>
   );
 }

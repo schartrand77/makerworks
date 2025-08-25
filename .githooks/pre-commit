@@ -1,3 +1,4 @@
+#!/usr/bin/env sh
 set -eu
 python3 .githooks/bump_version.py
-git add VERSION
+git add -A   # ← stage VERSION (and any manifest updates)
